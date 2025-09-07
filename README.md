@@ -7,7 +7,7 @@
 ### ✅ YAML 1.2 
 - **YAML 1.2 Specification Compliance** - Attempting full support for YAML 1.2
 - **Complete Value Type System** - Handles all 9 YAML value types:
-  - Scalars: null, boolean, integer, float, string, timestamp
+  - Scalars: null, boolean, integer, float, string, timestampx
   - Collections: sequence (arrays), mapping (objects), set (unique values array)
   - References: alias (anchor references)
 - **Number Formats** - Support for decimal, hexadecimal (0x), octal (0o), and binary (0b) number literals
@@ -23,12 +23,17 @@ VSoft.YAML provides **selective backward compatibility** for common YAML 1.1 fea
 
 For full YAML Feature details see - [YAML Features](/docs/YAML-Features-Implementation.md)
 
+### JSON Support
+
+VSoft.YAML can also parse/write JSON (since YAML 1.2 is a superset of JSON).
+
 ### Parsing & Writing
 - **Multiple Input Sources** - Load from string, file, or stream
 - **Flexible Output Options**:
   - Block style (human-readable, indented)
   - Flow style (compact, JSON-like)
   - Mixed style formatting
+  - **JSON Output** - Export YAML documents to JSON format with pretty-print support
 - **Encoding** - Automatic encoding detection - default is UTF-8
 - **Error Handling** - Detailed parse error reporting with line/column information
 
@@ -146,8 +151,87 @@ begin
 end;
 ```
 
+### Writing to JSON
+```pascal
+var
+  doc: IYAMLDocument;
+  person: IYAMLMapping;
+  jsonOutput: string;
+begin
+  // Create a YAML document
+  doc := TYAML.CreateMapping;
+  person := doc.Root.AsMapping;
+  
+  person.AddOrSetValue('name', 'John Doe');
+  person.AddOrSetValue('age', 30);
+  person.AddOrSetValue('city', 'New York');
+  
+  // Export to compact JSON
+  doc.Options.PrettyPrint := false;
+  jsonOutput := TYAML.WriteToJSONString(doc);
+  WriteLn('Compact JSON: ', jsonOutput);
+  // Output: {"name":"John Doe","age":30,"city":"New York"}
+  
+  // Export to pretty-printed JSON
+  doc.Options.PrettyPrint := true;
+  doc.Options.IndentSize := 2;
+  jsonOutput := TYAML.WriteToJSONString(doc);
+  WriteLn('Pretty JSON:');
+  WriteLn(jsonOutput);
+  // Output:
+  // {
+  //   "name": "John Doe",
+  //   "age": 30,
+  //   "city": "New York"
+  // }
+  
+  // Write JSON to file
+  TYAML.WriteToJSONFile(doc, 'output.json');
+end;
+```
+
+### Converting YAML to JSON
+```pascal
+var
+  yamlDoc: IYAMLDocument;
+  yamlContent: string;
+  jsonOutput: string;
+begin
+  // Load YAML content
+  yamlContent := 'employees:' + sLineBreak +
+                 '  - name: Alice' + sLineBreak +
+                 '    role: Developer' + sLineBreak +
+                 '  - name: Bob' + sLineBreak +
+                 '    role: Designer';
+                 
+  yamlDoc := TYAML.LoadFromString(yamlContent);
+  
+  // Convert to JSON with pretty printing
+  yamlDoc.Options.PrettyPrint := true;
+  jsonOutput := TYAML.WriteToJSONString(yamlDoc);
+  
+  WriteLn('YAML to JSON conversion:');
+  WriteLn(jsonOutput);
+  // Output:
+  // {
+  //   "employees": [
+  //     {
+  //       "name": "Alice",
+  //       "role": "Developer"
+  //     },
+  //     {
+  //       "name": "Bob",
+  //       "role": "Designer"
+  //     }
+  //   ]
+  // }
+end;
+```
+
 ### Core Components
 - **VSoft.YAML.pas** - Main entry point with `TYAML` static factory methods for all operations
+- **VSoft.YAML.Writer.pas** - YAML output writer with multiple formatting options
+- **VSoft.YAML.Writer.JSON.pas** - JSON output writer with pretty-print support
 
 ## Compatibility
 
