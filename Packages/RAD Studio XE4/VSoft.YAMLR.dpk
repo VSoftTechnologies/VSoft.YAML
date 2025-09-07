@@ -25,7 +25,9 @@ package VSoft.YAMLR;
 {$IMAGEBASE $400000}
 {$DEFINE DEBUG}
 {$ENDIF IMPLICITBUILDING}
+{$DESCRIPTION 'VSoft.YAML Runtime package'}
 {$LIBSUFFIX '180'}
+{$RUNONLY}
 {$IMPLICITBUILD ON}
 
 requires
@@ -38,6 +40,7 @@ contains
   VSoft.YAML in '..\..\Source\VSoft.YAML.pas',
   VSoft.YAML.Utils in '..\..\Source\VSoft.YAML.Utils.pas',
   VSoft.YAML.Writer in '..\..\Source\VSoft.YAML.Writer.pas',
+  VSoft.YAML.Writer.JSON in '..\..\Source\VSoft.YAML.Writer.JSON.pas',
   VSoft.YAML.Path in '..\..\Source\VSoft.YAML.Path.pas',
   VSoft.YAML.IO in '..\..\Source\VSoft.YAML.IO.pas',
   VSoft.YAML.StreamReader in '..\..\Source\VSoft.YAML.StreamReader.pas',

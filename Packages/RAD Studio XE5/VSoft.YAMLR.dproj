@@ -125,6 +125,7 @@
         <DCCReference Include="..\..\Source\VSoft.YAML.pas"/>
         <DCCReference Include="..\..\Source\VSoft.YAML.Utils.pas"/>
         <DCCReference Include="..\..\Source\VSoft.YAML.Writer.pas"/>
+		<DCCReference Include="..\..\Source\VSoft.YAML.Writer.JSON.pas"/>
         <DCCReference Include="..\..\Source\VSoft.YAML.Path.pas"/>
         <DCCReference Include="..\..\Source\VSoft.YAML.IO.pas"/>
         <DCCReference Include="..\..\Source\VSoft.YAML.StreamReader.pas"/>
