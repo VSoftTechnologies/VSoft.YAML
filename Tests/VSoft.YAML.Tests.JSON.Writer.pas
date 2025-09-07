@@ -74,6 +74,9 @@ type
     [Test]
     procedure TestWriteNumberEdgeCases;
 
+    [Test]
+    procedure TestPrettyPrintFormatting;
+
   end;
 
 
@@ -92,6 +95,7 @@ var
   expectedJson: string;
 begin
   doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
   doc.AsMapping.AddOrSetValue('name', 'John Doe');
   doc.AsMapping.AddOrSetValue('age', 30);
   doc.AsMapping.AddOrSetValue('active', true);
@@ -109,6 +113,7 @@ var
   expectedJson: string;
 begin
   doc := TYAML.CreateSequence;
+  doc.Options.PrettyPrint := false;
   doc.AsSequence.AddValue('apple');
   doc.AsSequence.AddValue('banana');
   doc.AsSequence.AddValue('cherry');
@@ -125,6 +130,7 @@ var
   jsonOutput: string;
 begin
   doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
   doc.AsMapping.AddOrSetValue('boolTrue', true);
   doc.AsMapping.AddOrSetValue('boolFalse', false);
   doc.AsMapping.AddOrSetValue('intValue', 42);
@@ -147,6 +153,7 @@ var
   jsonOutput: string;
 begin
   doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
   doc.AsMapping.AddOrSetValue('quotes', 'She said "Hello!"');
   doc.AsMapping.AddOrSetValue('newlines', 'Line 1' + #10 + 'Line 2');
   doc.AsMapping.AddOrSetValue('tabs', 'Col1' + #9 + 'Col2');
@@ -170,6 +177,7 @@ var
   jsonOutput: string;
 begin
   doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
   person := doc.AsMapping.AddOrSetMapping('person');
   person.AddOrSetValue('name', 'Jane Smith');
   person.AddOrSetValue('age', 25);
@@ -195,6 +203,7 @@ var
   jsonOutput: string;
 begin
   doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
   doc.AsMapping.AddOrSetMapping('emptyObject');
   doc.AsMapping.AddOrSetSequence('emptyArray');
   doc.AsMapping.AddOrSetValue('emptyString', '');
@@ -216,6 +225,7 @@ var
   jsonOutput: string;
 begin
   doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
   doc.AsMapping.AddOrSetValue('firstName', 'John');
   doc.AsMapping.AddOrSetValue('lastName', 'Smith');
   doc.AsMapping.AddOrSetValue('age', 35);
@@ -253,6 +263,7 @@ var
   jsonOutput: string;
 begin
   doc := TYAML.CreateSet;
+  doc.Options.PrettyPrint := false;
   doc.AsSet.AddValue('apple');
   doc.AsSet.AddValue('banana');
   doc.AsSet.AddValue('cherry');
@@ -290,6 +301,8 @@ begin
   docs[1] := doc2;
   docs[2] := doc3;
 
+  //first document's options are used
+  docs[0].Options.PrettyPrint := false;
   jsonOutput := TYAML.WriteToJSONString(docs);
 
   // Multiple documents should be wrapped in a JSON array
@@ -314,6 +327,7 @@ begin
               'emptyValue: ';
   
   doc := TYAML.LoadFromString(yamlText);
+  doc.Options.PrettyPrint := false;
   jsonOutput := TYAML.WriteToJSONString(doc);
   
   // All null variants should be written as JSON null
@@ -328,6 +342,7 @@ var
   jsonOutput: string;
 begin
   doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
   doc.AsMapping.AddOrSetValue('zero', 0);
   doc.AsMapping.AddOrSetValue('negativeZero', -0);
   doc.AsMapping.AddOrSetValue('maxInt', High(Int64));
@@ -351,6 +366,7 @@ var
   jsonOutput: string;
 begin
   doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
   // Test characters that should work in UTF-16 (Delphi XE2)
   doc.AsMapping.AddOrSetValue('european', 'Café résumé naïve');
   doc.AsMapping.AddOrSetValue('symbols', '©™®€£¥');
@@ -388,6 +404,7 @@ begin
     longString := longString + 'This is a very long string segment ' + IntToStr(i) + '. ';
 
   doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
   doc.AsMapping.AddOrSetValue('longString', longString);
   doc.AsMapping.AddOrSetValue('shortString', 'short');
 
@@ -407,6 +424,7 @@ var
   i: integer;
 begin
   doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
   current := doc.AsMapping;
   
   // Create deeply nested structure (20 levels)
@@ -435,6 +453,7 @@ var
   i: integer;
 begin
   doc := TYAML.CreateSequence;
+  doc.Options.PrettyPrint := false;
   
   // Create large array with 100 elements
   for i := 1 to 100 do
@@ -456,6 +475,7 @@ var
   jsonOutput: string;
 begin
   doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
   doc.AsMapping.AddOrSetValue('normal-key', 'value1');
   doc.AsMapping.AddOrSetValue('key with spaces', 'value2');
   doc.AsMapping.AddOrSetValue('key"with"quotes', 'value3');
@@ -479,6 +499,7 @@ var
   jsonOutput: string;
 begin
   doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
   doc.AsMapping.AddOrSetValue('math', '±×÷≈≠≤≥');
 
   jsonOutput := TYAML.WriteToJSONString(doc);
@@ -494,6 +515,7 @@ var
   jsonOutput: string;
 begin
   doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
   doc.AsMapping.AddOrSetValue('nullVal', ''); // Will be converted to null
   doc.AsMapping.AddOrSetValue('boolVal', true);
   doc.AsMapping.AddOrSetValue('intVal', 42);
@@ -525,6 +547,7 @@ var
   jsonOutput: string;
 begin
   doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
   doc.AsMapping.AddOrSetValue('onlySpaces', '   ');
   doc.AsMapping.AddOrSetValue('onlyTabs', #9#9#9);
   doc.AsMapping.AddOrSetValue('onlyNewlines', #10#10#10);
@@ -557,6 +580,7 @@ begin
               'negScientific: -4.56E-3';
               
   doc := TYAML.LoadFromString(yamlText);
+  doc.Options.PrettyPrint := false;
   jsonOutput := TYAML.WriteToJSONString(doc);
   
   // All should be converted to standard decimal JSON numbers
@@ -565,6 +589,60 @@ begin
   Assert.Contains(jsonOutput, '"hex":255');          // 0xFF = 255
   Assert.Contains(jsonOutput, '"scientific":12300'); // 1.23e4 = 12300
   Assert.Contains(jsonOutput, '"negScientific":-0.00456'); // -4.56E-3 = -0.00456
+end;
+
+procedure TJSONWritingTests.TestPrettyPrintFormatting;
+var
+  doc: IYAMLDocument;
+  address: IYAMLMapping;
+  hobbies: IYAMLSequence;
+  compactOutput, prettyOutput: string;
+begin
+  // Create a nested document
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('name', 'John Doe');
+  doc.AsMapping.AddOrSetValue('age', 30);
+
+  address := doc.AsMapping.AddOrSetMapping('address');
+  address.AddOrSetValue('street', '123 Main St');
+  address.AddOrSetValue('city', 'Anytown');
+
+  hobbies := doc.AsMapping.AddOrSetSequence('hobbies');
+  hobbies.AddValue('reading');
+  hobbies.AddValue('coding');
+  hobbies.AddValue('hiking');
+
+  doc.options.PrettyPrint := false;
+
+  // Test compact output (default)
+  compactOutput := TYAML.WriteToJSONString(doc);
+
+
+  // Compact should be single line
+  Assert.IsFalse(compactOutput.Contains(sLineBreak), 'Compact output should not contain line breaks');
+
+  // Test pretty printed output
+
+  doc.options.PrettyPrint := true;
+  doc.options.IndentSize := 2;
+  prettyOutput := TYAML.WriteToJSONString(doc);
+
+
+  // Pretty print should have line breaks and indentation
+  Assert.IsTrue(prettyOutput.Contains(sLineBreak), 'Pretty output should contain line breaks');
+  Assert.IsTrue(prettyOutput.Contains('  '), 'Pretty output should contain indentation');
+  
+  // Check structure - pretty print should have proper formatting
+  Assert.Contains(prettyOutput, '{' + sLineBreak + '  "name": "John Doe"');
+  Assert.Contains(prettyOutput, '  "hobbies": [' + sLineBreak + '    "reading"');
+  
+  // Both should contain the same data
+  Assert.Contains(compactOutput, '"name":"John Doe"');
+  Assert.Contains(prettyOutput, '"name": "John Doe"');
+  Assert.Contains(compactOutput, '"hobbies":["reading","coding","hiking"]');
+  Assert.Contains(prettyOutput, '"reading"');
+  Assert.Contains(prettyOutput, '"coding"');
+  Assert.Contains(prettyOutput, '"hiking"');
 end;
 
 initialization

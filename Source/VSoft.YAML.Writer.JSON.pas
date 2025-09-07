@@ -17,9 +17,12 @@ type
   private
     FOptions : IYAMLEmitOptions;
     FWriter : TYAMLStreamWriter;
+    FIndentLevel : UInt32;
 
     // Helper methods for formatting
     function FormatScalar(const value : IYAMLValue) : string;
+    function GetIndent : string;
+    function GetNewlineAndIndent : string;
 
     // Core writing methods
     procedure WriteValue(const value : IYAMLValue);
@@ -31,6 +34,8 @@ type
     // Utility methods
     procedure WriteString(const str : string);inline;
     function IsFirstItem(const index : integer) : boolean;inline;
+    procedure IncIndent;inline;
+    procedure DecIndent;inline;
 
   public
     constructor Create(const options : IYAMLEmitOptions);
@@ -61,6 +66,7 @@ begin
   // cloning options as we may need to modify them depending on methods called
   FOptions := options.Clone;
   FWriter := nil;
+  FIndentLevel := 0;
 end;
 
 destructor TJSONWriterImpl.Destroy;
@@ -69,6 +75,28 @@ begin
   inherited Destroy;
 end;
 
+function TJSONWriterImpl.GetIndent : string;
+begin
+  result := StringOfChar(' ', FIndentLevel * FOptions.IndentSize);
+end;
+
+function TJSONWriterImpl.GetNewlineAndIndent : string;
+begin
+  if FOptions.PrettyPrint then
+    result := sLineBreak + GetIndent
+  else
+    result := '';
+end;
+
+procedure TJSONWriterImpl.IncIndent;
+begin
+  Inc(FIndentLevel);
+end;
+
+procedure TJSONWriterImpl.DecIndent;
+begin
+  Dec(FIndentLevel);
+end;
 
 function TJSONWriterImpl.FormatScalar(const value : IYAMLValue) : string;
 begin
@@ -125,16 +153,26 @@ var
 begin
   WriteString('{');
   
-  for i := 0 to mapping.Count - 1 do
+  if mapping.Count > 0 then
   begin
-    if not IsFirstItem(i) then
-      WriteString(',');
-    
-    key := mapping.Keys[i];
-    value := mapping.Values[key];
-    
-    WriteString('"' + TYAMLCharUtils.EscapeStringForJSON(key) + '":');
-    WriteValue(value);
+    IncIndent;
+    for i := 0 to mapping.Count - 1 do
+    begin
+      if not IsFirstItem(i) then
+        WriteString(',');
+      
+      WriteString(GetNewlineAndIndent);
+      
+      key := mapping.Keys[i];
+      value := mapping.Values[key];
+      
+      WriteString('"' + TYAMLCharUtils.EscapeStringForJSON(key) + '":');
+      if FOptions.PrettyPrint then
+        WriteString(' ');
+      WriteValue(value);
+    end;
+    DecIndent;
+    WriteString(GetNewlineAndIndent);
   end;
   
   WriteString('}');
@@ -147,13 +185,21 @@ var
 begin
   WriteString('[');
   
-  for i := 0 to sequence.Count - 1 do
+  if sequence.Count > 0 then
   begin
-    if not IsFirstItem(i) then
-      WriteString(',');
-    
-    item := sequence[i];
-    WriteValue(item);
+    IncIndent;
+    for i := 0 to sequence.Count - 1 do
+    begin
+      if not IsFirstItem(i) then
+        WriteString(',');
+      
+      WriteString(GetNewlineAndIndent);
+      
+      item := sequence[i];
+      WriteValue(item);
+    end;
+    DecIndent;
+    WriteString(GetNewlineAndIndent);
   end;
   
   WriteString(']');
@@ -167,13 +213,21 @@ begin
   // JSON doesn't have sets, so write as array
   WriteString('[');
   
-  for i := 0 to aSet.Count - 1 do
+  if aSet.Count > 0 then
   begin
-    if not IsFirstItem(i) then
-      WriteString(',');
-    
-    item := aSet[i];
-    WriteValue(item);
+    IncIndent;
+    for i := 0 to aSet.Count - 1 do
+    begin
+      if not IsFirstItem(i) then
+        WriteString(',');
+      
+      WriteString(GetNewlineAndIndent);
+      
+      item := aSet[i];
+      WriteValue(item);
+    end;
+    DecIndent;
+    WriteString(GetNewlineAndIndent);
   end;
   
   WriteString(']');

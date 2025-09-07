@@ -1635,7 +1635,7 @@ end;
 
 procedure TYAMLEmitOptions.SetPrettyPrint(const value: boolean);
 begin
-  FPrettyPrint := true;
+  FPrettyPrint := value;
 end;
 
 procedure TYAMLEmitOptions.SetQuoteStrings(value : boolean);
