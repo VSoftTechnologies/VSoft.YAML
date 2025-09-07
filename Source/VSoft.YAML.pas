@@ -311,14 +311,24 @@ type
     procedure SetEmitTagDirectives(value : boolean);
     function GetEmitYAMLDirective : boolean;
     procedure SetEmitYAMLDirective(value : boolean);
+    function GetPrettyPrint : boolean;
+    procedure SetPrettyPrint(const value : boolean);
 
     function Clone : IYAMLEmitOptions;
+
+    //YAML and JSON
+
     /// <summary>  Setting the Encoding to a non standard encoding will take ownership of the encoding </summary>
     property Encoding : TEncoding read GetEncoding write SetEncoding;
     property Format : TYAMLOutputFormat read GetFormat write SetFormat;
     property IndentSize : UInt32 read GetIndentSize write SetIndentSize;
-    property QuoteStrings : boolean read GetQuoteStrings write SetQuoteStrings;
 
+    //not currently implemented
+    property MaxLineLength : UInt32 read GetMaxLineLength write SetMaxLineLength;
+    property WriteByteOrderMark : boolean read GetWriteBOM write SetWriteBOM;
+
+    // YAML ONLY
+    property QuoteStrings : boolean read GetQuoteStrings write SetQuoteStrings;
     property EmitDocumentMarkers : boolean read GetEmitDocumentMarkers write SetEmitDocumentMarkers;
     property EmitYAMLDirective : boolean read GetEmitYAMLDirective write SetEmitYAMLDirective;
     property EmitTagDirectives : boolean read GetEmitTagDirectives write SetEmitTagDirectives;
@@ -326,31 +336,8 @@ type
     property EmitTags : boolean read GetEmitTags write SetEmitTags;
     property EmitExplicitNull : boolean read GetEmitExplicitNull write SetEmitExplicitNull;
 
-    //not currently implemented
-    property MaxLineLength : UInt32 read GetMaxLineLength write SetMaxLineLength;
 
-    property WriteByteOrderMark : boolean read GetWriteBOM write SetWriteBOM;
-  end;
-
-  IJSONEmitOptions = interface
-  ['{3920E7B8-7C9D-4AAF-B839-2B54D356FDD6}']
-    function GetIndentSize : UInt32;
-    procedure SetIndentSize(value : UInt32);
-    function GetEncoding : TEncoding;
-    procedure SetEncoding(const value : TEncoding);
-    function GetWriteBOM : boolean;
-    procedure SetWriteBOM(const value : boolean);
-    function GetMaxLineLength : UInt32;
-    procedure SetMaxLineLength(value : UInt32);
-    function GetPrettyPrint : boolean;
-    procedure SetPrettyPrint(const value : boolean);
-
-    function Clone : IJSONEmitOptions;
-    property IndentSize : UInt32 read GetIndentSize write SetIndentSize;
-    property Encoding : TEncoding read GetEncoding write SetEncoding;
-    property WriteByteOrderMark : boolean read GetWriteBOM write SetWriteBOM;
-    //not currently implemented
-    property MaxLineLength : UInt32 read GetMaxLineLength write SetMaxLineLength;
+    //JSON only
     property PrettyPrint : boolean read GetPrettyPrint write SetPrettyPrint;
 
   end;
