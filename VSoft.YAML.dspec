@@ -1,15 +1,15 @@
 {
  "metadata": {
   "id": "VSoft.YAML",
-  "version": "1.1.0",
-  "description": "YAML Parser",
+  "version": "1.1.1",
+  "description": "YAML/JSON Parser/Writer for Delphi XE2+",
   "authors": "Vincent Parrett",
   "projectUrl": "https://github.com/VSoftTechnologies/VSoft.YAML",
   "repositoryUrl": "https://github.com/VSoftTechnologies/VSoft.YAML",
   "repositoryCommit": "#HASH#",
   "license": "Apache-2.0",
   "copyright": "Vincent Parrett and Contributors",
-  "tags": "yaml parser",
+  "tags": "yaml json parser",
   "readme": "README.md"
  },
  "targetPlatforms": [
