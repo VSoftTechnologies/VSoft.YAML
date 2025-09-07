@@ -21,6 +21,7 @@ type
     class function IsAlphaNumeric(C: Char): boolean; inline;static;
     class function IsAlpha(C: Char): boolean; static;inline;
     class function IsHexidecimal(c : Char) : boolean;inline;static;
+    class function EscapeStringForJSON(const value : string) : string;static;
   end;
 
 
@@ -41,6 +42,73 @@ begin
 {$ELSE}
   result := TCharacter.IsLetterOrDigit(C) or (C = '_');
 {$IFEND}
+end;
+
+class function TYAMLCharUtils.EscapeStringForJSON(const value: string): string;
+var
+  i : integer;
+  charCode : Word;
+  highSurrogate, lowSurrogate : Word;
+begin
+  result := '';
+  {$HIGHCHARUNICODE ON}
+  i := 1;
+  while i <= Length(value) do
+  begin
+    charCode := Ord(value[i]);
+    case value[i] of
+      '"': result := result + '\"';       // Double quote
+      '\': result := result + '\\';       // Backslash
+      #8: result := result + '\b';        // Backspace
+      #12: result := result + '\f';       // Form feed
+      #10: result := result + '\n';       // Line feed
+      #13: result := result + '\r';       // Carriage return
+      #9: result := result + '\t';        // Horizontal tab
+      #0..#7, #11, #14..#31:              // Other control characters (U+0000 through U+001F)
+        result := result + '\u' + IntToHex(charCode, 4);
+      else
+      begin
+        // Check for surrogate pairs
+        if (charCode >= $D800) and (charCode <= $DBFF) then // High surrogate
+        begin
+          if (i < Length(value)) then
+          begin
+            highSurrogate := charCode;
+            lowSurrogate := Ord(value[i + 1]);
+            if (lowSurrogate >= $DC00) and (lowSurrogate <= $DFFF) then // Valid low surrogate
+            begin
+              // Escape surrogate pairs as individual \uXXXX sequences (JSON standard)
+              result := result + '\u' + IntToHex(highSurrogate, 4) + '\u' + IntToHex(lowSurrogate, 4);
+              Inc(i, 2); // Skip both characters in the pair
+              Continue;
+            end
+            else
+            begin
+              // Unpaired high surrogate - escape it
+              result := result + '\u' + IntToHex(charCode, 4);
+            end;
+          end
+          else
+          begin
+            // High surrogate at end of string - escape it
+            result := result + '\u' + IntToHex(charCode, 4);
+          end;
+        end
+        else if (charCode >= $DC00) and (charCode <= $DFFF) then // Unpaired low surrogate
+        begin
+          // Escape unpaired low surrogate
+          result := result + '\u' + IntToHex(charCode, 4);
+        end
+        else
+        begin
+          // Regular Unicode character - preserve as-is
+          result := result + value[i];
+        end;
+      end;
+    end;
+    Inc(i);
+  end;
+  {$HIGHCHARUNICODE OFF}
 end;
 
 class function TYAMLCharUtils.IsAlpha(C: Char): Boolean;

@@ -1278,7 +1278,7 @@ var
   yamlStr: string;
 begin
   SetLength(docs, 0);
-  yamlStr := TYAML.WriteAllToString(docs);
+  yamlStr := TYAML.WriteToString(docs);
   
   Assert.AreEqual('', yamlStr, 'WriteAllToString should return empty string for empty array');
 end;
@@ -1298,7 +1298,7 @@ begin
   SetLength(docs, 1);
   docs[0] := doc;
   
-  yamlStr := TYAML.WriteAllToString(docs);
+  yamlStr := TYAML.WriteToString(docs);
   singleStr := TYAML.WriteToString(doc);
   
   Assert.IsNotEmpty(yamlStr, 'WriteAllToString should return non-empty string for single document');
@@ -1338,7 +1338,7 @@ begin
   docs[1] := doc2;
   docs[2] := doc3;
   
-  yamlStr := TYAML.WriteAllToString(docs);
+  yamlStr := TYAML.WriteToString(docs);
   
   Assert.IsNotEmpty(yamlStr, 'WriteAllToString should return non-empty string for multiple documents');
   Assert.Contains(yamlStr, 'document: 1');
@@ -1376,7 +1376,7 @@ begin
   docs[0] := doc1;
   docs[1] := doc2;
   
-  yamlStr := TYAML.WriteAllToString(docs);
+  yamlStr := TYAML.WriteToString(docs);
   
   Assert.IsNotEmpty(yamlStr, 'WriteAllToString should return non-empty string');
   Assert.Contains(yamlStr, '---', 'Multiple documents should force document markers even if individual options disable them');
@@ -1414,7 +1414,7 @@ begin
   docs[1] := sequenceDoc;
   docs[2] := setDoc;
   
-  yamlStr := TYAML.WriteAllToString(docs);
+  yamlStr := TYAML.WriteToString(docs);
   
   Assert.IsNotEmpty(yamlStr, 'WriteAllToString should handle different root types');
   Assert.Contains(yamlStr, 'type: mapping');
@@ -1454,7 +1454,7 @@ begin
   docs[1] := doc2;
   docs[2] := doc3;
   
-  yamlStr := TYAML.WriteAllToString(docs);
+  yamlStr := TYAML.WriteToString(docs);
   
   Assert.IsNotEmpty(yamlStr, 'WriteAllToString should handle documents with different options');
   Assert.Contains(yamlStr, 'hello world');
@@ -1502,7 +1502,7 @@ begin
   docs[0] := doc1;
   docs[1] := doc2;
   
-  yamlStr := TYAML.WriteAllToString(docs);
+  yamlStr := TYAML.WriteToString(docs);
   
   Assert.IsNotEmpty(yamlStr, 'WriteAllToString should handle complex nested documents');
   Assert.Contains(yamlStr, 'Alice Johnson');
@@ -1537,7 +1537,7 @@ begin
     docs[i] := doc;
   end;
 
-  yamlStr := TYAML.WriteAllToString(docs);
+  yamlStr := TYAML.WriteToString(docs);
 
   Assert.IsNotEmpty(yamlStr, 'WriteAllToString should handle many documents');
   Assert.Contains(yamlStr, 'document_id: 1');
@@ -1586,7 +1586,7 @@ begin
   originalDocs[0] := doc1;
   originalDocs[1] := doc2;
   
-  yamlStr := TYAML.WriteAllToString(originalDocs);
+  yamlStr := TYAML.WriteToString(originalDocs);
   
   Assert.IsNotEmpty(yamlStr, 'WriteAllToString should produce non-empty output');
   

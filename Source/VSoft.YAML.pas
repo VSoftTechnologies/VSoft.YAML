@@ -332,6 +332,29 @@ type
     property WriteByteOrderMark : boolean read GetWriteBOM write SetWriteBOM;
   end;
 
+  IJSONEmitOptions = interface
+  ['{3920E7B8-7C9D-4AAF-B839-2B54D356FDD6}']
+    function GetIndentSize : UInt32;
+    procedure SetIndentSize(value : UInt32);
+    function GetEncoding : TEncoding;
+    procedure SetEncoding(const value : TEncoding);
+    function GetWriteBOM : boolean;
+    procedure SetWriteBOM(const value : boolean);
+    function GetMaxLineLength : UInt32;
+    procedure SetMaxLineLength(value : UInt32);
+    function GetPrettyPrint : boolean;
+    procedure SetPrettyPrint(const value : boolean);
+
+    function Clone : IJSONEmitOptions;
+    property IndentSize : UInt32 read GetIndentSize write SetIndentSize;
+    property Encoding : TEncoding read GetEncoding write SetEncoding;
+    property WriteByteOrderMark : boolean read GetWriteBOM write SetWriteBOM;
+    //not currently implemented
+    property MaxLineLength : UInt32 read GetMaxLineLength write SetMaxLineLength;
+    property PrettyPrint : boolean read GetPrettyPrint write SetPrettyPrint;
+
+  end;
+
   IYAMLVersionDirective = interface
   ['{04670ED9-67B1-44D2-8A05-BDC10E5DB8E6}']
     function GetMajor : integer;
@@ -494,20 +517,31 @@ type
     ///  Uses the documents options to control formatting etc.
     /// </summary>
     class function WriteToString(const doc : IYAMLDocument) : string;overload;static;
-
-    class function WriteAllToString(const docs : TArray<IYAMLDocument>) : string;overload;static;
-
+    class function WriteToString(const docs : TArray<IYAMLDocument>) : string;overload;static;
     class function WriteToString(const value : IYAMLValue; const options : IYAMLEmitOptions = nil) : string;overload;static;
+
+
+
+    class function WriteToJSONString(const doc : IYAMLDocument) : string;overload;static;
+    class function WriteToJSONString(const docs : TArray<IYAMLDocument>) : string;overload;static;
+    class function WriteToJSONString(const value : IYAMLValue; const options : IYAMLEmitOptions = nil) : string;overload;static;
 
     class procedure WriteToFile(const doc : IYAMLDocument;const fileName : string);overload;static;
     class procedure WriteToFile(const docs : TArray<IYAMLDocument>;const fileName : string);overload;static;
     class procedure WriteToFile(const value : IYAMLValue; const fileName : string; const options : IYAMLEmitOptions = nil);overload;static;
 
+    class procedure WriteToJSONFile(const doc : IYAMLDocument;const fileName : string);overload;static;
+    class procedure WriteToJSONFile(const docs : TArray<IYAMLDocument>;const fileName : string);overload;static;
+    class procedure WriteToJSONFile(const value : IYAMLValue; const fileName : string; const options : IYAMLEmitOptions = nil);overload;static;
+
+
     class procedure WriteToStream(const doc : IYAMLDocument;const stream : TStream);overload;static;
     class procedure WriteToStream(const docs : TArray<IYAMLDocument>; const stream : TStream);overload;static;
     class procedure WriteToStream(const value : IYAMLValue; const stream : TStream; const options : IYAMLEmitOptions = nil);overload;static;
 
-
+    class procedure WriteToJSONStream(const doc : IYAMLDocument;const stream : TStream);overload;static;
+    class procedure WriteToJSONStream(const docs : TArray<IYAMLDocument>; const stream : TStream);overload;static;
+    class procedure WriteToJSONStream(const value : IYAMLValue; const stream : TStream; const options : IYAMLEmitOptions = nil);overload;static;
   end;
 
 implementation
@@ -515,7 +549,7 @@ implementation
 uses
   System.Math,
   VSoft.YAML.Utils,
-  VSoft.YAML.Parser, VSoft.YAML.Lexer, VSoft.YAML.Writer, VSoft.YAML.Classes, VSoft.YAML.IO, VSoft.YAML.TagInfo;
+  VSoft.YAML.Parser, VSoft.YAML.Lexer, VSoft.YAML.Writer, VSoft.YAML.Writer.JSON, VSoft.YAML.Classes, VSoft.YAML.IO, VSoft.YAML.TagInfo;
 
 
 var
@@ -755,7 +789,34 @@ begin
   end;
 end;
 
-class function TYAML.WriteAllToString(const docs : TArray<IYAMLDocument>) : string;
+class function TYAML.WriteToJSONString(const docs: TArray<IYAMLDocument>): string;
+var
+  i : integer;
+  writerOptions : IYAMLEmitOptions;
+  writer : TJSONWriterImpl;
+begin
+  result := '';
+  if Length(docs) = 0 then
+    Exit;
+
+  // Use the first document's options as default
+  writerOptions := docs[0].Options;
+  writer := TJSONWriterImpl.Create(writerOptions);
+  try
+    result := '[';
+    for i := 0 to Length(docs) - 1 do
+    begin
+      if i > 0 then
+        result := result + ',';
+      result := result + writer.WriteToString(docs[i]);
+    end;
+    result := result + ']';
+  finally
+    writer.Free;
+  end;
+end;
+
+class function TYAML.WriteToString(const docs : TArray<IYAMLDocument>) : string;
 var
   i : integer;
   writerOptions : IYAMLEmitOptions;
@@ -798,6 +859,140 @@ begin
     Writer.WriteToFile(value, fileName);
   finally
     Writer.Free;
+  end;
+end;
+
+class procedure TYAML.WriteToJSONFile(const doc: IYAMLDocument; const fileName: string);
+var
+  writer : TJSONWriterImpl;
+begin
+  writer := TJSONWriterImpl.Create(doc.Options);
+  try
+    writer.WriteToFile(doc, fileName);
+  finally
+    writer.Free;
+  end;
+end;
+
+class procedure TYAML.WriteToJSONFile(const docs: TArray<IYAMLDocument>; const fileName: string);
+var
+  fileStream : TFileStream;
+begin
+  if Length(docs) = 0 then
+    Exit;
+  fileStream := TFileStream.Create(fileName, fmCreate);
+  try
+    WriteToJSONStream(docs, fileStream);
+  finally
+    fileStream.Free;
+  end;
+end;
+
+class procedure TYAML.WriteToJSONFile(const value: IYAMLValue; const fileName: string; const options: IYAMLEmitOptions);
+var
+  writer : TJSONWriterImpl;
+  opt : IYAMLEmitOptions;
+begin
+  if options <> nil then
+    opt := options
+  else
+    opt := _defaultWriterOptions;
+  writer := TJSONWriterImpl.Create(opt);
+  try
+    writer.WriteToFile(value, fileName);
+  finally
+    writer.Free;
+  end;
+end;
+
+class procedure TYAML.WriteToJSONStream(const docs: TArray<IYAMLDocument>; const stream: TStream);
+var
+  writerOptions : IYAMLEmitOptions;
+  len : integer;
+  i: Integer;
+  writer : TJSONWriterImpl;
+  jsonStr : string;
+begin
+  len := Length(docs);
+  if len = 0 then
+    Exit;
+
+  // Use the first document's options to determine encoding
+  writerOptions := docs[0].Options;
+  writer := TJSONWriterImpl.Create(writerOptions);
+  try
+    jsonStr := '[';
+    for i := 0 to len - 1 do
+    begin
+      if i > 0 then
+        jsonStr := jsonStr + ',';
+      jsonStr := jsonStr + writer.WriteToString(docs[i]);
+    end;
+    jsonStr := jsonStr + ']';
+    
+    // Write the complete JSON array to stream
+    stream.WriteBuffer(writerOptions.Encoding.GetBytes(jsonStr)[0], Length(writerOptions.Encoding.GetBytes(jsonStr)));
+  finally
+    writer.Free;
+  end;
+end;
+
+class procedure TYAML.WriteToJSONStream(const doc: IYAMLDocument; const stream: TStream);
+var
+  writer : TJSONWriterImpl;
+begin
+  writer := TJSONWriterImpl.Create(doc.Options);
+  try
+    writer.WriteToStream(doc, doc.Options.WriteByteOrderMark, stream);
+  finally
+    writer.Free;
+  end;
+end;
+
+class procedure TYAML.WriteToJSONStream(const value: IYAMLValue; const stream: TStream; const options: IYAMLEmitOptions);
+var
+  writer : TJSONWriterImpl;
+  opt : IYAMLEmitOptions;
+begin
+  if options <> nil then
+    opt := options
+  else
+    opt := _defaultWriterOptions;
+  writer := TJSONWriterImpl.Create(opt);
+  try
+    writer.WriteToStream(value, stream);
+  finally
+    writer.Free;
+  end;
+end;
+
+class function TYAML.WriteToJSONString(const doc: IYAMLDocument): string;
+var
+  writer : TJSONWriterImpl;
+begin
+  writer := TJSONWriterImpl.Create(doc.Options);
+  try
+    result := writer.WriteToString(doc);
+  finally
+    writer.Free;
+  end;
+end;
+
+class function TYAML.WriteToJSONString(const value: IYAMLValue; const options: IYAMLEmitOptions): string;
+var
+  writer : TJSONWriterImpl;
+  opt : IYAMLEmitOptions;
+begin
+  if options <> nil then
+    opt := options
+  else
+    opt := _defaultWriterOptions;
+
+  writer := TJSONWriterImpl.Create(opt);
+  try
+    result := writer.WriteToString(value);
+  finally
+    writer.Free;
   end;
 end;
 

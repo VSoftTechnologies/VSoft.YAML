@@ -248,9 +248,6 @@ type
     destructor Destroy; override;
   end;
 
-
-
-
   TYAMLEmitOptions = class(TInterfacedObject, IYAMLEmitOptions)
   private
     FEncoding : TEncoding;
@@ -293,6 +290,34 @@ type
     constructor Create;
     destructor Destroy;override;
   end;
+
+
+  TJSONEmitOptions = class(TInterfacedObject, IJSONEmitOptions)
+  private
+    FEncoding     : TEncoding;
+    FIndentSize   : integer;
+    FMaxLineLength: integer;
+    FWriteBOM     : boolean;
+    FPrettyPrint  : boolean;
+  protected
+    function GetIndentSize : UInt32;
+    procedure SetIndentSize(value : UInt32);
+    function GetEncoding : TEncoding;
+    procedure SetEncoding(const value : TEncoding);
+    function GetWriteBOM : boolean;
+    procedure SetWriteBOM(const value : boolean);
+    function GetMaxLineLength : UInt32;
+    procedure SetMaxLineLength(value : UInt32);
+    function GetPrettyPrint : boolean;
+    procedure SetPrettyPrint(const value : boolean);
+
+    function Clone : IJSONEmitOptions;
+    constructor CreateClone(const source : IJSONEmitOptions);
+  public
+    constructor Create;
+    destructor Destroy;override;
+  end;
+
 
   TYAMLVersionDirective = class(TInterfacedObject, IYAMLVersionDirective)
   private
@@ -1849,5 +1874,87 @@ begin
 end;
 
 
+
+{ TJSONEmitOptions }
+
+function TJSONEmitOptions.Clone: IJSONEmitOptions;
+begin
+  result := TJSONEmitOptions.CreateClone(self);
+end;
+
+constructor TJSONEmitOptions.Create;
+begin
+  FEncoding := TEncoding.UTF8;
+  FIndentSize := 2;
+  FMaxLineLength := 80;
+  FWriteBOM := false;
+end;
+
+constructor TJSONEmitOptions.CreateClone(const source: IJSONEmitOptions);
+begin
+  FEncoding := source.Encoding;
+  FIndentSize := source.IndentSize;
+  FMaxLineLength := source.MaxLineLength;
+  FWriteBOM := source.WriteByteOrderMark;
+
+end;
+
+destructor TJSONEmitOptions.Destroy;
+begin
+  if (FEncoding <> nil) and (not TEncoding.IsStandardEncoding(FEncoding)) then
+    FEncoding.Free;
+
+  inherited;
+end;
+
+function TJSONEmitOptions.GetEncoding: TEncoding;
+begin
+  result := FEncoding;
+end;
+
+function TJSONEmitOptions.GetIndentSize: UInt32;
+begin
+  result := FIndentSize;
+end;
+
+function TJSONEmitOptions.GetMaxLineLength: UInt32;
+begin
+  result := FMaxLineLength;
+end;
+
+function TJSONEmitOptions.GetWriteBOM: boolean;
+begin
+  result := FWriteBOM;
+end;
+
+function TJSONEmitOptions.GetPrettyPrint: boolean;
+begin
+  result := FPrettyPrint;
+end;
+
+procedure TJSONEmitOptions.SetEncoding(const value: TEncoding);
+begin
+  FEncoding := value;
+end;
+
+procedure TJSONEmitOptions.SetIndentSize(value: UInt32);
+begin
+  FIndentSize := value;
+end;
+
+procedure TJSONEmitOptions.SetMaxLineLength(value: UInt32);
+begin
+  FMaxLineLength := value;
+end;
+
+procedure TJSONEmitOptions.SetWriteBOM(const value: boolean);
+begin
+  FWriteBOM := value;
+end;
+
+procedure TJSONEmitOptions.SetPrettyPrint(const value: boolean);
+begin
+  FPrettyPrint := value;
+end;
 
 end.

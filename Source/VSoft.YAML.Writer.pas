@@ -900,7 +900,7 @@ var
   stream : TStringStream;
 begin
   //force utf16 to avoid round trip encoding conversions
-  FOptions.Encoding := TEncoding.Default;
+  FOptions.Encoding := TEncoding.Unicode;
   stream := TStringStream.Create('', FOptions.Encoding, false);
   try
     WriteToStream(value, stream);
@@ -916,7 +916,7 @@ var
 begin
   FIndentLevel := 0;
   //force utf16 to avoid round trip encoding conversions
-  FOptions.Encoding := TEncoding.Default;
+  FOptions.Encoding := TEncoding.Unicode;
   stream := TStringStream.Create('', FOptions.Encoding, false);
   try
     //WriteToStream will create the writer

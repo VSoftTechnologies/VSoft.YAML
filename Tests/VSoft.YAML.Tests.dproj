@@ -167,6 +167,9 @@
         <DCCReference Include="..\Source\VSoft.YAML.TagInfo.pas"/>
         <DCCReference Include="..\Source\VSoft.YAML.StreamWriter.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.JSON.pas"/>
+        <DCCReference Include="..\Source\VSoft.YAML.Writer.JSON.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.JSON.Writer.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.CharUtils.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
@@ -275,6 +278,12 @@
                 <DeployFile LocalName="Win64\Debug\VSoft.YAML.Tests.exe" Configuration="Debug" Class="ProjectOutput">
                     <Platform Name="Win64">
                         <RemoteName>VSoft.YAML.Tests.exe</RemoteName>
+                        <Overwrite>true</Overwrite>
+                    </Platform>
+                </DeployFile>
+                <DeployFile LocalName="Win64\Debug\VSoft.YAML.Tests.rsm" Configuration="Debug" Class="DebugSymbols">
+                    <Platform Name="Win64">
+                        <RemoteName>VSoft.YAML.Tests.rsm</RemoteName>
                         <Overwrite>true</Overwrite>
                     </Platform>
                 </DeployFile>
