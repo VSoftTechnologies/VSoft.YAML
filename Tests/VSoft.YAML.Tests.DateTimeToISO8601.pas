@@ -118,7 +118,7 @@ var
   ISOStr: string;
 begin
   TestDate := EncodeDateTime(2023, 12, 25, 14, 30, 15, 123);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
 
   Assert.AreEqual('2023-12-25T14:30:15.123Z', ISOStr);
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
@@ -132,7 +132,7 @@ var
   TimeZoneInfo: string;
 begin
   TestDate := EncodeDateTime(2023, 12, 25, 14, 30, 15, 0);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, False);
+  ISOStr := TYAMLDateUtils.LocalDateToISO8601Str(TestDate);
 
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
   Assert.IsTrue(ISOStr.StartsWith('2023-12-25T'));
@@ -147,10 +147,10 @@ procedure TTestDateToISO8601.TestEmptyDateTime;
 var
   ISOStr: string;
 begin
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(0, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(0);
   Assert.AreEqual('', ISOStr);
 
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(0, False);
+  ISOStr := TYAMLDateUtils.LocalDateToISO8601Str(0);
   Assert.AreEqual('', ISOStr);
 end;
 
@@ -160,7 +160,7 @@ var
   ISOStr: string;
 begin
   TestDate := EncodeDateTime(2023, 12, 25, 0, 0, 0, 0);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
 
   Assert.IsTrue(ISOStr.Contains('T00:00:00'));
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
@@ -172,7 +172,7 @@ var
   ISOStr: string;
 begin
   TestDate := EncodeDateTime(2023, 12, 25, 12, 0, 0, 0);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
 
   Assert.IsTrue(ISOStr.Contains('T12:00:00'));
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
@@ -184,7 +184,7 @@ var
   ISOStr: string;
 begin
   TestDate := EncodeDateTime(2023, 12, 31, 23, 59, 59, 999);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
 
   Assert.AreEqual('2023-12-31T23:59:59.999Z', ISOStr);
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
@@ -196,7 +196,7 @@ var
   ISOStr: string;
 begin
   TestDate := EncodeDateTime(2024, 2, 29, 12, 0, 0, 0);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
 
   Assert.IsTrue(ISOStr.StartsWith('2024-02-29'));
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
@@ -208,7 +208,7 @@ var
   ISOStr: string;
 begin
   TestDate := EncodeDateTime(1900, 1, 1, 0, 0, 0, 0);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
 
   Assert.AreEqual('1900-01-01T00:00:00Z', ISOStr);
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
@@ -220,7 +220,7 @@ var
   ISOStr: string;
 begin
   TestDate := EncodeDateTime(9999, 12, 31, 23, 59, 59, 999);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
 
   Assert.AreEqual('9999-12-31T23:59:59.999Z', ISOStr);
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
@@ -233,8 +233,8 @@ var
 begin
   TestDate := EncodeDateTime(2023, 12, 25, 14, 30, 15, 0);
 
-  UTCStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
-  LocalStr := TYAMLDateUtils.DateToISO8601Str(TestDate, False);
+  UTCStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
+  LocalStr := TYAMLDateUtils.LocalDateToISO8601Str(TestDate);
 
   Assert.IsTrue(UTCStr.EndsWith('Z'));
   Assert.IsFalse(LocalStr.EndsWith('Z'));
@@ -248,7 +248,7 @@ var
   TimeZoneInfo: string;
 begin
   TestDate := Now; // Use current time for realistic local time test
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, False);
+  ISOStr := TYAMLDateUtils.LocalDateToISO8601Str(TestDate);
 
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
 
@@ -264,7 +264,7 @@ var
   TimeZoneInfo: string;
 begin
   TestDate := EncodeDateTime(2023, 6, 15, 14, 30, 15, 0); // Summer date
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, False);
+  ISOStr := TYAMLDateUtils.LocalDateToISO8601Str(TestDate);
 
   TimeZoneInfo := ExtractTimeZoneOffset(ISOStr);
 
@@ -279,15 +279,15 @@ var
 begin
   // Test various dates for format compliance
   TestDate := EncodeDateTime(2023, 1, 1, 0, 0, 0, 0);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
 
   TestDate := EncodeDateTime(2023, 12, 31, 23, 59, 59, 999);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
 
   TestDate := EncodeDateTime(2023, 6, 15, 12, 30, 45, 500);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, False);
+  ISOStr := TYAMLDateUtils.LocalDateToISO8601Str(TestDate);
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
 end;
 
@@ -298,22 +298,22 @@ var
 begin
   // Test single digit milliseconds (should be padded)
   TestDate := EncodeDateTime(2023, 12, 25, 14, 30, 15, 5);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
   Assert.IsTrue(ISOStr.Contains('.005'));
 
   // Test double digit milliseconds
   TestDate := EncodeDateTime(2023, 12, 25, 14, 30, 15, 50);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
   Assert.IsTrue(ISOStr.Contains('.050'));
 
   // Test triple digit milliseconds
   TestDate := EncodeDateTime(2023, 12, 25, 14, 30, 15, 500);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
   Assert.IsTrue(ISOStr.Contains('.500'));
 
   // Test zero milliseconds (should not appear)
   TestDate := EncodeDateTime(2023, 12, 25, 14, 30, 15, 0);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
   Assert.IsFalse(ISOStr.Contains('.'));
 end;
 
@@ -323,7 +323,7 @@ var
   ISOStr: string;
 begin
   TestDate := EncodeDateTime(2023, 3, 7, 14, 30, 15, 0);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
 
   Assert.IsTrue(ISOStr.StartsWith('2023-03-07'));
 end;
@@ -334,7 +334,7 @@ var
   ISOStr: string;
 begin
   TestDate := EncodeDateTime(2023, 12, 25, 9, 5, 3, 0);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
 
   Assert.IsTrue(ISOStr.Contains('T09:05:03'));
 end;
@@ -347,7 +347,7 @@ begin
   OriginalDate := EncodeDateTime(2023, 12, 25, 14, 30, 15, 0);
 
   // Convert to ISO string and back
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(OriginalDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(OriginalDate);
 
   // Note: This would require the ISO8601StrToDateTime function to test round-trip
   // For now, just verify the string format is correct
@@ -362,7 +362,7 @@ var
 begin
   OriginalDate := EncodeDateTime(2023, 12, 25, 14, 30, 15, 123);
 
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(OriginalDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(OriginalDate);
   Assert.AreEqual('2023-12-25T14:30:15.123Z', ISOStr);
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
 end;
@@ -374,17 +374,17 @@ var
 begin
   // Test New Year's Day
   TestDate := EncodeDateTime(2024, 1, 1, 0, 0, 0, 0);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
   Assert.AreEqual('2024-01-01T00:00:00Z', ISOStr);
 
   // Test Christmas
   TestDate := EncodeDateTime(2023, 12, 25, 12, 0, 0, 0);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
   Assert.AreEqual('2023-12-25T12:00:00Z', ISOStr);
 
   // Test leap day
   TestDate := EncodeDateTime(2024, 2, 29, 15, 45, 30, 500);
-  ISOStr := TYAMLDateUtils.DateToISO8601Str(TestDate, True);
+  ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
   Assert.AreEqual('2024-02-29T15:45:30.500Z', ISOStr);
 end;
 

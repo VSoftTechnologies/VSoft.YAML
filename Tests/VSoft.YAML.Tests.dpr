@@ -38,7 +38,9 @@ uses
   VSoft.YAML.Tests.JSON in 'VSoft.YAML.Tests.JSON.pas',
   VSoft.YAML.Writer.JSON in '..\Source\VSoft.YAML.Writer.JSON.pas',
   VSoft.YAML.Tests.JSON.Writer in 'VSoft.YAML.Tests.JSON.Writer.pas',
-  VSoft.YAML.Tests.CharUtils in 'VSoft.YAML.Tests.CharUtils.pas';
+  VSoft.YAML.Tests.CharUtils in 'VSoft.YAML.Tests.CharUtils.pas',
+  VSoft.YAML.Tests.SequenceProperties in 'VSoft.YAML.Tests.SequenceProperties.pas',
+  VSoft.YAML.Tests.DateUtils in 'VSoft.YAML.Tests.DateUtils.pas';
 
 { keep comment here to protect the following conditional from being removed by the IDE when adding a unit }
 {$IFNDEF TESTINSIGHT}

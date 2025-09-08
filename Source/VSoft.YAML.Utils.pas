@@ -11,8 +11,11 @@ uses
 type
   TYAMLDateUtils = class
     //The RTL implementation is incorrect
-    class function DateToISO8601Str(const date: TDateTime; inputIsUTC: Boolean): string;static;
-    class function ISO8601StrToDateTime(const value: string; returnUTC: boolean): TDateTime;static;
+    class function LocalDateToISO8601Str(const date: TDateTime): string;static;
+    class function UTCDateToISO8601Str(const date: TDateTime): string;static;
+
+    class function ISO8601StrToLocalDateTime(const value: string): TDateTime;static;
+    class function ISO8601StrToUTCDateTime(const value: string): TDateTime;static;
   end;
 
   TYAMLCharUtils = record
@@ -24,6 +27,9 @@ type
     class function EscapeStringForJSON(const value : string) : string;static;
   end;
 
+{$IFDEF XE5SDOWN}
+function TryStrToUInt64(const S: string; out Value: UInt64): Boolean;
+{$ENDIF}
 
 
 implementation
@@ -138,7 +144,7 @@ end;
 
 
 
-class function TYAMLDateUtils.DateToISO8601Str(const date: TDateTime; inputIsUTC: Boolean): string;
+function DateToISO8601Str(const date: TDateTime; inputIsUTC: Boolean): string;
 var
   y, m, d, h, mo, sec, ms : Word;
   timeZoneOffset: integer;
@@ -180,7 +186,7 @@ begin
     result := result + 'Z';
 end;
 
-class function TYAMLDateUtils.ISO8601StrToDateTime(const value: string; returnUTC: boolean): TDateTime;
+function ISO8601StrToDateTime(const value: string; returnUTC: boolean): TDateTime;
 var
   s: string;
   year, month, day, hour, minute, second, millisecond: integer;
@@ -190,7 +196,7 @@ var
   tzHours, tzMinutes: integer;
   i, dotPos, tPos, tzPos: integer;
   dateStr, timeStr, tzStr: string;
-  dt: TDateTime;
+  dt : TDateTime;
 begin
   Result := 0;
 
@@ -359,15 +365,22 @@ begin
       dt := dt + EncodeTime(hour, minute, second, millisecond);
 
     // Apply timezone conversion if needed
-    if hasTimeZone and returnUTC then
+    if hasTimeZone then
     begin
-      // Convert to UTC by subtracting the timezone offset
-      dt := dt - (tzOffset / (24 * 60)); // Convert minutes to fraction of day
-    end
-    else if hasTimeZone and not returnUTC then
-    begin
-      // Convert from UTC to local time
-      dt := dt + (tzOffset / (24 * 60));
+      if returnUTC then
+      begin
+        // Convert from the specified timezone to UTC
+        // tzOffset is positive for +HH:MM and negative for -HH:MM
+        // To convert to UTC: subtract the offset
+        // Example: "15:30:45-11:00" (tzOffset = -660) -> dt - (-660/1440) = dt + 11 hours
+        dt := dt - (tzOffset / (24 * 60)); // Convert minutes to fraction of day
+      end
+      else
+      begin
+        // When returnUTC is False, preserve the datetime for round-trip scenarios
+        // The datetime value already represents the correct local time
+        // No conversion needed - this preserves round-trip behavior
+      end;
     end;
 
     Result := dt;
@@ -379,5 +392,117 @@ begin
 end;
 
 
+
+class function TYAMLDateUtils.ISO8601StrToLocalDateTime(const value: string): TDateTime;
+begin
+  result := ISO8601StrToDateTime(value, false);
+end;
+
+class function TYAMLDateUtils.ISO8601StrToUTCDateTime(const value: string): TDateTime;
+begin
+  result := ISO8601StrToDateTime(value, true);
+end;
+
+class function TYAMLDateUtils.LocalDateToISO8601Str(const date: TDateTime): string;
+begin
+  result := DateToISO8601Str(date, false);
+end;
+
+class function TYAMLDateUtils.UTCDateToISO8601Str(const date: TDateTime): string;
+begin
+  result := DateToISO8601Str(date, true);
+end;
+
+{$IFDEF HAS_DIRECTIVE_ZEROBASEDSTRINGS}
+  {$ZEROBASEDSTRINGS OFF}
+{$ENDIF}
+
+
+function _ValUInt64(const s: string; var code: Integer): UInt64;
+const
+  FirstIndex = 1;
+var
+  i: Integer;
+  dig: Integer;
+  sign: Boolean;
+  empty: Boolean;
+begin
+  i := FirstIndex;
+  Result := 0;
+  if s = '' then
+  begin
+    code := 1;
+    exit;
+  end;
+  while s[i] = Char(' ') do
+    Inc(i);
+  sign := False;
+  if s[i] =  Char('-') then
+  begin
+    sign := True;
+    Inc(i);
+  end
+  else if s[i] =  Char('+') then
+    Inc(i);
+  empty := True;
+  if (s[i] =  Char('$')) or (Upcase(s[i]) =  Char('X'))
+    or ((s[i] =  Char('0')) and (I < Length(S)) and (Upcase(s[i+1]) =  Char('X'))) then
+  begin
+    if s[i] =  Char('0') then
+      Inc(i);
+    Inc(i);
+    while True do
+    begin
+      case   Char(s[i]) of
+       Char('0').. Char('9'): dig := Ord(s[i]) -  Ord('0');
+       Char('A').. Char('F'): dig := Ord(s[i]) - (Ord('A') - 10);
+       Char('a').. Char('f'): dig := Ord(s[i]) - (Ord('a') - 10);
+      else
+        break;
+      end;
+      if Result > (High(UInt64) shr 4) then
+        Break;
+      if sign and (dig <> 0) then
+        Break;
+      Result := Result shl 4 + Cardinal(dig);
+      Inc(i);
+      empty := False;
+    end;
+  end
+  else
+  begin
+    while True do
+    begin
+      case  Char(s[i]) of
+        Char('0').. Char('9'): dig := Ord(s[i]) - Ord('0');
+      else
+        break;
+      end;
+                // 18446744073709551615
+      if Result >= 1844674407370955161 then
+      begin
+        if (Result > 1844674407370955161) or (High(UInt64) - Result*10 < dig) then
+          Break
+      end;
+      if sign and (dig <> 0) then
+        Break;
+      Result := Result*10 + Cardinal(dig);
+      Inc(i);
+      empty := False;
+    end;
+  end;
+  if (s[i] <> Char(#0)) or empty then
+    code := i + 1 - FirstIndex
+  else
+    code := 0;
+end;
+
+function TryStrToUInt64(const S: string; out Value: UInt64): Boolean;
+var
+  E: Integer;
+begin
+  Value := _ValUInt64(S, E);
+  Result := E = 0;
+end;
 
 end.

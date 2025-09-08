@@ -101,8 +101,7 @@ type
     function GetParent : IYAMLValue;
     function GetRawValue : string;
     function GetValueType : TYAMLValueType;
-    function GetNodes(index : integer) : IYAMLValue;
-    function GetValues(const key : string) : IYAMLValue;
+    function GetValue(const key : string) : IYAMLValue;
     function GetCount : integer;
      // Type checking methods
     function IsNull : boolean;
@@ -147,12 +146,12 @@ type
     property RawValue : string read GetRawValue;
     property Tag : string read GetTag;
     property TagInfo : IYAMLTagInfo read GetTagInfo;
-    property Nodes[Index : integer] : IYAMLValue read GetNodes;
-    property Values[const Key : string] : IYAMLValue read GetValues;
+    property Values[const Key : string] : IYAMLValue read GetValue;
   end;
 
   IYAMLCollection = interface(IYAMLValue)
   ['{9FAE91CC-6945-4D51-882F-EBA0EEF6F7DB}']
+
     function GetHasComments : boolean;
     function GetComments : TStrings;
     procedure SetComments(const value : TStrings);
@@ -185,6 +184,29 @@ type
     function GetCount : integer;
     function GetKey(Index : integer) : string;
     function GetValue(const Key : string) : IYAMLValue;
+
+    function GetObjectString(const key : string) : string;
+    function GetObjectInt(const key: string): Integer;
+    function GetObjectLong(const key: string): Int64;
+    function GetObjectULong(const key: string): UInt64;
+    function GetObjectFloat(const key: string): Double;
+    function GetObjectDateTime(const key: string): TDateTime;
+    function GetObjectUtcDateTime(const key: string): TDateTime;
+    function GetObjectBool(const key: string): Boolean;
+    function GetArray(const key: string): IYAMLSequence;
+    function GetObj(const key: string): IYAMLMapping;
+
+    procedure SetObjectString(const key : string; const value : string);
+    procedure SetObjectInt(const key: string; const Value: Integer);
+    procedure SetObjectLong(const key: string; const Value: Int64);
+    procedure SetObjectULong(const key: string; const Value: UInt64);
+    procedure SetObjectFloat(const key: string; const Value: Double);
+    procedure SetObjectDateTime(const key: string; const Value: TDateTime);
+    procedure SetObjectUtcDateTime(const key: string; const Value: TDateTime);
+    procedure SetObjectBool(const key: string; const Value: Boolean);
+    procedure SetArray(const key: string; const Value: IYAMLSequence);
+    procedure SetObject(const key: string; const Value: IYAMLMapping);
+
 
     function AddOrSetValue(const key : string; const value : boolean; const tag : string = '') : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : boolean; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
@@ -223,9 +245,28 @@ type
     function AddOrSetSet(const key : string; const tagInfo : IYAMLTagInfo) : IYAMLSet;overload;
 
     function ContainsKey(const key : string) : boolean;
+    function Contains(const key : string) : boolean;//for JSONDataObjects api compat
+
     property Count : integer read GetCount;
-    property Items[const Key : string] : IYAMLValue read GetValue;
+    property Items[const key : string] : IYAMLValue read GetValue; default;
     property Keys[index : integer] : string read GetKey;
+
+
+    //JSONDataObjects style API
+    property S[const key: string]: string read GetObjectString write SetObjectString;        // returns '' if property doesn't exist, auto type-cast except for array/object
+    property I[const key: string]: Integer read GetObjectInt write SetObjectInt;             // returns 0 if property doesn't exist, auto type-cast except for array/object
+    property L[const key: string]: Int64 read GetObjectLong write SetObjectLong;             // returns 0 if property doesn't exist, auto type-cast except for array/object
+    property U[const key: string]: UInt64 read GetObjectULong write SetObjectULong;          // returns 0 if property doesn't exist, auto type-cast except for array/object
+    property F[const key: string]: Double read GetObjectFloat write SetObjectFloat;          // returns 0 if property doesn't exist, auto type-cast except for array/object
+    property D[const key: string]: TDateTime read GetObjectDateTime write SetObjectDateTime; // returns 0 if property doesn't exist, auto type-cast except for array/object
+    property DUtc[const key: string]: TDateTime read GetObjectUtcDateTime write SetObjectUtcDateTime; // returns 0 if property doesn't exist, auto type-cast except for array/object
+    property B[const key: string]: Boolean read GetObjectBool write SetObjectBool;           // returns false if property doesn't exist, auto type-cast with "<>'true'" and "<>0" except for array/object
+    // Used to auto create arrays
+    property A[const key: string]: IYAMLSequence read GetArray write SetArray;
+    // Used to auto create objects and as default property where no Implicit operator matches
+    property O[const key: string]: IYAMLMapping read GetObj write SetObject;
+
+
   end;
 
 
@@ -234,6 +275,31 @@ type
   ['{CDBF0300-5E70-45A7-97B7-BA268F1C57E8}']
     function GetCount : integer;
     function GetItem(Index : integer) : IYAMLValue;
+
+    // JSONDataObjects api
+    function GetString(index : integer) : string;
+    function GetInt(index: Integer): Integer;
+    function GetLong(index: Integer): Int64;
+    function GetULong(index: Integer): UInt64;
+    function GetFloat(index: Integer): Double;
+    function GetDateTime(index: Integer): TDateTime;
+    function GetUtcDateTime(index: Integer): TDateTime;
+    function GetBool(index: Integer): Boolean;
+    function GetArray(index: Integer): IYAMLSequence;
+    function GetObj(index: Integer): IYAMLMapping;
+
+    procedure SetString(index: Integer; const value: string);
+    procedure SetInt(index: Integer; const value: integer);
+    procedure SetLong(index: Integer; const value: Int64);
+    procedure SetULong(index: Integer; const value: UInt64);
+    procedure SetFloat(index: Integer; const value: double);
+    procedure SetDateTime(index: Integer; const value: TDateTime);
+    procedure SetUtcDateTime(index: Integer; const value: TDateTime);
+    procedure SetBool(index: Integer; const value: Boolean);
+    procedure SetArray(index: Integer; const value: IYAMLSequence);
+    procedure SetObject(index: Integer; const value: IYAMLMapping);
+    // JSONDataObjects api
+
 
     procedure AddValue(const value : IYAMLValue);overload;
 
@@ -275,6 +341,18 @@ type
 
     property Count : integer read GetCount;
     property Items[Index : integer] : IYAMLValue read GetItem;default;
+
+    property S[index : integer]: string read GetString write SetString;      // returns '' if property doesn't exist, auto type-cast except for array/object
+    property I[Index: Integer]: Integer read GetInt write SetInt;
+    property L[Index: Integer]: Int64 read GetLong write SetLong;
+    property U[Index: Integer]: UInt64 read GetULong write SetULong;
+    property F[Index: Integer]: Double read GetFloat write SetFloat;
+    property D[Index: Integer]: TDateTime read GetDateTime write SetDateTime;
+    property DUtc[Index: Integer]: TDateTime read GetUtcDateTime write SetUtcDateTime;
+    property B[Index: Integer]: Boolean read GetBool write SetBool;
+    property A[Index: Integer]: IYAMLSequence read GetArray write SetArray;
+    property O[Index: Integer]: IYAMLMapping read GetObj write SetObject;
+
   end;
 
   //set is basically a sequence with unique values

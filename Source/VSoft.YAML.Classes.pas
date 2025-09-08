@@ -34,7 +34,7 @@ type
     function GetParent : IYAMLValue;
     function FindRoot : IYAMLValue;
     function GetNodes(Index : integer) : IYAMLValue;virtual;
-    function GetValues(const key : string) : IYAMLValue;virtual;
+    function GetValue(const key : string) : IYAMLValue;virtual;
     function IsTaggedAs(const TagName : string) : boolean;inline;
     procedure ApplyTagConversion;
 
@@ -77,13 +77,6 @@ type
     procedure SetTagInfo(const tagInfo : IYAMLTagInfo);virtual;
     procedure ClearTag;virtual;
 
-    property Parent : IYAMLValue read GetParent;
-    property ValueType : TYAMLValueType read GetValueType;
-    property RawValue : string read GetRawValue;
-    property Tag : string read GetTag;
-    property TagInfo : IYAMLTagInfo read GetTagInfo;
-    property Nodes[index : integer] : IYAMLValue read GetNodes;
-    property Values[const key : string] : IYAMLValue read GetValues;
   public
     constructor Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string = ''; const tag : string = ''); overload;
     constructor Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string; const tagInfo : IYAMLTagInfo); overload;
@@ -91,13 +84,11 @@ type
     destructor Destroy; override;
     // String representation
     function ToString : string; override;
-
   end;
 
   TYAMLCollection = class(TYAMLValue, IYAMLValue, IYAMLCollection)
   private
     FComments : TStringList; // lazy create;
-
   protected
     procedure EnsureComments;
     function GetHasComments : boolean;
@@ -122,10 +113,36 @@ type
   protected
     class function GetNodeValueType : TYAMLValueType;virtual;
     function GetNodes(Index : integer) : IYAMLValue;override;
-    function GetValues(const key : string) : IYAMLValue;override;
+    function GetValue(const key : string) : IYAMLValue;override;
 
     function GetCount : integer;override;
     function GetItem(Index : integer) : IYAMLValue;
+
+    // JSONDataObjects api
+    function GetString(index : integer) : string;
+    function GetInt(index: Integer): Integer;
+    function GetLong(index: Integer): Int64;
+    function GetULong(index: Integer): UInt64;
+    function GetFloat(index: Integer): Double;
+    function GetDateTime(index: Integer): TDateTime;
+    function GetUtcDateTime(index: Integer): TDateTime;
+    function GetBool(index: Integer): Boolean;
+    function GetArray(index: Integer): IYAMLSequence;
+    function GetObj(index: Integer): IYAMLMapping;
+
+    procedure SetString(index: Integer; const value: string);
+    procedure SetInt(index: Integer; const value: integer);
+    procedure SetLong(index: Integer; const value: Int64);
+    procedure SetULong(index: Integer; const value: UInt64);
+    procedure SetFloat(index: Integer; const value: double);
+    procedure SetDateTime(index: Integer; const value: TDateTime);
+    procedure SetUtcDateTime(index: Integer; const value: TDateTime);
+    procedure SetBool(index: Integer; const value: Boolean);
+    procedure SetArray(index: Integer; const value: IYAMLSequence);
+    procedure SetObject(index: Integer; const value: IYAMLMapping);
+    // JSONDataObjects api
+
+
 
     procedure AddValue(const value : IYAMLValue);overload;virtual;
 
@@ -156,8 +173,6 @@ type
     function AddSet(const tag : string = '') : IYAMLSet;overload;
     function AddSet(const tagInfo : IYAMLTagInfo) : IYAMLSet;overload;
 
-    property Count : integer read GetCount;
-    property Items[index : integer] : IYAMLValue read GetItem;
 
   public
     constructor Create(const parent : IYAMLValue; const tag : string);overload;virtual;
@@ -193,10 +208,10 @@ type
   protected
     function GetCount : integer;override;
     function GetNodes(Index : integer) : IYAMLValue;override;
-    function GetValues(const key : string) : IYAMLValue;override;
 
     function GetKey(Index : integer) : string;
-    function GetValue(const key : string) : IYAMLValue;
+    function GetValue(const key : string) : IYAMLValue;override;
+
 
     procedure AddOrSetValue(const key : string; const value : IYAMLValue);overload;
     function AddOrSetValue(const key : string; const value : boolean) : IYAMLValue; overload;
@@ -239,9 +254,32 @@ type
     function AddOrSetSet(const key : string; const tagInfo : IYAMLTagInfo) : IYAMLSet;overload;
 
     function ContainsKey(const key : string) : boolean;
+    function Contains(const key : string) : boolean;//for JSONDataObjects api compat
     function TryGetValue(const key : string; out value : IYAMLValue) : boolean;override;
 
     procedure MergeMapping(const ASourceMapping : IYAMLMapping);
+
+    function GetObjectString(const key : string) : string;
+    function GetObjectInt(const key: string): Integer;
+    function GetObjectLong(const key: string): Int64;
+    function GetObjectULong(const key: string): UInt64;
+    function GetObjectFloat(const key: string): Double;
+    function GetObjectDateTime(const key: string): TDateTime;
+    function GetObjectUtcDateTime(const key: string): TDateTime;
+    function GetObjectBool(const key: string): Boolean;
+    function GetArray(const key: string): IYAMLSequence;
+    function GetObj(const key: string): IYAMLMapping;
+
+    procedure SetObjectString(const key : string; const value : string);
+    procedure SetObjectInt(const key: string; const Value: Integer);
+    procedure SetObjectLong(const key: string; const Value: Int64);
+    procedure SetObjectULong(const key: string; const Value: UInt64);
+    procedure SetObjectFloat(const key: string; const Value: Double);
+    procedure SetObjectDateTime(const key: string; const Value: TDateTime);
+    procedure SetObjectUtcDateTime(const key: string; const Value: TDateTime);
+    procedure SetObjectBool(const key: string; const Value: Boolean);
+    procedure SetArray(const key: string; const Value: IYAMLSequence);
+    procedure SetObject(const key: string; const Value: IYAMLMapping);
   public
     constructor Create(const parent : IYAMLValue; const tag : string);overload;
     constructor Create(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo);overload;
@@ -382,7 +420,10 @@ implementation
 
 uses
   System.Math,
-  VSoft.YAML.Utils, VSoft.YAML.Writer, VSoft.YAML.Path;
+  System.StrUtils,
+  VSoft.YAML.Utils,
+  VSoft.YAML.Writer,
+  VSoft.YAML.Path;
 
 { TYAMLValue }
 
@@ -428,7 +469,7 @@ begin
     begin
       FValueType := TYAMLValueType.vtTimestamp;
       try
-        TYAMLDateUtils.ISO8601StrToDateTime(FRawValue, true);
+        TYAMLDateUtils.ISO8601StrToUTCDateTime(FRawValue);
       except
         raise Exception.CreateFmt('Invalid timestamp value "%s" for !!timestamp tag', [FRawValue]);
       end;
@@ -460,14 +501,14 @@ function TYAMLValue.AsLocalDateTime : TDateTime;
 begin
   if not IsTimeStamp then
     raise Exception.Create('Value is not a timestamp');
-  result := TYAMLDateUtils.ISO8601StrToDateTime(FRawValue, false );
+  result := TYAMLDateUtils.ISO8601StrToLocalDateTime(FRawValue );
 end;
 
 function TYAMLValue.AsUTCDateTime : TDateTime;
 begin
   if not IsTimeStamp then
     raise Exception.Create('Value is not a timestamp');
-  result := TYAMLDateUtils.ISO8601StrToDateTime(FRawValue, true );
+  result := TYAMLDateUtils.ISO8601StrToUTCDateTime(FRawValue);
 end;
 
 
@@ -498,11 +539,17 @@ var
   i: Integer;
   octalStr: string;
   binaryStr: string;
+  uInt64Value : UInt64;
 begin
   if not IsInteger then
     raise Exception.Create('Value is not an integer');
 
   trimmedValue := Trim(FRawValue);
+
+  //safety
+  if Length(trimmedValue) = 0 then
+    exit(0);
+
 
   // Handle hexadecimal numbers (0x or 0X prefix)
   if (Length(trimmedValue) > 2) and (trimmedValue[1] = '0') and
@@ -540,7 +587,18 @@ begin
   end
   else
   begin
+    if CharInSet(trimmedValue[1],['-', '+']) then
+    begin
+      result := StrToInt64(trimmedValue);
+      exit;
+    end;
+
     // Handle regular decimal numbers (including negative)
+    if Length(trimmedValue) >= 13 then
+    begin
+      if TryStrToUInt64(trimmedValue, uInt64Value) then
+        Exit(Int64(uInt64Value));
+    end;
     result := StrToInt64(trimmedValue);
   end;
 end;
@@ -682,7 +740,7 @@ begin
   result := FTagInfo;
 end;
 
-function TYAMLValue.GetValues(const key : string) : IYAMLValue;
+function TYAMLValue.GetValue(const key : string) : IYAMLValue;
 begin
   if not IsMapping then
     raise Exception.Create('Cannot access Values on non-mapping type');
@@ -980,13 +1038,19 @@ end;
 
 function TYAMLSequence.AddValue(const value : TDateTime; isUTC : boolean; const tag : string) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.DateToISO8601Str(value, isUTC), tag);
+  if isUTC then
+    result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.UTCDateToISO8601Str(value), tag)
+  else
+    result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.LocalDateToISO8601Str(value), tag);
   AddValue(result);
 end;
 
 function TYAMLSequence.AddValue(const value : TDateTime; isUTC : boolean; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.DateToISO8601Str(value, isUTC), tagInfo);
+  if isUTC then
+    result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.UTCDateToISO8601Str(value), tagInfo)
+  else
+    result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.LocalDateToISO8601Str(value), tagInfo);
   AddValue(result);
 end;
 
@@ -1020,9 +1084,52 @@ begin
   inherited;
 end;
 
+
+function TYAMLSequence.GetArray(index: Integer): IYAMLSequence;
+begin
+  result := nil;
+  if (index >= 0) and (index < FItems.Count) then
+    result := FItems[index].AsSequence
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+end;
+
+function TYAMLSequence.GetBool(index: Integer): Boolean;
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    result := FItems[index].AsBoolean
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+end;
+
 function TYAMLSequence.GetCount : integer;
 begin
   result := FItems.Count;
+end;
+
+function TYAMLSequence.GetDateTime(index: Integer): TDateTime;
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    result := FItems[index].AsLocalDateTime
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+end;
+
+function TYAMLSequence.GetFloat(index: Integer): Double;
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    result := FItems[index].AsFloat
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+end;
+
+function TYAMLSequence.GetInt(index: Integer): Integer;
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    result := Integer(FItems[index].AsInteger)
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+
 end;
 
 function TYAMLSequence.GetItem(Index : integer) : IYAMLValue;
@@ -1031,6 +1138,25 @@ begin
     result := FItems[index]
   else
     result := TYAMLValue.Create(Self, TYAMLValueType.vtNull, '', '');
+end;
+
+function TYAMLSequence.GetString(index: integer): string;
+begin
+  result := '';
+  if (index >= 0) and (index < FItems.Count) then
+    result := FItems[index].AsString
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+
+end;
+
+function TYAMLSequence.GetLong(index: Integer): Int64;
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    result := FItems[index].AsInteger
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+
 end;
 
 function TYAMLSequence.GetNodes(Index : integer) : IYAMLValue;
@@ -1044,9 +1170,118 @@ begin
   result := TYAMLValueType.vtSequence;
 end;
 
-function TYAMLSequence.GetValues(const key : string) : IYAMLValue;
+
+
+function TYAMLSequence.GetObj(index: Integer): IYAMLMapping;
+begin
+  result := nil;
+  if (index >= 0) and (index < FItems.Count) then
+    result := FItems[index].AsMapping
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+
+end;
+
+
+function TYAMLSequence.GetULong(index: Integer): UInt64;
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    result := UInt64(FItems[index].AsInteger)
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+
+end;
+
+function TYAMLSequence.GetUtcDateTime(index: Integer): TDateTime;
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    result := FItems[index].AsUTCDateTime
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+end;
+
+function TYAMLSequence.GetValue(const key : string) : IYAMLValue;
 begin
   raise Exception.Create('Cannot access Values on sequence type. Use Nodes[index] instead.');
+end;
+
+
+procedure TYAMLSequence.SetArray(index: Integer; const value: IYAMLSequence);
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    FItems[index] := value
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+end;
+
+procedure TYAMLSequence.SetBool(index: Integer; const value: Boolean);
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtBoolean, LowerCase(BoolToStr(value,true)))
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+end;
+
+procedure TYAMLSequence.SetDateTime(index: Integer; const value: TDateTime);
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.LocalDateToISO8601Str(value))
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+end;
+
+procedure TYAMLSequence.SetFloat(index: Integer; const value: double);
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, FloatToStr(value, YAMLFormatSettings))
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+end;
+
+procedure TYAMLSequence.SetInt(index: Integer; const value: integer);
+begin
+  SetLong(index, Int64(value));
+end;
+
+procedure TYAMLSequence.SetString(index: integer; const value: string);
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtString, value)
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+end;
+
+procedure TYAMLSequence.SetLong(index: Integer; const value: Int64);
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(value))
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+end;
+
+
+procedure TYAMLSequence.SetObject(index: Integer; const value: IYAMLMapping);
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    FItems[index] := value
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+end;
+
+procedure TYAMLSequence.SetULong(index: Integer; const value: UInt64);
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, UIntToStr(value))
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+end;
+
+procedure TYAMLSequence.SetUtcDateTime(index: Integer; const value: TDateTime);
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.UTCDateToISO8601Str(value))
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
 
 { TYAMLMapping }
@@ -1110,7 +1345,10 @@ end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.DateToISO8601Str(value,isUTC), '!!timestamp');
+  if isUTC then
+    result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.UTCDateToISO8601Str(value), '!!timestamp')
+  else
+    result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.LocalDateToISO8601Str(value), '!!timestamp');
   AddOrSetValue(key, result);
 end;
 
@@ -1258,16 +1496,27 @@ end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean; const tag : string) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.DateToISO8601Str(value, isUTC), tag);
+  if isUTC then
+    result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.UTCDateToISO8601Str(value), tag)
+  else
+    result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.LocalDateToISO8601Str(value), tag);
   AddOrSetValue(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.DateToISO8601Str(value, isUTC), tagInfo);
+  if isUTC then
+    result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.UTCDateToISO8601Str(value), tagInfo)
+  else
+    result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.LocalDateToISO8601Str(value), tagInfo);
   AddOrSetValue(key, result);
 end;
 
+
+function TYAMLMapping.Contains(const key: string): boolean;
+begin
+  result := FPairs.ContainsKey(key);
+end;
 
 function TYAMLMapping.ContainsKey(const key : string) : boolean;
 begin
@@ -1286,7 +1535,6 @@ begin
   inherited Create(parent, TYAMLValueType.vtMapping, '', tagInfo);
   FPairs := TDictionary<string, IYAMLValue>.Create;
   FKeys := TStringList.Create;
-
 end;
 
 
@@ -1300,6 +1548,15 @@ begin
   FKeys.Free;
   FPairs.Free;
   inherited Destroy;
+end;
+
+function TYAMLMapping.GetArray(const key: string): IYAMLSequence;
+var
+  value : IYAMLValue;
+begin
+  if not TryGetValue(key, value ) then
+    value := AddOrSetSequence(key);
+  result := value.AsSequence;
 end;
 
 function TYAMLMapping.GetCount : integer;
@@ -1320,19 +1577,93 @@ begin
   raise Exception.Create('Cannot access Nodes on mapping type. Use Values["key"] instead.');
 end;
 
+function TYAMLMapping.GetObj(const key: string): IYAMLMapping;
+var
+  value : IYAMLValue;
+begin
+  if not TryGetValue(key, value ) then
+    value := AddOrSetMapping(key);
+  result := value.AsMapping;
+end;
+
+function TYAMLMapping.GetObjectBool(const key: string): Boolean;
+var
+  value : IYAMLValue;
+begin
+  if not TryGetValue(key, value ) then
+    value := AddOrSetValue(key, false);
+  result := value.AsBoolean;
+end;
+
+function TYAMLMapping.GetObjectDateTime(const key: string): TDateTime;
+var
+  value : IYAMLValue;
+begin
+  if not TryGetValue(key, value ) then
+    value := AddOrSetValue(key, MinDateTime);
+  result := value.AsLocalDateTime;
+end;
+
+function TYAMLMapping.GetObjectFloat(const key: string): Double;
+var
+  value : IYAMLValue;
+begin
+  if not TryGetValue(key, value ) then
+    value := AddOrSetValue(key, 0);
+  result := value.AsFloat;
+end;
+
+function TYAMLMapping.GetObjectInt(const key: string): Integer;
+var
+  value : IYAMLValue;
+begin
+  if not TryGetValue(key, value ) then
+    value := AddOrSetValue(key, 0);
+  result := Integer(value.AsInteger);
+end;
+
+function TYAMLMapping.GetObjectLong(const key: string): Int64;
+var
+  value : IYAMLValue;
+begin
+  if not TryGetValue(key, value ) then
+    value := AddOrSetValue(key, 0);
+  result := value.AsInteger;
+end;
+
+function TYAMLMapping.GetObjectString(const key: string): string;
+var
+  value : IYAMLValue;
+begin
+  if not TryGetValue(key, value ) then
+    value := AddOrSetValue(key, '');
+  result := value.AsString;
+end;
+
+function TYAMLMapping.GetObjectULong(const key: string): UInt64;
+var
+  value : IYAMLValue;
+begin
+  if not TryGetValue(key, value ) then
+    value := AddOrSetValue(key, 0);
+  result := UInt64(value.AsInteger);
+
+end;
+
+function TYAMLMapping.GetObjectUtcDateTime(const key: string): TDateTime;
+var
+  value : IYAMLValue;
+begin
+  if not TryGetValue(key, value ) then
+    value := AddOrSetValue(key, MinDateTime);
+  result := value.AsUTCDateTime;
+end;
+
 function TYAMLMapping.GetValue(const key : string) : IYAMLValue;
 begin
   if not FPairs.TryGetValue(key, result) then
     result := TYAMLValue.Create(Self, TYAMLValueType.vtNull,'');
 end;
-
-function TYAMLMapping.GetValues(const key : string) : IYAMLValue;
-begin
-  result := GetValue(key);
-  if result = nil then
-    raise Exception.CreateFmt('key "%s" not found in mapping', [key]);
-end;
-
 
 procedure TYAMLMapping.MergeMapping(const ASourceMapping : IYAMLMapping);
 var
@@ -1370,6 +1701,56 @@ begin
     end;
   end;
 
+end;
+
+procedure TYAMLMapping.SetArray(const key: string; const Value: IYAMLSequence);
+begin
+  AddOrSetValue(key,Value);
+end;
+
+procedure TYAMLMapping.SetObject(const key: string; const Value: IYAMLMapping);
+begin
+  AddOrSetValue(key,Value);
+end;
+
+procedure TYAMLMapping.SetObjectBool(const key: string; const Value: Boolean);
+begin
+  AddOrSetValue(key,Value);
+end;
+
+procedure TYAMLMapping.SetObjectDateTime(const key: string; const Value: TDateTime);
+begin
+  AddOrSetValue(key,Value, true);
+end;
+
+procedure TYAMLMapping.SetObjectFloat(const key: string; const Value: Double);
+begin
+  AddOrSetValue(key,Value);
+end;
+
+procedure TYAMLMapping.SetObjectInt(const key: string; const Value: Integer);
+begin
+  AddOrSetValue(key,Value);
+end;
+
+procedure TYAMLMapping.SetObjectLong(const key: string; const Value: Int64);
+begin
+  AddOrSetValue(key,Value);
+end;
+
+procedure TYAMLMapping.SetObjectString(const key, value: string);
+begin
+  AddOrSetValue(key,Value);
+end;
+
+procedure TYAMLMapping.SetObjectULong(const key: string; const Value: UInt64);
+begin
+  AddOrSetValue(key,Value);
+end;
+
+procedure TYAMLMapping.SetObjectUtcDateTime(const key: string; const Value: TDateTime);
+begin
+  AddOrSetValue(key,Value, true)
 end;
 
 function TYAMLMapping.TryGetValue(const key : string; out value : IYAMLValue) : boolean;
@@ -1712,7 +2093,7 @@ end;
 
 constructor TYAMLSet.Create(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo);
 begin
-  inherited Create(parent, tag);
+  inherited Create(parent, tagInfo);
   FValues := TStringList.Create;
   FValues.Sorted := True;  // For fast duplicate detection
 end;

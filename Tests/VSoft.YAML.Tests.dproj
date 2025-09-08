@@ -27,16 +27,6 @@
         <CfgParent>Base</CfgParent>
         <Base>true</Base>
     </PropertyGroup>
-    <PropertyGroup Condition="('$(Platform)'=='OSX64' and '$(Base)'=='true') or '$(Base_OSX64)'!=''">
-        <Base_OSX64>true</Base_OSX64>
-        <CfgParent>Base</CfgParent>
-        <Base>true</Base>
-    </PropertyGroup>
-    <PropertyGroup Condition="('$(Platform)'=='OSXARM64' and '$(Base)'=='true') or '$(Base_OSXARM64)'!=''">
-        <Base_OSXARM64>true</Base_OSXARM64>
-        <CfgParent>Base</CfgParent>
-        <Base>true</Base>
-    </PropertyGroup>
     <PropertyGroup Condition="('$(Platform)'=='Win32' and '$(Base)'=='true') or '$(Base_Win32)'!=''">
         <Base_Win32>true</Base_Win32>
         <CfgParent>Base</CfgParent>
@@ -92,12 +82,6 @@
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_Linux64)'!=''">
         <DCC_UsePackage>DataSnapServer;fmx;DbxCommonDriver;bindengine;FireDACCommonODBC;tb2k;emsclient;FireDACCommonDriver;dbxcds;inetdb;FireDACSqliteDriver;DbxClientDriver;FireDACASADriver;dbexpress;FrameViewer;FireDACInfxDriver;inet;DataSnapCommon;dbrtl;FireDACOracleDriver;CustomIPTransport;FireDACMSSQLDriver;DataSnapIndy10ServerTransport;DataSnapConnectors;FireDACMongoDBDriver;FireDACTDataDriver;bindcomp;FireDACCommon;DataSnapServerMidas;FireDACODBCDriver;emsserverresource;inetstn;RESTBackendComponents;rtl;FireDACMySQLDriver;AWSSDKFMX;FireDACADSDriver;RESTComponents;dsnapxml;DataSnapClient;DataSnapFireDAC;emsclientfiredac;FireDACPgDriver;FireDAC;xmlrtl;dsnap;CloudService;FireDACDb2Driver;DataSnapNativeClient;DatasnapConnectorsFreePascal;soaprtl;RaizeComponentsVcl;FireDACIBDriver;$(DCC_UsePackage)</DCC_UsePackage>
-    </PropertyGroup>
-    <PropertyGroup Condition="'$(Base_OSX64)'!=''">
-        <DCC_UsePackage>DataSnapServer;fmx;DbxCommonDriver;bindengine;FireDACCommonODBC;tb2k;emsclient;FireDACCommonDriver;dbxcds;bindcompfmx;DBXFirebirdDriver;inetdb;FireDACSqliteDriver;DbxClientDriver;FireDACASADriver;fmxFireDAC;dbexpress;FrameViewer;DBXMySQLDriver;inet;DataSnapCommon;fmxase;dbrtl;FireDACDBXDriver;FireDACOracleDriver;fmxdae;CustomIPTransport;FireDACMSSQLDriver;DataSnapIndy10ServerTransport;DBXInterBaseDriver;FireDACMongoDBDriver;FireDACTDataDriver;bindcomp;FireDACCommon;DataSnapServerMidas;FireDACODBCDriver;emsserverresource;inetstn;RESTBackendComponents;bindcompdbx;rtl;FireDACMySQLDriver;AWSSDKFMX;RESTComponents;DBXSqliteDriver;dsnapxml;DataSnapClient;DataSnapProviderClient;DataSnapFireDAC;emsclientfiredac;FireDACPgDriver;FireDAC;FireDACDSDriver;inetdbxpress;xmlrtl;dsnap;CloudService;DBXSybaseASADriver;DBXOracleDriver;DBXInformixDriver;fmxobj;DataSnapNativeClient;soaprtl;RaizeComponentsVcl;FireDACIBDriver;$(DCC_UsePackage)</DCC_UsePackage>
-    </PropertyGroup>
-    <PropertyGroup Condition="'$(Base_OSXARM64)'!=''">
-        <DCC_UsePackage>DataSnapServer;fmx;DbxCommonDriver;bindengine;FireDACCommonODBC;tb2k;emsclient;FireDACCommonDriver;dbxcds;bindcompfmx;DBXFirebirdDriver;inetdb;FireDACSqliteDriver;DbxClientDriver;FireDACASADriver;fmxFireDAC;dbexpress;FrameViewer;DBXMySQLDriver;inet;DataSnapCommon;fmxase;dbrtl;FireDACDBXDriver;FireDACOracleDriver;fmxdae;CustomIPTransport;FireDACMSSQLDriver;DataSnapIndy10ServerTransport;DBXInterBaseDriver;FireDACMongoDBDriver;FireDACTDataDriver;bindcomp;FireDACCommon;DataSnapServerMidas;FireDACODBCDriver;emsserverresource;inetstn;RESTBackendComponents;bindcompdbx;rtl;FireDACMySQLDriver;AWSSDKFMX;RESTComponents;DBXSqliteDriver;dsnapxml;DataSnapClient;DataSnapProviderClient;DataSnapFireDAC;emsclientfiredac;FireDACPgDriver;FireDAC;FireDACDSDriver;inetdbxpress;xmlrtl;dsnap;CloudService;DBXSybaseASADriver;DBXOracleDriver;DBXInformixDriver;fmxobj;DataSnapNativeClient;soaprtl;RaizeComponentsVcl;FireDACIBDriver;$(DCC_UsePackage)</DCC_UsePackage>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_Win32)'!=''">
         <DCC_UsePackage>vclwinx;DataSnapServer;fmx;vclie;DbxCommonDriver;bindengine;VCLRESTComponents;FireDACCommonODBC;DBXMSSQLDriver;tb2k;emsclient;FireDACCommonDriver;ApperceptAPIClient;IndyProtocols;vclx;Skia.Package.RTL;dbxcds;vcledge;bindcompvclwinx;htmlcomp_xe12;bindcompfmx;DBXFirebirdDriver;madBasic_;inetdb;VSoftUIComponents;GFDLIB;FireDACSqliteDriver;DbxClientDriver;FireDACASADriver;vclactnband;fmxFireDAC;dbexpress;FrameViewer;FireDACInfxDriver;DBXMySQLDriver;VclSmp;inet;DataSnapCommon;KWizardR;vcltouch;fmxase;DBXOdbcDriver;dbrtl;FireDACDBXDriver;Skia.Package.FMX;FireDACOracleDriver;fmxdae;FireDACMSAccDriver;CustomIPTransport;FireDACMSSQLDriver;DataSnapIndy10ServerTransport;NxCommonRun;DataSnapConnectors;vcldsnap;DBXInterBaseDriver;madExcept_;FireDACMongoDBDriver;IndySystem;lmdrtl;FireDACTDataDriver;Skia.Package.VCL;vcldb;VirtualTreesR;SynEditDR;SpTBXLib;vclFireDAC;madDisAsm_;bindcomp;FireDACCommon;DataSnapServerMidas;FireDACODBCDriver;emsserverresource;inetstn;NxGridRun;IndyCore;RESTBackendComponents;dwWin7Controls;bindcompdbx;lmdrtdocking;rtl;FireDACMySQLDriver;AWSSDKFMX;FireDACADSDriver;AWSSDKVCL;RESTComponents;FBFormDesigner;DBXSqliteDriver;vcl;dsnapxml;adortl;dsnapcon;DataSnapClient;DataSnapProviderClient;DBXSybaseASEDriver;NxGridDsgn;DBXDb2Driver;VSPageR;JSDialogPack;vclimg;DataSnapFireDAC;emsclientfiredac;FireDACPgDriver;FireDAC;FireDACDSDriver;inetdbxpress;xmlrtl;FBSynEditHighlighters;bindcompvcl;dsnap;CloudService;DBXSybaseASADriver;DBXOracleDriver;FireDACDb2Driver;DBXInformixDriver;fmxobj;bindcompvclsmp;DataSnapNativeClient;VSoftToolBarR;hclcore_xe12;DatasnapConnectorsFreePascal;soaprtl;FBDreamRuntime;RaizeComponentsVcl;FireDACIBDriver;$(DCC_UsePackage)</DCC_UsePackage>
@@ -170,6 +154,8 @@
         <DCCReference Include="..\Source\VSoft.YAML.Writer.JSON.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.JSON.Writer.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.CharUtils.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.SequenceProperties.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.DateUtils.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
@@ -207,12 +193,6 @@
                         <Overwrite>true</Overwrite>
                     </Platform>
                 </DeployFile>
-                <DeployFile LocalName="All Platforms\Debug\VSoft.YAML.Tests" Configuration="Debug" Class="ProjectOutput">
-                    <Platform Name="All Platforms">
-                        <RemoteName>VSoft_YAML_Tests</RemoteName>
-                        <Overwrite>true</Overwrite>
-                    </Platform>
-                </DeployFile>
                 <DeployFile LocalName="Linux64\Debug\VSoft.YAML.Tests" Configuration="Debug" Class="ProjectOutput">
                     <Platform Name="Linux64">
                         <RemoteName>VSoft_YAML_Tests</RemoteName>
@@ -221,14 +201,6 @@
                 </DeployFile>
                 <DeployFile LocalName="TestFiles\test_comment_sample.yaml" Configuration="Debug" Class="File">
                     <Platform Name="Linux64">
-                        <RemoteName>test_comment_sample.yaml</RemoteName>
-                        <Overwrite>true</Overwrite>
-                    </Platform>
-                    <Platform Name="OSX64">
-                        <RemoteName>test_comment_sample.yaml</RemoteName>
-                        <Overwrite>true</Overwrite>
-                    </Platform>
-                    <Platform Name="OSXARM64">
                         <RemoteName>test_comment_sample.yaml</RemoteName>
                         <Overwrite>true</Overwrite>
                     </Platform>
@@ -243,14 +215,6 @@
                 </DeployFile>
                 <DeployFile LocalName="TestFiles\test_deep_nesting.yaml" Configuration="Debug" Class="File">
                     <Platform Name="Linux64">
-                        <RemoteName>test_deep_nesting.yaml</RemoteName>
-                        <Overwrite>true</Overwrite>
-                    </Platform>
-                    <Platform Name="OSX64">
-                        <RemoteName>test_deep_nesting.yaml</RemoteName>
-                        <Overwrite>true</Overwrite>
-                    </Platform>
-                    <Platform Name="OSXARM64">
                         <RemoteName>test_deep_nesting.yaml</RemoteName>
                         <Overwrite>true</Overwrite>
                     </Platform>

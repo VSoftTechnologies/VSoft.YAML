@@ -16,6 +16,12 @@
     {$DEFINE XE3PLUS}
 {$IFEND}
 
+{$IF CompilerVersion < 27.0 } //XE5 or earlier
+  //No TryStrToUInt64
+    {$DEFINE XE5SDOWN}
+{$IFEND}
+
+
 {$IF CompilerVersion > 32.0 }
     {$DEFINE D10_3PLUS}
 {$IFEND}

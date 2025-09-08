@@ -1546,7 +1546,7 @@ begin
   doc := TYAML.LoadFromString(CreateSimpleSequence);
   root := doc.AsSequence;
 
-  outOfRangeValue := root.Nodes[99];
+  outOfRangeValue := root.Items[99];
   Assert.AreEqual(TYAMLValueType.vtNull, outOfRangeValue.ValueType);
 end;
 
