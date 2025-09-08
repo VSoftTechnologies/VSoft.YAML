@@ -1,7 +1,7 @@
 {
  "metadata": {
   "id": "VSoft.YAML",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "YAML/JSON Parser/Writer for Delphi XE2+",
   "authors": "Vincent Parrett",
   "projectUrl": "https://github.com/VSoftTechnologies/VSoft.YAML",
@@ -109,6 +109,13 @@
    "searchPaths": [
     {
      "path": "Lib"
+    }
+   ],
+   "build": [
+    {
+     "id": "runtime",
+     "project": "Packages\\RAD Studio $Compiler$\\VSoft.YAMLR.dproj",
+     "config": ""
     }
    ]
   }
