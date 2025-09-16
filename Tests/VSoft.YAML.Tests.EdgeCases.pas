@@ -42,6 +42,12 @@ type
     [Test]
     procedure Test_InvalidYAML_TabsVsSpaces;
     [Test]
+    procedure Test_InvalidYAML_TabsInNestedStructure;
+    [Test]
+    procedure Test_InvalidYAML_MixedTabsAndSpaces;
+    [Test]
+    procedure Test_ValidYAML_TabsInQuotedStrings;
+    [Test]
     procedure Test_InvalidYAML_UnterminatedString;
     [Test]
     procedure Test_InvalidYAML_InvalidUnicode;
@@ -380,15 +386,15 @@ var
 begin
   yamlWithTabs := 'parent:' + sLineBreak + #9 + 'child: value';
 
-  // Some YAML parsers are strict about tabs vs spaces
-  try
-    TYAML.LoadFromString(yamlWithTabs);
-    // If it succeeds, that's also valid behavior
-  except
-    on E: EYAMLParseException do
-      // Expected if parser is strict about indentation
-      Assert.Pass('Parser correctly rejects mixed indentation');
-  end;
+  // YAML 1.2 specification: Tabs are not allowed for indentation
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(yamlWithTabs);
+    end,
+    EYAMLParseException,
+    'Tabs are not allowed for indentation in YAML'
+  );
 end;
 
 procedure TYAMLEdgeCasesTests.Test_InvalidYAML_UnterminatedString;
@@ -1681,6 +1687,63 @@ begin
 
   yamlStr := TYAML.WriteToString(doc);
   Assert.IsNotEmpty(yamlStr);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_InvalidYAML_TabsInNestedStructure;
+var
+  yamlWithTabs: string;
+begin
+  yamlWithTabs := 'level1:' + sLineBreak + 
+                  '  level2:' + sLineBreak + 
+                  #9 + '    level3: value';
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(yamlWithTabs);
+    end,
+    EYAMLParseException,
+    'Tabs are not allowed for indentation in YAML'
+  );
+end;
+
+procedure TYAMLEdgeCasesTests.Test_InvalidYAML_MixedTabsAndSpaces;
+var
+  yamlWithMixed: string;
+begin
+  yamlWithMixed := 'key1: value1' + sLineBreak + 
+                   '  key2: value2' + sLineBreak + 
+                   #9 + ' key3: value3';
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(yamlWithMixed);
+    end,
+    EYAMLParseException,
+    'Tabs are not allowed for indentation in YAML'
+  );
+end;
+
+procedure TYAMLEdgeCasesTests.Test_ValidYAML_TabsInQuotedStrings;
+var
+  yamlWithTabsInStrings: string;
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+begin
+  yamlWithTabsInStrings := 'quoted: "This has' + #9 + 'tabs inside"' + sLineBreak + 
+                           'literal: |' + sLineBreak + 
+                           '  Line with' + #9 + 'tab';
+
+  // Tabs inside quoted strings and block scalars should be allowed
+  Assert.WillNotRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(yamlWithTabsInStrings);
+      root := doc.AsMapping;
+      Assert.Contains(root.Items['quoted'].AsString, #9);
+    end
+  );
 end;
 
 initialization

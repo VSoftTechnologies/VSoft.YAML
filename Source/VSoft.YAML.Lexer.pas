@@ -666,7 +666,11 @@ begin
     if FReader.Current = ' ' then
       Inc(count)
     else if FReader.Current = #9 then
-      Inc(count, 4); // Tab = 4 spaces
+    begin
+      // YAML 1.2 specification: Tabs are not allowed for indentation
+      FReader.Restore;
+      raise EYAMLParseException.Create('Tabs are not allowed for indentation in YAML', FReader.Line, FReader.Column);
+    end;
     FReader.Read;
   end;
 
