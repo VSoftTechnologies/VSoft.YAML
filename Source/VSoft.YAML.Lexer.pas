@@ -1102,13 +1102,18 @@ begin
           result.TokenKind := TYAMLTokenKind.Value;
           result.Value := ReadSpecialFloat;
         end
-        else
+        else if TYAMLCharUtils.IsDigit(FReader.Peek()) then
         begin
           result.TokenKind := TYAMLTokenKind.Value;
           result.Value := ReadNumber;
           // If ReadNumber returns empty (due to multiple dots), treat as unquoted string
           if result.Value = '' then
             result.Value := ReadUnquotedString;
+        end
+        else
+        begin
+          result.TokenKind := TYAMLTokenKind.Value;
+          result.Value := ReadUnquotedString;
         end;
       end;
 

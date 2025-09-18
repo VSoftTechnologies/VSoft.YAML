@@ -23,6 +23,9 @@ type
     [Test]
     procedure TestTimeStamps;
 
+    [Test]
+    procedure TestValuewithPeriod;
+
   end;
 
 
@@ -133,6 +136,25 @@ begin
   Assert.IsTrue(doc.Root.Values['timestamp1'].IsTimeStamp);
   Assert.IsTrue(doc.Root.Values['timestamp2'].IsTimeStamp);
   Assert.IsTrue(doc.Root.Values['timestamp2'].IsTimeStamp);
+
+end;
+
+procedure TBasicYAMLTests.TestValuewithPeriod;
+var
+  YAMLText: string;
+  doc : IYAMLDocument;
+  expected : string;
+  actual : string;
+begin
+  YAMLText :=
+    'path: ./LICENSE.txt';
+
+  doc := TYAML.LoadFromString(YAMLText);
+  Assert.IsNotNull(doc.Root, 'LoadFromString returned null');
+
+  expected := './LICENSE.txt';
+  actual := doc.Root.AsMapping['path'].AsString;
+  Assert.AreEqual(expected, actual);
 
 end;
 
