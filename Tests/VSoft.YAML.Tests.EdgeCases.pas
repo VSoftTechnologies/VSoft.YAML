@@ -1928,7 +1928,7 @@ var
   yamlContent: string;
   doc: IYAMLDocument;
   root: IYAMLMapping;
-  utcTimePos, utcTimeNeg, localTimePos, localTimeNeg: TDateTime;
+  utcTimePos, utcTimeNeg: TDateTime;
   expectedUTCPos, expectedUTCNeg: TDateTime;
 begin
   // Test timestamps with positive and negative timezone offsets that convert to same UTC time
@@ -1936,12 +1936,10 @@ begin
                  'negative_tz: 2023-12-25T04:30:00-05:30';  // Both should be 10:00:00 UTC
   doc := TYAML.LoadFromString(yamlContent);
   root := doc.AsMapping;
-  
+
   utcTimePos := root.Items['positive_tz'].AsUTCDateTime;
   utcTimeNeg := root.Items['negative_tz'].AsUTCDateTime;
-  localTimePos := root.Items['positive_tz'].AsLocalDateTime;
-  localTimeNeg := root.Items['negative_tz'].AsLocalDateTime;
-  
+
   // Both should convert to the same UTC time: 10:00:00 UTC on 2023-12-25
   Assert.AreEqual(utcTimePos, utcTimeNeg, 1 / (24 * 60 * 60), 'UTC times should be equal within 1 second');
   

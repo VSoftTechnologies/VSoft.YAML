@@ -189,7 +189,6 @@ end;
 
 function TYAMLLexer.ReadQuotedString(Quote : Char) : string;
 var
-  escaped : boolean;
   foundClosingQuote : boolean;
   isValidUnicodeEscape : Boolean;
   i : Integer;
@@ -199,7 +198,6 @@ var
 begin
   result := '';
   FReader.Read; // Skip opening quote
-  escaped := False;
   foundClosingQuote := False;
 
   while not IsAtEnd do
