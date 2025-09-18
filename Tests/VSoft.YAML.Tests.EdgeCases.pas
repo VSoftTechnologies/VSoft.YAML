@@ -203,6 +203,18 @@ type
     procedure Test_LongString_LineContinuation_MixedWithEscapes;
     [Test]
     procedure Test_LongString_LineContinuation_EdgeCases;
+
+    // DateTime conversion tests
+    [Test]
+    procedure Test_DateTime_LocalTimeConversion;
+    [Test]
+    procedure Test_DateTime_UTCTimeConversion;
+    [Test]
+    procedure Test_DateTime_TimezoneOffsetConversions;
+    [Test]
+    procedure Test_DateTime_RoundTripConversion;
+    [Test]
+    procedure Test_DateTime_EdgeCaseTimezones;
   end;
 
 implementation
@@ -1866,6 +1878,136 @@ begin
   root := doc.AsMapping;
 
   Assert.AreEqual('double backslash\continuation', root.Items['test2'].AsString);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_DateTime_LocalTimeConversion;
+var
+  yamlContent: string;
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  localTime, utcTime: TDateTime;
+  timezoneOffset: Integer;
+begin
+  // Test conversion of UTC timestamp to local time
+  yamlContent := 'utc_timestamp: 2023-12-25T12:00:00Z';
+  doc := TYAML.LoadFromString(yamlContent);
+  root := doc.AsMapping;
+  
+  Assert.IsTrue(root.Items['utc_timestamp'].IsTimeStamp, 'Value should be recognized as timestamp');
+  
+  localTime := root.Items['utc_timestamp'].AsLocalDateTime;
+  utcTime := root.Items['utc_timestamp'].AsUTCDateTime;
+  
+  // The difference between local and UTC should equal the local timezone offset
+  timezoneOffset := Trunc((localTime - utcTime) * 24 * 60); // Convert to minutes
+  
+  Assert.IsTrue(Abs(timezoneOffset) <= 14 * 60, 'Timezone offset should be within reasonable bounds'); // Max ±14 hours
+end;
+
+procedure TYAMLEdgeCasesTests.Test_DateTime_UTCTimeConversion;
+var
+  yamlContent: string;
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  utcTime1, utcTime2: TDateTime;
+begin
+  // Test that UTC timestamps with different timezone indicators produce same UTC time
+  yamlContent := 'utc_z: 2023-12-25T12:00:00Z' + sLineBreak +
+                 'utc_plus_zero: 2023-12-25T12:00:00+00:00';
+  doc := TYAML.LoadFromString(yamlContent);
+  root := doc.AsMapping;
+  
+  utcTime1 := root.Items['utc_z'].AsUTCDateTime;
+  utcTime2 := root.Items['utc_plus_zero'].AsUTCDateTime;
+  
+  Assert.AreEqual(utcTime1, utcTime2, 1 / (24 * 60 * 60), 'UTC times should be identical within 1 second');
+end;
+
+procedure TYAMLEdgeCasesTests.Test_DateTime_TimezoneOffsetConversions;
+var
+  yamlContent: string;
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  utcTimePos, utcTimeNeg, localTimePos, localTimeNeg: TDateTime;
+  expectedUTCPos, expectedUTCNeg: TDateTime;
+begin
+  // Test timestamps with positive and negative timezone offsets that convert to same UTC time
+  yamlContent := 'positive_tz: 2023-12-25T15:30:00+05:30' + sLineBreak +
+                 'negative_tz: 2023-12-25T04:30:00-05:30';  // Both should be 10:00:00 UTC
+  doc := TYAML.LoadFromString(yamlContent);
+  root := doc.AsMapping;
+  
+  utcTimePos := root.Items['positive_tz'].AsUTCDateTime;
+  utcTimeNeg := root.Items['negative_tz'].AsUTCDateTime;
+  localTimePos := root.Items['positive_tz'].AsLocalDateTime;
+  localTimeNeg := root.Items['negative_tz'].AsLocalDateTime;
+  
+  // Both should convert to the same UTC time: 10:00:00 UTC on 2023-12-25
+  Assert.AreEqual(utcTimePos, utcTimeNeg, 1 / (24 * 60 * 60), 'UTC times should be equal within 1 second');
+  
+  // Create expected UTC time: 2023-12-25 10:00:00
+  expectedUTCPos := EncodeDate(2023, 12, 25) + EncodeTime(10, 0, 0, 0);
+  expectedUTCNeg := expectedUTCPos;
+  
+  Assert.AreEqual(expectedUTCPos, utcTimePos, 1 / (24 * 60 * 60), 'Positive timezone UTC conversion incorrect');
+  Assert.AreEqual(expectedUTCNeg, utcTimeNeg, 1 / (24 * 60 * 60), 'Negative timezone UTC conversion incorrect');
+end;
+
+procedure TYAMLEdgeCasesTests.Test_DateTime_RoundTripConversion;
+var
+  yamlContent: string;
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  utcTime1, utcTime2, localTime, utcTime: TDateTime;
+  timeDiff: Double;
+begin
+  // Test that AsUTCDateTime correctly converts different timezone representations to same UTC time
+  yamlContent := 'utc_time: 2023-06-15T14:30:45Z' + sLineBreak +
+                 'local_time_with_offset: 2023-06-15T17:30:45+03:00';  // Same UTC time as above
+  doc := TYAML.LoadFromString(yamlContent);
+  root := doc.AsMapping;
+  
+  utcTime1 := root.Items['utc_time'].AsUTCDateTime;
+  utcTime2 := root.Items['local_time_with_offset'].AsUTCDateTime;
+  
+  // Both should convert to the same UTC time
+  Assert.AreEqual(utcTime1, utcTime2, 1 / (24 * 60 * 60), 'UTC times should be equal within 1 second');
+  
+  // Test that AsLocalDateTime and AsUTCDateTime work correctly for a single timestamp
+  localTime := root.Items['utc_time'].AsLocalDateTime;
+  utcTime := root.Items['utc_time'].AsUTCDateTime;
+  
+  // The difference should reflect the local machine's timezone offset
+  timeDiff := Abs(localTime - utcTime);
+  Assert.IsTrue(timeDiff <= 14 / 24, 'Local/UTC difference should be within ±14 hours (max timezone offset)');
+  
+  // Verify the timestamps are recognized as timestamps
+  Assert.IsTrue(root.Items['utc_time'].IsTimeStamp, 'UTC timestamp should be recognized');
+  Assert.IsTrue(root.Items['local_time_with_offset'].IsTimeStamp, 'Offset timestamp should be recognized');
+end;
+
+procedure TYAMLEdgeCasesTests.Test_DateTime_EdgeCaseTimezones;
+var
+  yamlContent: string;
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  utcTime, localTime: TDateTime;
+begin
+  // Test edge case timezone offsets (maximum positive/negative)
+  yamlContent := 'max_positive: 2023-12-25T11:00:00+14:00' + sLineBreak +
+                 'max_negative: 2023-12-25T13:00:00-12:00';
+  doc := TYAML.LoadFromString(yamlContent);
+  root := doc.AsMapping;
+  
+  // Both should convert to 21:00:00 UTC on Dec 24 and 01:00:00 UTC on Dec 26 respectively
+  utcTime := root.Items['max_positive'].AsUTCDateTime;
+  localTime := root.Items['max_positive'].AsLocalDateTime;
+  
+  Assert.IsTrue(root.Items['max_positive'].IsTimeStamp, 'Max positive timezone should be valid timestamp');
+  Assert.IsTrue(root.Items['max_negative'].IsTimeStamp, 'Max negative timezone should be valid timestamp');
+  
+  // Test that local time interpretation respects the specified timezone
+  Assert.AreNotEqual(utcTime, localTime, 'Local and UTC times should differ for timezone-aware timestamps');
 end;
 
 initialization

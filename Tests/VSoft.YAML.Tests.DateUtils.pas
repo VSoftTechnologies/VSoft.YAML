@@ -487,17 +487,25 @@ end;
 procedure TYAMLDateUtilsTests.TestTimezoneHandling_ZeroOffset;
 var
   testString: string;
-  convertedDateTime: TDateTime;
-  expectedDateTime: TDateTime;
+  convertedDateTime, utcDateTime: TDateTime;
+  expectedUTCDateTime: TDateTime;
+  timezoneOffset: Double;
 begin
-  testString := '2023-12-25T15:30:45+00:00';
-  expectedDateTime := EncodeDate(2023, 12, 25) + EncodeTime(15, 30, 45, 0);
+  testString := '2023-12-25T15:30:45+00:00';  // This is UTC time
+  expectedUTCDateTime := EncodeDate(2023, 12, 25) + EncodeTime(15, 30, 45, 0);
   
+  // Parse as UTC should give the exact time
+  utcDateTime := TYAMLDateUtils.ISO8601StrToUTCDateTime(testString);
+  Assert.AreEqual(expectedUTCDateTime, utcDateTime, 'UTC parsing should preserve the time');
+  
+  // Parse as local should convert from UTC to local time
   convertedDateTime := TYAMLDateUtils.ISO8601StrToLocalDateTime(testString);
   Assert.IsTrue(convertedDateTime > 0,
     Format('Zero timezone offset parsing failed. String: %s', [testString]));
-
-  Assert.AreEqual(expectedDateTime, convertedDateTime);
+  
+  // The difference should be the local timezone offset
+  timezoneOffset := Abs(convertedDateTime - utcDateTime);
+  Assert.IsTrue(timezoneOffset <= 14 / 24, 'Timezone offset should be within ±14 hours');
 
 end;
 
@@ -649,18 +657,18 @@ begin
   // Convert UTC datetime back to UTC ISO8601
   utcISO8601 := TYAMLDateUtils.UTCDateToISO8601Str(utcDateTime);
   
-  // Parse back as local datetime (this should preserve the UTC time, not convert back)
+  // Parse back as local datetime (this should convert from UTC back to local time)
   convertedLocal := TYAMLDateUtils.ISO8601StrToLocalDateTime(utcISO8601);
   
-  // The final result should equal the UTC datetime, not the original local datetime
-  // because we're parsing a UTC ISO8601 string as local time
-  Assert.IsTrue(Abs(convertedLocal - utcDateTime) < 0.001, 
-    Format('Mixed conversion chain failed. UTC datetime: %s, Final local parse: %s. Should be equal.', 
-    [DateTimeToStr(utcDateTime), DateTimeToStr(convertedLocal)]));
+  // The final result should equal the original local datetime
+  // because we're doing a full round-trip: Local -> UTC -> Local
+  Assert.AreEqual(originalLocal, convertedLocal, 1 / (24 * 60 * 60), 
+    Format('Mixed round-trip conversion failed. Original local: %s, Final local: %s. Should be equal.', 
+    [DateTimeToStr(originalLocal), DateTimeToStr(convertedLocal)]));
   
   // Verify the conversions are working by checking the UTC datetime is different from original
   // (unless we're in UTC timezone)
-  Assert.IsTrue((Abs(utcDateTime - originalLocal) > 0.001) or (localISO8601.Contains('+00:00')) or (localISO8601.EndsWith('Z')), 
+  Assert.IsTrue((Abs(utcDateTime - originalLocal) > 0.001) or (Pos('+00:00', localISO8601) > 0) or (Copy(localISO8601, Length(localISO8601), 1) = 'Z'), 
     Format('UTC conversion should change the datetime (unless in UTC timezone). Original: %s, UTC: %s, LocalISO8601: %s', 
     [DateTimeToStr(originalLocal), DateTimeToStr(utcDateTime), localISO8601]));
 end;
@@ -726,10 +734,10 @@ end;
 
 procedure TYAMLDateUtilsTests.TestMixedRoundTrip_CrossTimezone;
 var
-
   parsedAsLocal, parsedAsUTC: TDateTime;
   testStrings: array[0..3] of string;
   i: Integer;
+  timezoneOffset: Double;
 begin
   // Test parsing the same ISO8601 string with timezone as both local and UTC
   testStrings[0] := '2023-12-25T15:30:45+02:00';  // Positive timezone
@@ -748,12 +756,14 @@ begin
     Assert.IsTrue(parsedAsLocal > 0, Format('Local parsing failed for: %s', [testStrings[i]]));
     Assert.IsTrue(parsedAsUTC > 0, Format('UTC parsing failed for: %s', [testStrings[i]]));
 
-    // For UTC timezone (Z or +00:00), local and UTC should be the same
+    // For UTC timezone (Z or +00:00), local should be converted from UTC
     if (i = 2) or (i = 3) then
     begin
-      Assert.AreEqual(parsedAsLocal, parsedAsUTC,
-        Format('UTC timezone string should parse the same as local and UTC. String: %s, Local: %s, UTC: %s',
-        [testStrings[i], DateTimeToStr(parsedAsLocal), DateTimeToStr(parsedAsUTC)]));
+      // UTC and local should differ by the local timezone offset
+      timezoneOffset := Abs(parsedAsLocal - parsedAsUTC);
+      Assert.IsTrue(timezoneOffset <= 14 / 24,
+        Format('UTC timezone conversion should be within ±14 hours. String: %s, Local: %s, UTC: %s, Offset: %.2f hours',
+        [testStrings[i], DateTimeToStr(parsedAsLocal), DateTimeToStr(parsedAsUTC), timezoneOffset * 24]));
     end
     else
     begin

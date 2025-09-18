@@ -165,7 +165,7 @@ begin
   if not inputIsUTC then
   begin
     // Get the timezone offset for the original local time
-    timeZoneOffset := Trunc(TTimeZone.Local.GetUTCOffset(date).Negate.TotalMinutes);
+    timeZoneOffset := Trunc(TTimeZone.Local.GetUTCOffset(date).TotalMinutes);
 
     if timeZoneOffset <> 0 then
     begin
@@ -377,10 +377,32 @@ begin
       end
       else
       begin
-        // When returnUTC is False, preserve the datetime for round-trip scenarios
-        // The datetime value already represents the correct local time
-        // No conversion needed - this preserves round-trip behavior
+        // When returnUTC is False, convert to local time
+        if tzOffset = 0 then
+        begin
+          // Input is UTC (Z suffix), convert from UTC to local time
+          tzOffset := Trunc(TTimeZone.Local.GetUTCOffset(dt).TotalMinutes);
+          dt := dt + (tzOffset / (24 * 60)); // Add local offset to UTC time
+        end
+        else
+        begin
+          // Input has explicit timezone offset, preserve for round-trip scenarios
+          // The datetime value already represents the correct local time
+          // No conversion needed - this preserves round-trip behavior
+        end;
       end;
+    end
+    else
+    begin
+      // No timezone information in the string
+      if returnUTC then
+      begin
+        // Treat the datetime as local time and convert to UTC
+        // Get the local timezone offset for this specific datetime
+        tzOffset := Trunc(TTimeZone.Local.GetUTCOffset(dt).TotalMinutes);
+        dt := dt - (tzOffset / (24 * 60)); // Convert from local to UTC
+      end;
+      // If returnUTC is False, treat as local time (no conversion needed)
     end;
 
     Result := dt;
