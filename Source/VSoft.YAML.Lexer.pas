@@ -207,142 +207,238 @@ begin
     if Quote = '"' then
     begin
       // Double-quoted strings: backslash acts as escape character
-      if escaped then
+      if FReader.Current = '\' then
       begin
-        case FReader.Current of
-          // Basic escape sequences
-          '0': result := result + #0;     // Null character
-          'a': result := result + #7;     // Bell character  
-          'b': result := result + #8;     // Backspace
-          't': result := result + #9;     // Horizontal tab
-          'n': result := result + #10;    // Line feed
-          'v': result := result + #11;    // Vertical tab
-          'f': result := result + #12;    // Form feed
-          'r': result := result + #13;    // Carriage return
-          'e': result := result + #27;    // Escape character
-          ' ': result := result + ' ';    // Space
-          '"': result := result + '"';    // Double quote
-          '/': result := result + '/';    // Forward slash
-          '\': result := result + '\';    // Backslash
-          'N': result := result + #$85;   // Next line (NEL)
-          '_': result := result + #$A0;   // Non-breaking space
-          'L': result := result + #$2028; // Line separator  
-          'P': result := result + #$2029; // Paragraph separator
-          'u': begin
-            // Unicode escape sequence \uXXXX (4 hex digits)
-            // Check if the next characters look like hex digits
-            isValidUnicodeEscape := True;
-            FReader.Save;
-            FReader.Read;// Skip 'u'
-
-            // Check if we have 4 hex digits following
-            for i := 1 to 4 do
-            begin
-              if IsAtEnd or not TYAMLCharUtils.IsHexidecimal(FReader.Current) then
-              begin
-                isValidUnicodeEscape := False;
-                break;
-              end;
+        // Check if this is a line continuation (backslash followed by newline)
+        if (FReader.Peek() = #10) or (FReader.Peek() = #13) then
+        begin
+          // Line continuation - skip the backslash and newline, consume any leading whitespace on next line
+          FReader.Read; // Skip the backslash
+          
+          // Skip the newline character(s)
+          if FReader.Current = #13 then
+          begin
+            FReader.Read;
+            if FReader.Current = #10 then
               FReader.Read;
-            end;
-
-            // Restore position
-            FReader.Restore;
-            
-            if isValidUnicodeEscape then
-            begin
-              FReader.Read; // Skip 'u'
-              hexStr := '';
-              for i := 1 to 4 do
-              begin
-                hexStr := hexStr + FReader.Current;
-                FReader.Read;
-              end;
-              // Convert hex to character
-              codePoint := StrToInt('$' + hexStr);
-              result := result + Char(codePoint);
-              escaped := False;
-              Continue; // Skip the FReader.Read at the end of the loop
-            end
-            else
-            begin
-              // Invalid Unicode escape sequence - raise an error
-              raise EYAMLParseException.Create('Invalid Unicode escape sequence: \u' + FReader.Current, FReader.Line, FReader.Column);
-            end;
-          end;
-          'U': begin
-            // Unicode escape sequence \UXXXXXXXX (8 hex digits)
-            // Check if the next characters look like hex digits
-            isValidUnicodeEscape := True;
-            FReader.Save;
-            FReader.Read; // Skip 'U'
-
-            // Check if we have 8 hex digits following
-            for i := 1 to 8 do
-            begin
-              if IsAtEnd or not TYAMLCharUtils.IsHexidecimal(FReader.Current) then
-              begin
-                isValidUnicodeEscape := False;
-                break;
-              end;
-              FReader.Read;
-            end;
-            
-            // Restore position
-            FReader.Restore;
-
-            if isValidUnicodeEscape then
-            begin
-              FReader.Read; // Skip 'U'
-              hexStr := '';
-              for i := 1 to 8 do
-              begin
-                hexStr := hexStr + FReader.Current;
-                FReader.Read;
-              end;
-              // Convert hex to character
-              codePoint64 := StrToInt64('$' + hexStr);
-              if codePoint64 <= $FFFF then
-                result := result + Char(codePoint64)
-              else if codePoint64 <= $10FFFF then
-              begin
-                // Convert to UTF-16 surrogate pair for code points > U+FFFF
-                codePoint64 := codePoint64 - $10000;
-                result := result + Char($D800 + (codePoint64 shr 10));    // High surrogate
-                result := result + Char($DC00 + (codePoint64 and $3FF)); // Low surrogate
-              end
-              else
-                result := result + '?'; // Invalid Unicode code point
-              escaped := False;
-              Continue; // Skip the FReader.Read at the end of the loop
-            end
-            else
-            begin
-              // Invalid Unicode escape sequence - raise an error
-              raise EYAMLParseException.Create('Invalid Unicode escape sequence: \U' + FReader.Current, FReader.Line, FReader.Column);
-            end;
-          end;
-          'x': begin
-            // Hex escape sequence \xXX  
-            FReader.Read; // Skip 'x'
-            if not IsAtEnd and (((FReader.Current >= '0') and (FReader.Current <= '9')) or
-               ((FReader.Current >= 'A') and (FReader.Current <= 'F')) or
-               ((FReader.Current >= 'a') and (FReader.Current <= 'f'))) then
-            begin
-              // For now, simplified - just include literally
-              result := result + '\x' + FReader.Current;
-            end
-            else
-              raise EYAMLParseException.Create('Invalid hex escape sequence', FReader.Line, FReader.Column);
-          end;
+          end
+          else if FReader.Current = #10 then
+            FReader.Read;
+          
+          // Skip any leading whitespace on the continuation line
+          while IsWhitespace(FReader.Current) and not IsAtEnd do
+            FReader.Read;
+          
+          // Continue processing without adding anything to the result
+          Continue;
+        end
         else
-          // Invalid escape sequence - raise an error
-          raise EYAMLParseException.Create('Invalid escape sequence: \' + FReader.Current, FReader.Line, FReader.Column);
+        begin
+          // This is an escape sequence - process it immediately
+          FReader.Read; // Skip the backslash
+          if not IsAtEnd then
+          begin
+            case FReader.Current of
+              // Basic escape sequences
+              '0': begin
+                result := result + #0;     // Null character
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              'a': begin
+                result := result + #7;     // Bell character
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              'b': begin
+                result := result + #8;     // Backspace
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              't': begin
+                result := result + #9;     // Horizontal tab
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              'n': begin
+                result := result + #10;    // Line feed
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              'v': begin
+                result := result + #11;    // Vertical tab
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              'f': begin
+                result := result + #12;    // Form feed
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              'r': begin
+                result := result + #13;    // Carriage return
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              'e': begin
+                result := result + #27;    // Escape character
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              ' ': begin
+                result := result + ' ';    // Space
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              '"': begin
+                result := result + '"';    // Double quote
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              '/': begin
+                result := result + '/';    // Forward slash
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              '\': begin
+                result := result + '\';    // Backslash
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              'N': begin
+                result := result + #$85;   // Next line (NEL)
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              '_': begin
+                result := result + #$A0;   // Non-breaking space
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              'L': begin
+                result := result + #$2028; // Line separator
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              'P': begin
+                result := result + #$2029; // Paragraph separator
+                FReader.Read; // Read the escape character we just processed
+                Continue; // Skip the FReader.Read at the end of the loop
+              end;
+              'u': begin
+                // Unicode escape sequence \uXXXX (4 hex digits)
+                // Check if the next characters look like hex digits
+                isValidUnicodeEscape := True;
+                FReader.Save;
+                FReader.Read;// Skip 'u'
+
+                // Check if we have 4 hex digits following
+                for i := 1 to 4 do
+                begin
+                  if IsAtEnd or not TYAMLCharUtils.IsHexidecimal(FReader.Current) then
+                  begin
+                    isValidUnicodeEscape := False;
+                    break;
+                  end;
+                  FReader.Read;
+                end;
+
+                // Restore position
+                FReader.Restore;
+                
+                if isValidUnicodeEscape then
+                begin
+                  FReader.Read; // Skip 'u'
+                  hexStr := '';
+                  for i := 1 to 4 do
+                  begin
+                    hexStr := hexStr + FReader.Current;
+                    FReader.Read;
+                  end;
+                  // Convert hex to character
+                  codePoint := StrToInt('$' + hexStr);
+                  result := result + Char(codePoint);
+                  Continue; // Skip the FReader.Read at the end of the loop
+                end
+                else
+                begin
+                  // Invalid Unicode escape sequence - raise an error
+                  raise EYAMLParseException.Create('Invalid Unicode escape sequence: \u' + FReader.Current, FReader.Line, FReader.Column);
+                end;
+              end;
+              'U': begin
+                // Unicode escape sequence \UXXXXXXXX (8 hex digits)
+                // Check if the next characters look like hex digits
+                isValidUnicodeEscape := True;
+                FReader.Save;
+                FReader.Read; // Skip 'U'
+
+                // Check if we have 8 hex digits following
+                for i := 1 to 8 do
+                begin
+                  if IsAtEnd or not TYAMLCharUtils.IsHexidecimal(FReader.Current) then
+                  begin
+                    isValidUnicodeEscape := False;
+                    break;
+                  end;
+                  FReader.Read;
+                end;
+                
+                // Restore position
+                FReader.Restore;
+
+                if isValidUnicodeEscape then
+                begin
+                  FReader.Read; // Skip 'U'
+                  hexStr := '';
+                  for i := 1 to 8 do
+                  begin
+                    hexStr := hexStr + FReader.Current;
+                    FReader.Read;
+                  end;
+                  // Convert hex to character
+                  codePoint64 := StrToInt64('$' + hexStr);
+                  if codePoint64 <= $FFFF then
+                    result := result + Char(codePoint64)
+                  else if codePoint64 <= $10FFFF then
+                  begin
+                    // Convert to UTF-16 surrogate pair for code points > U+FFFF
+                    codePoint64 := codePoint64 - $10000;
+                    result := result + Char($D800 + (codePoint64 shr 10));    // High surrogate
+                    result := result + Char($DC00 + (codePoint64 and $3FF)); // Low surrogate
+                  end
+                  else
+                    result := result + '?'; // Invalid Unicode code point
+                  Continue; // Skip the FReader.Read at the end of the loop
+                end
+                else
+                begin
+                  // Invalid Unicode escape sequence - raise an error
+                  raise EYAMLParseException.Create('Invalid Unicode escape sequence: \U' + FReader.Current, FReader.Line, FReader.Column);
+                end;
+              end;
+              'x': begin
+                // Hex escape sequence \xXX  
+                FReader.Read; // Skip 'x'
+                if not IsAtEnd and (((FReader.Current >= '0') and (FReader.Current <= '9')) or
+                   ((FReader.Current >= 'A') and (FReader.Current <= 'F')) or
+                   ((FReader.Current >= 'a') and (FReader.Current <= 'f'))) then
+                begin
+                  // For now, simplified - just include literally
+                  result := result + '\x' + FReader.Current;
+                  FReader.Read; // Read the hex character we just processed
+                  Continue; // Skip the FReader.Read at the end of the loop
+                end
+                else
+                  raise EYAMLParseException.Create('Invalid hex escape sequence', FReader.Line, FReader.Column);
+              end;
+            else
+              // Invalid escape sequence - raise an error
+              raise EYAMLParseException.Create('Invalid escape sequence: \' + FReader.Current, FReader.Line, FReader.Column);
+            end;
+          end;
         end;
-        escaped := False;
       end
-      else if FReader.Current = '\' then
-        escaped := True
       else if FReader.Current = Quote then
       begin
         FReader.Read; // Skip closing quote
@@ -373,9 +469,41 @@ begin
           Break;
         end;
       end
+      else if FReader.Current = '\' then
+      begin
+        // Check if this is a line continuation (backslash followed by newline)
+        // Even in single-quoted strings, line continuation should work
+        if (FReader.Peek() = #10) or (FReader.Peek() = #13) then
+        begin
+          // Line continuation - skip the backslash and newline, consume any leading whitespace on next line
+          FReader.Read; // Skip the backslash
+          
+          // Skip the newline character(s)
+          if FReader.Current = #13 then
+          begin
+            FReader.Read;
+            if FReader.Current = #10 then
+              FReader.Read;
+          end
+          else if FReader.Current = #10 then
+            FReader.Read;
+          
+          // Skip any leading whitespace on the continuation line
+          while IsWhitespace(FReader.Current) and not IsAtEnd do
+            FReader.Read;
+          
+          // Continue processing without adding anything to the result
+          Continue;
+        end
+        else
+        begin
+          // All other backslashes are literal in single-quoted strings
+          result := result + FReader.Current;
+        end;
+      end
       else
       begin
-        // All other characters are literal (including backslashes)
+        // All other characters are literal
         result := result + FReader.Current;
       end;
     end;

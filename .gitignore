@@ -42,3 +42,4 @@ Source/__recovery
 .claude
 CLAUDE.md
 Tests/Linux64
+Tests/__recovery

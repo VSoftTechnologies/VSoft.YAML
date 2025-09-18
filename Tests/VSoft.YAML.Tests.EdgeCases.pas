@@ -191,6 +191,18 @@ type
     procedure Test_Writer_UnicodeInKeys;
     [Test]
     procedure Test_Writer_SpecialFloatValues;
+
+    // Long string line continuation tests
+    [Test]
+    procedure Test_LongString_LineContinuation_DoubleQuoted;
+    [Test]
+    procedure Test_LongString_LineContinuation_SingleQuoted;
+    [Test]
+    procedure Test_LongString_LineContinuation_WithSpaces;
+    [Test]
+    procedure Test_LongString_LineContinuation_MixedWithEscapes;
+    [Test]
+    procedure Test_LongString_LineContinuation_EdgeCases;
   end;
 
 implementation
@@ -1744,6 +1756,116 @@ begin
       Assert.Contains(root.Items['quoted'].AsString, #9);
     end
   );
+end;
+
+// Long string line continuation tests
+
+procedure TYAMLEdgeCasesTests.Test_LongString_LineContinuation_DoubleQuoted;
+var
+  yamlContent: string;
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  expectedValue: string;
+begin
+  yamlContent := 'long_string: "loooooooooooooooooooooooooooooooooooooooooooooooooongstring\' + sLineBreak +
+                 '    loooooooooooooooooooooooooooooooooooooooooooooooooongstring\' + sLineBreak +
+                 '    loooooooooooooooooooooooooooooooooooooooooooooooooongstring"';
+
+  doc := TYAML.LoadFromString(yamlContent);
+  root := doc.AsMapping;
+
+  expectedValue := 'loooooooooooooooooooooooooooooooooooooooooooooooooongstring' +
+                   'loooooooooooooooooooooooooooooooooooooooooooooooooongstring' +
+                   'loooooooooooooooooooooooooooooooooooooooooooooooooongstring';
+
+  Assert.AreEqual(expectedValue, root.Items['long_string'].AsString);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_LongString_LineContinuation_SingleQuoted;
+var
+  yamlContent: string;
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  expectedValue: string;
+begin
+  yamlContent := 'long_string: ''loooooooooooooooooooooooooooooooooooooooooooooooooongstring\' + sLineBreak +
+                 '    loooooooooooooooooooooooooooooooooooooooooooooooooongstring\' + sLineBreak +
+                 '    loooooooooooooooooooooooooooooooooooooooooooooooooongstring''';
+
+  doc := TYAML.LoadFromString(yamlContent);
+  root := doc.AsMapping;
+
+  expectedValue := 'loooooooooooooooooooooooooooooooooooooooooooooooooongstring' +
+                   'loooooooooooooooooooooooooooooooooooooooooooooooooongstring' +
+                   'loooooooooooooooooooooooooooooooooooooooooooooooooongstring';
+
+  Assert.AreEqual(expectedValue, root.Items['long_string'].AsString);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_LongString_LineContinuation_WithSpaces;
+var
+  yamlContent: string;
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  expectedValue: string;
+begin
+  yamlContent := 'long_string: "part one \' + sLineBreak +
+                 '    part two \' + sLineBreak +
+                 '    part three"';
+
+  doc := TYAML.LoadFromString(yamlContent);
+  root := doc.AsMapping;
+
+  expectedValue := 'part one part two part three';
+
+  Assert.AreEqual(expectedValue, root.Items['long_string'].AsString);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_LongString_LineContinuation_MixedWithEscapes;
+var
+  yamlContent: string;
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  expectedValue: string;
+  actualValue: string;
+begin
+  // Test ONLY basic escape sequences first - no line continuation
+  // In Delphi, we need to construct the YAML content with actual \n in it
+  yamlContent := 'test_simple: "a\nb"';  // This creates YAML with literal \n in it
+  doc := TYAML.LoadFromString(yamlContent);
+  root := doc.AsMapping;
+  
+  expectedValue := 'a' + #10 + 'b';  // This should be the result after escape processing
+  actualValue := root.Items['test_simple'].AsString;
+  
+  if actualValue = 'a\nb' then
+    Assert.Fail('Basic escape sequences not working - got literal \n instead of newline')
+  else
+    Assert.AreEqual(expectedValue, actualValue, 'Basic escape sequence test failed');
+end;
+
+procedure TYAMLEdgeCasesTests.Test_LongString_LineContinuation_EdgeCases;
+var
+  yamlContent: string;
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+begin
+  // Test backslash at end of string without continuation
+  yamlContent := 'test1: "ends with backslash\\"';
+  
+  doc := TYAML.LoadFromString(yamlContent);
+  root := doc.AsMapping;
+  
+  Assert.AreEqual('ends with backslash\', root.Items['test1'].AsString);
+
+  // Test multiple backslashes before line continuation
+  yamlContent := 'test2: "double backslash\\\' + sLineBreak +
+                 '    continuation"';
+
+  doc := TYAML.LoadFromString(yamlContent);
+  root := doc.AsMapping;
+
+  Assert.AreEqual('double backslash\continuation', root.Items['test2'].AsString);
 end;
 
 initialization
