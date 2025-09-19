@@ -457,9 +457,9 @@ procedure TYAMLDateUtilsTests.TestTimezoneHandling_PositiveOffset;
 var
   testString: string;
   convertedDateTime: TDateTime;
-  baseDateTime: TDateTime;
+  expectedLocalDateTime: TDateTime;
+  localOffset: integer;
 begin
-  baseDateTime := EncodeDate(2023, 12, 25) + EncodeTime(15, 30, 45, 0);
   testString := '2023-12-25T15:30:45+02:00';
   
   convertedDateTime := TYAMLDateUtils.ISO8601StrToLocalDateTime(testString);
@@ -467,7 +467,14 @@ begin
   Assert.IsTrue(convertedDateTime > 0,
     Format('Positive timezone offset parsing failed. String: %s', [testString]));
 
-  Assert.AreEqual(baseDateTime, convertedDateTime);
+  // Calculate expected local time: input is UTC+2, convert to UTC then to local
+  // 15:30:45+02:00 = 13:30:45 UTC
+  // Then convert UTC to local time based on machine's timezone
+  expectedLocalDateTime := EncodeDate(2023, 12, 25) + EncodeTime(13, 30, 45, 0);
+  localOffset := Trunc(TTimeZone.Local.GetUTCOffset(expectedLocalDateTime).TotalMinutes);
+  expectedLocalDateTime := expectedLocalDateTime + (localOffset / (24 * 60));
+
+  Assert.AreEqual(expectedLocalDateTime, convertedDateTime);
 
 end;
 

@@ -96,6 +96,9 @@ type
     [Test]
     procedure Test_TypeCoercion_DateTimeEdgeCases;
 
+    [Test]
+    procedure Test_DateTime_Issue_Roger;
+
     // Parser state edge cases
     [Test]
     procedure Test_ParserState_MultipleDocuments;
@@ -220,7 +223,7 @@ type
 implementation
 
 uses
-  VSoft.YAML.Classes;
+  VSoft.YAML.Classes, VSoft.YAML.Utils;
 
 { TYAMLEdgeCasesTests }
 
@@ -2006,6 +2009,30 @@ begin
   
   // Test that local time interpretation respects the specified timezone
   Assert.AreNotEqual(utcTime, localTime, 'Local and UTC times should differ for timezone-aware timestamps');
+end;
+
+procedure TYAMLEdgeCasesTests.Test_DateTime_Issue_Roger;
+var
+  sUpdatedAt : string;
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+  UpdatedAt : TDateTime;
+  sUpdatedOut : string;
+begin
+  doc := TYAML.CreateMapping;
+
+  root := doc.Root.AsMapping;
+  sUpdatedAt := '2021-03-25T17:26:21-05:00'; //This is a local time
+  UpdatedAt := TYAMLDateUtils.ISO8601StrToLocalDateTime(sUpdatedAt);
+
+
+  root.AddOrSetValue('updated_at', UpdatedAt, false);
+
+  sUpdatedOut := root.S['updated_at'];
+
+  Assert.AreEqual('2021-03-26T09:26:21+11:00', sUpdatedOut);
+
+
 end;
 
 initialization

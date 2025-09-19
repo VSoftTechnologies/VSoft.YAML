@@ -49,6 +49,7 @@ type
     [Test]
     procedure TestTimeZoneConversion;
 
+
     // Edge cases
     [Test]
     procedure TestEmptyString;
@@ -251,6 +252,8 @@ end;
 procedure TTestISO8601DateTime.TestTimeZoneConversion;
 var
   dtUTC, dtLocal: TDateTime;
+  expectedLocalHour: Word;
+  localOffset: integer;
 begin
   dtUTC := TYAMLDateUtils.ISO8601StrToUTCDateTime('2023-12-25T14:30:15+02:00');
   dtLocal := TYAMLDateUtils.ISO8601StrToLocalDateTime('2023-12-25T14:30:15+02:00');
@@ -259,8 +262,12 @@ begin
   Assert.AreEqual(12, HourOf(dtUTC));   // 14:30 - 2:00 = 12:30
   Assert.AreEqual(30, MinuteOf(dtUTC));
 
-  // Local should preserve the original time for round-trip behavior
-  Assert.AreEqual(14, HourOf(dtLocal)); // 14:30 preserved
+  // Local should be converted from input timezone to machine's local timezone
+  // 14:30+02:00 = 12:30 UTC, then converted to local time
+  localOffset := Trunc(TTimeZone.Local.GetUTCOffset(dtUTC).TotalMinutes);
+  expectedLocalHour := (12 + (localOffset div 60)) mod 24;
+  
+  Assert.AreEqual(expectedLocalHour, HourOf(dtLocal));
   Assert.AreEqual(30, MinuteOf(dtLocal));
 end;
 

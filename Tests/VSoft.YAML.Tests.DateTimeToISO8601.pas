@@ -70,6 +70,10 @@ type
     // Specific datetime tests
     [Test]
     procedure TestSpecificDateTimes;
+
+
+    [Test]
+    procedure TestWithTimezoneToLocal;
   end;
 
 implementation
@@ -239,6 +243,22 @@ begin
   Assert.IsTrue(UTCStr.EndsWith('Z'));
   Assert.IsFalse(LocalStr.EndsWith('Z'));
   Assert.AreNotEqual(UTCStr, LocalStr);
+end;
+
+procedure TTestDateToISO8601.TestWithTimezoneToLocal;
+var
+  sWithTimeZone : string;
+  dtLocal : TDateTime;
+begin
+  sWithTimeZone := '2021-03-25T17:26:21-05:00';
+  dtLocal := TYAMLDateUtils.ISO8601StrToLocalDateTime(sWithTimeZone);
+  Assert.AreEqual(2021,YearOf(dtLocal));
+  Assert.AreEqual(3,MonthOf(dtLocal));
+  Assert.AreEqual(26,DayOf(dtLocal));
+  Assert.AreEqual(9,HourOf(dtLocal));
+  Assert.AreEqual(26,MinuteOf(dtLocal));
+  Assert.AreEqual(21,SecondOf(dtLocal));
+
 end;
 
 procedure TTestDateToISO8601.TestLocalTimeFlag;

@@ -190,7 +190,7 @@ function ISO8601StrToDateTime(const value: string; returnUTC: boolean): TDateTim
 var
   s: string;
   year, month, day, hour, minute, second, millisecond: integer;
-  tzOffset: integer;
+  tzOffset, localOffset: integer;
   hasTimeZone: Boolean;
   isNegativeTZ: Boolean;
   tzHours, tzMinutes: integer;
@@ -386,9 +386,11 @@ begin
         end
         else
         begin
-          // Input has explicit timezone offset, preserve for round-trip scenarios
-          // The datetime value already represents the correct local time
-          // No conversion needed - this preserves round-trip behavior
+          // Input has explicit timezone offset, convert to local time
+          // First convert to UTC, then to local time
+          dt := dt - (tzOffset / (24 * 60)); // Convert to UTC
+          localOffset := Trunc(TTimeZone.Local.GetUTCOffset(dt).TotalMinutes);
+          dt := dt + (localOffset / (24 * 60)); // Convert to local time
         end;
       end;
     end
