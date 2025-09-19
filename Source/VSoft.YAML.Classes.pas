@@ -182,7 +182,7 @@ type
   end;
 
 
-  TYAMLSet = class(TYAMLSequence, IYAMLSet,IYAMLCollection, IYAMLValue, IYAMLValuePrivate)
+  TYAMLSet = class(TYAMLSequence, IYAMLSet,IYAMLSequence, IYAMLCollection, IYAMLValue, IYAMLValuePrivate)
   private
     FValues : TStringList; // For fast duplicate checking using string representations
   protected

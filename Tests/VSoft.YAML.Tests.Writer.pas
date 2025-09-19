@@ -62,6 +62,10 @@ type
     [Test]
     procedure Test_OutputFormat_Mixed;
 
+    [Test]
+    procedure Test_Sequence_SameLine;
+
+
     // Document options tests
     [Test]
     procedure Test_DocumentOptions_IndentSize;
@@ -206,10 +210,11 @@ begin
   
   // Serialize to string
   serializedYAML := TYAML.WriteToString(doc);
-  
+
   // Load serialized version
   doc2 := TYAML.LoadFromString(serializedYAML);
-  
+
+  //This needs fleshing out.
   // Both documents should be structurally equivalent
   Assert.AreEqual(doc.Root.ValueType, doc2.Root.ValueType);
 end;
@@ -1042,6 +1047,24 @@ begin
                  '- cherry';
   
   ValidateRoundTrip(originalYAML);
+end;
+
+procedure TYAMLWriterTests.Test_Sequence_SameLine;
+var
+  originalYAML : string;
+  doc : IYAMLDocument;
+  writtenYAML : string;
+begin
+  originalYAML :='targetPlatforms:' + sLineBreak +
+                 '  # define the compiler/platform sup' + sLineBreak +
+                 '  - compiler: Delphi11' + sLineBreak +
+                 '    platforms: [Win32, Win64]' + sLineBreak;
+  doc := TYAML.LoadFromString(originalYAML);
+  doc.Options.Format := TYAMLOutputFormat.yofMixed;
+  writtenYAML := TYAML.WriteToString(doc);
+  Log(writtenYAML);
+  Assert.AreEqual(originalYAML,writtenYAML);
+
 end;
 
 procedure TYAMLWriterTests.Test_RoundTrip_ComplexStructure;

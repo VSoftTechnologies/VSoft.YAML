@@ -303,7 +303,6 @@ function TYAMLWriterImpl.ShouldUseFlowStyle(const value : IYAMLValue) : boolean;
 var
   seq : IYAMLSequence;
   map : IYAMLMapping;
-  aSet : IYAMLSet;
   key : string;
   i : integer;
 begin
@@ -315,26 +314,9 @@ begin
     TYAMLOutputFormat.yofMixed :
     begin
       // Use flow style for simple structures
-      if value.ValueType = TYAMLValueType.vtSet then
+      if value.ValueType in [TYAMLValueType.vtSet, TYAMLValueType.vtSequence] then
       begin
-        result := (value.AsSet.Count <= 3);
-        if result then
-        begin
-          aSet := value.AsSet;
-          for i := 0 to aSet.Count - 1 do
-          begin
-            if not (aSet[i].ValueType in [TYAMLValueType.vtNull, TYAMLValueType.vtBoolean, TYAMLValueType.vtInteger, TYAMLValueType.vtFloat, TYAMLValueType.vtString]) then
-            begin
-              result := False;
-              Break;
-            end;
-          end;
-        end;
-      end
-      else if value.ValueType = TYAMLValueType.vtSequence then
-      begin
-        result := (value.AsSequence.Count <= 3);
-        // Check if all items are scalars
+        result := (value.AsSequence.Count <= 5);
         if result then
         begin
           seq := value.AsSequence;
@@ -813,7 +795,18 @@ begin
     begin
       // First key-value pair goes on the same line as the dash
       case value.ValueType of
-        TYAMLValueType.vtSequence,
+        TYAMLValueType.vtSequence :
+        begin
+          if ShouldUseFlowStyle(value) then
+            AddLine(AddCommentToLine(GetIndent + '- ' + key + ': ' + WriteNestedSequenceFlow(value.AsSequence), value.Comment))
+          else
+          begin
+            AddLine(GetIndent + '- ' + key + ':');
+            IncIndent;
+            WriteValue(value);
+            DecIndent;
+          end;
+        end;
         TYAMLValueType.vtMapping :
         begin
           AddLine(GetIndent + '- ' + key + ':');
@@ -831,7 +824,20 @@ begin
       // Subsequent key-value pairs at the same indentation level as the first key
 
       case value.ValueType of
-        TYAMLValueType.vtSequence,
+        TYAMLValueType.vtSequence :
+        begin
+          if ShouldUseFlowStyle(value) then
+            AddLine(AddCommentToLine(GetIndent + '  ' + key + ': ' + WriteNestedSequenceFlow(value.AsSequence), value.Comment))
+          else
+          begin
+            AddLine(GetIndent + '  ' + key + ':');
+            IncIndent;
+            IncIndent; // Extra indent for sequence context
+            WriteValue(value);
+            DecIndent;
+            DecIndent;
+          end;
+        end;
         TYAMLValueType.vtMapping :
         begin
           AddLine(GetIndent + '  ' + key + ':');
