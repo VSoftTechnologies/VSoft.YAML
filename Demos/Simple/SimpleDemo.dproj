@@ -1,29 +1,31 @@
 ﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
-        <ProjectGuid>{09FA46D3-758D-4CC0-A5EE-3D4AA22B3675}</ProjectGuid>
+        <ProjectGuid>{25DA5398-F887-4E41-A7A4-CED0AE8F42B8}</ProjectGuid>
         <ProjectVersion>20.3</ProjectVersion>
         <FrameworkType>None</FrameworkType>
         <Base>True</Base>
         <Config Condition="'$(Config)'==''">Debug</Config>
-        <Platform Condition="'$(Platform)'==''">Win64</Platform>
-        <TargetedPlatforms>131</TargetedPlatforms>
+        <Platform Condition="'$(Platform)'==''">Win32</Platform>
+        <ProjectName Condition="'$(ProjectName)'==''">SimpleDemo</ProjectName>
+        <TargetedPlatforms>1</TargetedPlatforms>
         <AppType>Console</AppType>
-        <MainSource>VSoft.YAML.Tests.dpr</MainSource>
-        <ProjectName Condition="'$(ProjectName)'==''">VSoft.YAML.Tests</ProjectName>
-    </PropertyGroup>
-    <PropertyGroup>
-        <DPMCompiler>12.0</DPMCompiler>
-        <DPMCache Condition="'$(DPMCache)' == ''">$(APPDATA)\.dpm\packages</DPMCache>
-        <DPM>$(DPMCache)\$(DPMCompiler)\$(Platform)</DPM>
-        <DPMSearch Condition="'$(Platform)'=='Win32'">$(DPM)\VSoft.DUnitX\0.4.4\src;</DPMSearch>
-        <DPMSearch Condition="'$(Platform)'=='Win64'">$(DPM)\VSoft.DUnitX\0.4.4\src;</DPMSearch>
-        <DPMSearch Condition="'$(Platform)'=='Linux64'">$(DPM)\VSoft.DUnitX\0.4.4\src;</DPMSearch>
+        <MainSource>SimpleDemo.dpr</MainSource>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
         <Base>true</Base>
     </PropertyGroup>
     <PropertyGroup Condition="('$(Platform)'=='Linux64' and '$(Base)'=='true') or '$(Base_Linux64)'!=''">
         <Base_Linux64>true</Base_Linux64>
+        <CfgParent>Base</CfgParent>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="('$(Platform)'=='OSX64' and '$(Base)'=='true') or '$(Base_OSX64)'!=''">
+        <Base_OSX64>true</Base_OSX64>
+        <CfgParent>Base</CfgParent>
+        <Base>true</Base>
+    </PropertyGroup>
+    <PropertyGroup Condition="('$(Platform)'=='OSXARM64' and '$(Base)'=='true') or '$(Base_OSXARM64)'!=''">
+        <Base_OSXARM64>true</Base_OSXARM64>
         <CfgParent>Base</CfgParent>
         <Base>true</Base>
     </PropertyGroup>
@@ -42,20 +44,8 @@
         <CfgParent>Base</CfgParent>
         <Base>true</Base>
     </PropertyGroup>
-    <PropertyGroup Condition="('$(Platform)'=='Linux64' and '$(Cfg_1)'=='true') or '$(Cfg_1_Linux64)'!=''">
-        <Cfg_1_Linux64>true</Cfg_1_Linux64>
-        <CfgParent>Cfg_1</CfgParent>
-        <Cfg_1>true</Cfg_1>
-        <Base>true</Base>
-    </PropertyGroup>
     <PropertyGroup Condition="('$(Platform)'=='Win32' and '$(Cfg_1)'=='true') or '$(Cfg_1_Win32)'!=''">
         <Cfg_1_Win32>true</Cfg_1_Win32>
-        <CfgParent>Cfg_1</CfgParent>
-        <Cfg_1>true</Cfg_1>
-        <Base>true</Base>
-    </PropertyGroup>
-    <PropertyGroup Condition="('$(Platform)'=='Win64' and '$(Cfg_1)'=='true') or '$(Cfg_1_Win64)'!=''">
-        <Cfg_1_Win64>true</Cfg_1_Win64>
         <CfgParent>Cfg_1</CfgParent>
         <Cfg_1>true</Cfg_1>
         <Base>true</Base>
@@ -74,14 +64,18 @@
         <DCC_F>false</DCC_F>
         <DCC_K>false</DCC_K>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;$(DCC_Namespace)</DCC_Namespace>
-        <UsingDelphiRTL>true</UsingDelphiRTL>
-        <Icon_MainIcon>$(BDS)\bin\delphi_PROJECTICON.ico</Icon_MainIcon>
-        <Icns_MainIcns>$(BDS)\bin\delphi_PROJECTICNS.icns</Icns_MainIcns>
-        <DCC_UnitSearchPath>$(DPMSearch);$(DUnitX);$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
-        <SanitizedProjectName>VSoft_YAML_Tests</SanitizedProjectName>
+        <SanitizedProjectName>SimpleDemo</SanitizedProjectName>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_Linux64)'!=''">
         <DCC_UsePackage>DataSnapServer;fmx;DbxCommonDriver;bindengine;FireDACCommonODBC;tb2k;emsclient;FireDACCommonDriver;dbxcds;inetdb;FireDACSqliteDriver;DbxClientDriver;FireDACASADriver;dbexpress;FrameViewer;FireDACInfxDriver;inet;DataSnapCommon;dbrtl;FireDACOracleDriver;CustomIPTransport;FireDACMSSQLDriver;DataSnapIndy10ServerTransport;DataSnapConnectors;FireDACMongoDBDriver;FireDACTDataDriver;bindcomp;FireDACCommon;DataSnapServerMidas;FireDACODBCDriver;emsserverresource;inetstn;RESTBackendComponents;rtl;FireDACMySQLDriver;AWSSDKFMX;FireDACADSDriver;RESTComponents;dsnapxml;DataSnapClient;DataSnapFireDAC;emsclientfiredac;FireDACPgDriver;FireDAC;xmlrtl;dsnap;CloudService;FireDACDb2Driver;DataSnapNativeClient;DatasnapConnectorsFreePascal;soaprtl;RaizeComponentsVcl;FireDACIBDriver;$(DCC_UsePackage)</DCC_UsePackage>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Base_OSX64)'!=''">
+        <DCC_UsePackage>DataSnapServer;fmx;DbxCommonDriver;bindengine;FireDACCommonODBC;tb2k;emsclient;FireDACCommonDriver;dbxcds;bindcompfmx;DBXFirebirdDriver;inetdb;FireDACSqliteDriver;DbxClientDriver;FireDACASADriver;fmxFireDAC;dbexpress;FrameViewer;DBXMySQLDriver;inet;DataSnapCommon;fmxase;dbrtl;FireDACDBXDriver;FireDACOracleDriver;fmxdae;CustomIPTransport;FireDACMSSQLDriver;DataSnapIndy10ServerTransport;DBXInterBaseDriver;FireDACMongoDBDriver;FireDACTDataDriver;bindcomp;FireDACCommon;DataSnapServerMidas;FireDACODBCDriver;emsserverresource;inetstn;RESTBackendComponents;bindcompdbx;rtl;FireDACMySQLDriver;AWSSDKFMX;RESTComponents;DBXSqliteDriver;dsnapxml;DataSnapClient;DataSnapProviderClient;DataSnapFireDAC;emsclientfiredac;FireDACPgDriver;FireDAC;FireDACDSDriver;inetdbxpress;xmlrtl;dsnap;CloudService;DBXSybaseASADriver;DBXOracleDriver;DBXInformixDriver;fmxobj;DataSnapNativeClient;soaprtl;RaizeComponentsVcl;FireDACIBDriver;$(DCC_UsePackage)</DCC_UsePackage>
+        <DCC_ConsoleTarget>true</DCC_ConsoleTarget>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(Base_OSXARM64)'!=''">
+        <DCC_UsePackage>DataSnapServer;fmx;DbxCommonDriver;bindengine;FireDACCommonODBC;tb2k;emsclient;FireDACCommonDriver;dbxcds;bindcompfmx;DBXFirebirdDriver;inetdb;FireDACSqliteDriver;DbxClientDriver;FireDACASADriver;fmxFireDAC;dbexpress;FrameViewer;DBXMySQLDriver;inet;DataSnapCommon;fmxase;dbrtl;FireDACDBXDriver;FireDACOracleDriver;fmxdae;CustomIPTransport;FireDACMSSQLDriver;DataSnapIndy10ServerTransport;DBXInterBaseDriver;FireDACMongoDBDriver;FireDACTDataDriver;bindcomp;FireDACCommon;DataSnapServerMidas;FireDACODBCDriver;emsserverresource;inetstn;RESTBackendComponents;bindcompdbx;rtl;FireDACMySQLDriver;AWSSDKFMX;RESTComponents;DBXSqliteDriver;dsnapxml;DataSnapClient;DataSnapProviderClient;DataSnapFireDAC;emsclientfiredac;FireDACPgDriver;FireDAC;FireDACDSDriver;inetdbxpress;xmlrtl;dsnap;CloudService;DBXSybaseASADriver;DBXOracleDriver;DBXInformixDriver;fmxobj;DataSnapNativeClient;soaprtl;RaizeComponentsVcl;FireDACIBDriver;$(DCC_UsePackage)</DCC_UsePackage>
+        <DCC_ConsoleTarget>true</DCC_ConsoleTarget>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_Win32)'!=''">
         <DCC_UsePackage>vclwinx;DataSnapServer;fmx;vclie;DbxCommonDriver;bindengine;VCLRESTComponents;FireDACCommonODBC;DBXMSSQLDriver;tb2k;emsclient;FireDACCommonDriver;ApperceptAPIClient;IndyProtocols;vclx;Skia.Package.RTL;dbxcds;vcledge;bindcompvclwinx;htmlcomp_xe12;bindcompfmx;DBXFirebirdDriver;madBasic_;inetdb;VSoftUIComponents;GFDLIB;FireDACSqliteDriver;DbxClientDriver;FireDACASADriver;vclactnband;fmxFireDAC;dbexpress;FrameViewer;FireDACInfxDriver;DBXMySQLDriver;VclSmp;inet;DataSnapCommon;KWizardR;vcltouch;fmxase;DBXOdbcDriver;dbrtl;FireDACDBXDriver;Skia.Package.FMX;FireDACOracleDriver;fmxdae;FireDACMSAccDriver;CustomIPTransport;FireDACMSSQLDriver;DataSnapIndy10ServerTransport;NxCommonRun;DataSnapConnectors;vcldsnap;DBXInterBaseDriver;madExcept_;FireDACMongoDBDriver;IndySystem;lmdrtl;FireDACTDataDriver;Skia.Package.VCL;vcldb;VirtualTreesR;SynEditDR;SpTBXLib;vclFireDAC;madDisAsm_;bindcomp;FireDACCommon;DataSnapServerMidas;FireDACODBCDriver;emsserverresource;inetstn;NxGridRun;IndyCore;RESTBackendComponents;dwWin7Controls;bindcompdbx;lmdrtdocking;rtl;FireDACMySQLDriver;AWSSDKFMX;FireDACADSDriver;AWSSDKVCL;RESTComponents;FBFormDesigner;DBXSqliteDriver;vcl;dsnapxml;adortl;dsnapcon;DataSnapClient;DataSnapProviderClient;DBXSybaseASEDriver;NxGridDsgn;DBXDb2Driver;VSPageR;JSDialogPack;vclimg;DataSnapFireDAC;emsclientfiredac;FireDACPgDriver;FireDAC;FireDACDSDriver;inetdbxpress;xmlrtl;FBSynEditHighlighters;bindcompvcl;dsnap;CloudService;DBXSybaseASADriver;DBXOracleDriver;FireDACDb2Driver;DBXInformixDriver;fmxobj;bindcompvclsmp;DataSnapNativeClient;VSoftToolBarR;hclcore_xe12;DatasnapConnectorsFreePascal;soaprtl;FBDreamRuntime;RaizeComponentsVcl;FireDACIBDriver;$(DCC_UsePackage)</DCC_UsePackage>
@@ -89,13 +83,15 @@
         <BT_BuildType>Debug</BT_BuildType>
         <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProgramID=com.embarcadero.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
         <VerInfo_Locale>1033</VerInfo_Locale>
+        <DCC_ConsoleTarget>true</DCC_ConsoleTarget>
+        <UWP_DelphiLogo44>$(BDS)\bin\Artwork\Windows\UWP\delphi_UwpDefault_44.png</UWP_DelphiLogo44>
+        <UWP_DelphiLogo150>$(BDS)\bin\Artwork\Windows\UWP\delphi_UwpDefault_150.png</UWP_DelphiLogo150>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_Win64)'!=''">
         <DCC_UsePackage>vclwinx;DataSnapServer;fmx;vclie;DbxCommonDriver;bindengine;VCLRESTComponents;FireDACCommonODBC;DBXMSSQLDriver;emsclient;FireDACCommonDriver;ApperceptAPIClient;IndyProtocols;vclx;dbxcds;vcledge;bindcompvclwinx;htmlcomp_xe12;bindcompfmx;DBXFirebirdDriver;inetdb;FireDACSqliteDriver;DbxClientDriver;FireDACASADriver;vclactnband;fmxFireDAC;dbexpress;FireDACInfxDriver;DBXMySQLDriver;VclSmp;inet;DataSnapCommon;vcltouch;fmxase;DBXOdbcDriver;dbrtl;FireDACDBXDriver;FireDACOracleDriver;fmxdae;FireDACMSAccDriver;CustomIPTransport;FireDACMSSQLDriver;DataSnapIndy10ServerTransport;NxCommonRun;DataSnapConnectors;vcldsnap;DBXInterBaseDriver;FireDACMongoDBDriver;IndySystem;lmdrtl;FireDACTDataDriver;Skia.Package.VCL;vcldb;VirtualTreesR;SynEditDR;vclFireDAC;bindcomp;FireDACCommon;DataSnapServerMidas;FireDACODBCDriver;emsserverresource;inetstn;NxGridRun;IndyCore;RESTBackendComponents;bindcompdbx;lmdrtdocking;rtl;FireDACMySQLDriver;AWSSDKFMX;FireDACADSDriver;AWSSDKVCL;RESTComponents;DBXSqliteDriver;vcl;dsnapxml;adortl;dsnapcon;DataSnapClient;DataSnapProviderClient;DBXSybaseASEDriver;NxGridDsgn;DBXDb2Driver;vclimg;DataSnapFireDAC;emsclientfiredac;FireDACPgDriver;FireDAC;FireDACDSDriver;inetdbxpress;xmlrtl;bindcompvcl;dsnap;CloudService;DBXSybaseASADriver;DBXOracleDriver;FireDACDb2Driver;DBXInformixDriver;fmxobj;bindcompvclsmp;DataSnapNativeClient;hclcore_xe12;DatasnapConnectorsFreePascal;soaprtl;FireDACIBDriver;$(DCC_UsePackage)</DCC_UsePackage>
-        <DCC_Namespace>Winapi;System.Win;Data.Win;Datasnap.Win;Web.Win;Soap.Win;Xml.Win;$(DCC_Namespace)</DCC_Namespace>
-        <BT_BuildType>Debug</BT_BuildType>
-        <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProgramID=com.embarcadero.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
-        <VerInfo_Locale>1033</VerInfo_Locale>
+        <DCC_ConsoleTarget>true</DCC_ConsoleTarget>
+        <UWP_DelphiLogo44>$(BDS)\bin\Artwork\Windows\UWP\delphi_UwpDefault_44.png</UWP_DelphiLogo44>
+        <UWP_DelphiLogo150>$(BDS)\bin\Artwork\Windows\UWP\delphi_UwpDefault_150.png</UWP_DelphiLogo150>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_1)'!=''">
         <DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
@@ -107,16 +103,8 @@
         <DCC_IntegerOverflowCheck>true</DCC_IntegerOverflowCheck>
         <DCC_RangeChecking>true</DCC_RangeChecking>
     </PropertyGroup>
-    <PropertyGroup Condition="'$(Cfg_1_Linux64)'!=''">
-        <Debugger_RunParams>-exitbehavior:pause</Debugger_RunParams>
-        <Debugger_Launcher>/usr/bin/gnome-terminal -- &quot;%debuggee%&quot;</Debugger_Launcher>
-    </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_1_Win32)'!=''">
         <DCC_RemoteDebug>false</DCC_RemoteDebug>
-        <Debugger_RunParams>-exitbehavior:pause</Debugger_RunParams>
-    </PropertyGroup>
-    <PropertyGroup Condition="'$(Cfg_1_Win64)'!=''">
-        <Debugger_RunParams>-exitbehavior:pause -hidebanner</Debugger_RunParams>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_2)'!=''">
         <DCC_LocalDebugSymbols>false</DCC_LocalDebugSymbols>
@@ -128,34 +116,17 @@
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
-        <DCCReference Include="VSoft.YAML.Tests.DateTimeToISO8601.pas"/>
-        <DCCReference Include="VSoft.YAML.Tests.ISO8601.pas"/>
-        <DCCReference Include="..\Source\VSoft.YAML.Utils.pas"/>
-        <DCCReference Include="..\Source\VSoft.YAML.pas"/>
-        <DCCReference Include="..\Source\VSoft.YAML.Lexer.pas"/>
-        <DCCReference Include="..\Source\VSoft.YAML.Parser.pas"/>
-        <DCCReference Include="..\Source\VSoft.YAML.Classes.pas"/>
-        <DCCReference Include="VSoft.YAML.Tests.Basics.pas"/>
-        <DCCReference Include="..\Source\VSoft.YAML.Writer.pas"/>
-        <DCCReference Include="VSoft.YAML.Tests.Comprehensive.pas"/>
-        <DCCReference Include="VSoft.YAML.Tests.Writer.pas"/>
-        <DCCReference Include="VSoft.YAML.Tests.EdgeCases.pas"/>
-        <DCCReference Include="..\Source\VSoft.YAML.Path.pas"/>
-        <DCCReference Include="VSoft.YAML.Tests.Path.pas"/>
-        <DCCReference Include="VSoft.YAML.Tests.Comments.pas"/>
-        <DCCReference Include="VSoft.YAML.Tests.MergeKeys.pas"/>
-        <DCCReference Include="VSoft.YAML.Tests.Directives.pas"/>
-        <DCCReference Include="VSoft.YAML.Tests.TagInfo.pas"/>
-        <DCCReference Include="..\Source\VSoft.YAML.IO.pas"/>
-        <DCCReference Include="..\Source\VSoft.YAML.StreamReader.pas"/>
-        <DCCReference Include="..\Source\VSoft.YAML.TagInfo.pas"/>
-        <DCCReference Include="..\Source\VSoft.YAML.StreamWriter.pas"/>
-        <DCCReference Include="VSoft.YAML.Tests.JSON.pas"/>
-        <DCCReference Include="..\Source\VSoft.YAML.Writer.JSON.pas"/>
-        <DCCReference Include="VSoft.YAML.Tests.JSON.Writer.pas"/>
-        <DCCReference Include="VSoft.YAML.Tests.CharUtils.pas"/>
-        <DCCReference Include="VSoft.YAML.Tests.SequenceProperties.pas"/>
-        <DCCReference Include="VSoft.YAML.Tests.DateUtils.pas"/>
+        <DCCReference Include="..\..\Source\VSoft.YAML.Classes.pas"/>
+        <DCCReference Include="..\..\Source\VSoft.YAML.Lexer.pas"/>
+        <DCCReference Include="..\..\Source\VSoft.YAML.Parser.pas"/>
+        <DCCReference Include="..\..\Source\VSoft.YAML.pas"/>
+        <DCCReference Include="..\..\Source\VSoft.YAML.Utils.pas"/>
+        <DCCReference Include="..\..\Source\VSoft.YAML.Writer.pas"/>
+        <DCCReference Include="..\..\Source\VSoft.YAML.Path.pas"/>
+        <DCCReference Include="..\..\Source\VSoft.YAML.IO.pas"/>
+        <DCCReference Include="..\..\Source\VSoft.YAML.StreamReader.pas"/>
+        <DCCReference Include="..\..\Source\VSoft.YAML.StreamWriter.pas"/>
+        <DCCReference Include="..\..\Source\VSoft.YAML.TagInfo.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
@@ -174,7 +145,7 @@
         <BorlandProject>
             <Delphi.Personality>
                 <Source>
-                    <Source Name="MainSource">VSoft.YAML.Tests.dpr</Source>
+                    <Source Name="MainSource">SimpleDemo.dpr</Source>
                 </Source>
             </Delphi.Personality>
             <Deployment Version="5">
@@ -193,61 +164,9 @@
                         <Overwrite>true</Overwrite>
                     </Platform>
                 </DeployFile>
-                <DeployFile LocalName="Linux64\Debug\VSoft.YAML.Tests" Configuration="Debug" Class="ProjectOutput">
-                    <Platform Name="Linux64">
-                        <RemoteName>VSoft_YAML_Tests</RemoteName>
-                        <Overwrite>true</Overwrite>
-                    </Platform>
-                </DeployFile>
-                <DeployFile LocalName="TestFiles\test_comment_sample.yaml" Configuration="Debug" Class="File">
-                    <Platform Name="Linux64">
-                        <RemoteName>test_comment_sample.yaml</RemoteName>
-                        <Overwrite>true</Overwrite>
-                    </Platform>
+                <DeployFile LocalName="Win32\Debug\SimpleDemo.exe" Configuration="Debug" Class="ProjectOutput">
                     <Platform Name="Win32">
-                        <RemoteName>test_comment_sample.yaml</RemoteName>
-                        <Overwrite>true</Overwrite>
-                    </Platform>
-                    <Platform Name="Win64">
-                        <RemoteName>test_comment_sample.yaml</RemoteName>
-                        <Overwrite>true</Overwrite>
-                    </Platform>
-                </DeployFile>
-                <DeployFile LocalName="TestFiles\test_deep_nesting.yaml" Configuration="Debug" Class="File">
-                    <Platform Name="Linux64">
-                        <RemoteName>test_deep_nesting.yaml</RemoteName>
-                        <Overwrite>true</Overwrite>
-                    </Platform>
-                    <Platform Name="Win32">
-                        <RemoteName>test_deep_nesting.yaml</RemoteName>
-                        <Overwrite>true</Overwrite>
-                    </Platform>
-                    <Platform Name="Win64">
-                        <RemoteName>test_deep_nesting.yaml</RemoteName>
-                        <Overwrite>true</Overwrite>
-                    </Platform>
-                </DeployFile>
-                <DeployFile LocalName="TestFiles\test_utf8.yaml" Configuration="Debug" Class="File">
-                    <Platform Name="Linux64">
-                        <RemoteName>test_utf8.yaml</RemoteName>
-                        <Overwrite>true</Overwrite>
-                    </Platform>
-                </DeployFile>
-                <DeployFile LocalName="Win32\Debug\VSoft.YAML.Tests.exe" Configuration="Debug" Class="ProjectOutput">
-                    <Platform Name="Win32">
-                        <RemoteName>VSoft.YAML.Tests.exe</RemoteName>
-                        <Overwrite>true</Overwrite>
-                    </Platform>
-                </DeployFile>
-                <DeployFile LocalName="Win64\Debug\VSoft.YAML.Tests.exe" Configuration="Debug" Class="ProjectOutput">
-                    <Platform Name="Win64">
-                        <RemoteName>VSoft.YAML.Tests.exe</RemoteName>
-                        <Overwrite>true</Overwrite>
-                    </Platform>
-                </DeployFile>
-                <DeployFile LocalName="Win64\Debug\VSoft.YAML.Tests.rsm" Configuration="Debug" Class="DebugSymbols">
-                    <Platform Name="Win64">
-                        <RemoteName>VSoft.YAML.Tests.rsm</RemoteName>
+                        <RemoteName>SimpleDemo.exe</RemoteName>
                         <Overwrite>true</Overwrite>
                     </Platform>
                 </DeployFile>
@@ -1203,25 +1122,14 @@
                 <ProjectRoot Platform="Win64x" Name="$(PROJECTNAME)"/>
             </Deployment>
             <Platforms>
-                <Platform value="Linux64">True</Platform>
+                <Platform value="Linux64">False</Platform>
                 <Platform value="OSX64">False</Platform>
                 <Platform value="OSXARM64">False</Platform>
                 <Platform value="Win32">True</Platform>
-                <Platform value="Win64">True</Platform>
+                <Platform value="Win64">False</Platform>
             </Platforms>
         </BorlandProject>
         <ProjectFileVersion>12</ProjectFileVersion>
-        <DPM>
-            <PackageReferences platform="Win32">
-                <PackageReference id="VSoft.DUnitX" version="0.4.4"/>
-            </PackageReferences>
-            <PackageReferences platform="Win64">
-                <PackageReference id="VSoft.DUnitX" version="0.4.4"/>
-            </PackageReferences>
-            <PackageReferences platform="Linux64">
-                <PackageReference id="VSoft.DUnitX" version="0.4.4"/>
-            </PackageReferences>
-        </DPM>
     </ProjectExtensions>
     <Import Project="$(BDS)\Bin\CodeGear.Delphi.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Delphi.Targets')"/>
     <Import Project="$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj" Condition="Exists('$(APPDATA)\Embarcadero\$(BDSAPPDATABASEDIR)\$(PRODUCTVERSION)\UserTools.proj')"/>
