@@ -3,6 +3,7 @@ unit VSoft.YAML.Lexer;
 interface
 
 uses
+  System.SysUtils,
   System.Generics.Collections,
   VSoft.YAML.Utils,
   VSoft.YAML.IO,
@@ -63,6 +64,7 @@ type
     FIndentStack : TList<Integer>;
     FSequenceItemIndent : integer;
     FInValueContext : boolean; // Track if we're reading a value (after colon) vs key
+    FStringBuilder : TStringBuilder;
 
     // Stack management methods
     procedure PushIndentLevel(level: Integer);
@@ -105,7 +107,6 @@ implementation
 
 uses
   System.Character,
-  System.SysUtils,
   System.Classes;
 
 { TYAMLLexer }
@@ -126,11 +127,13 @@ begin
   // Initialize indent stack with base level 0
   FIndentStack := TList<Integer>.Create;
   FIndentStack.Add(0);
+  FStringBuilder := TStringBuilder.Create(256);
 end;
 
 destructor TYAMLLexer.Destroy;
 begin
   FIndentStack.Free;
+  FStringBuilder.Free;
   inherited Destroy;
 end;
 
@@ -165,10 +168,8 @@ end;
 
 
 function TYAMLLexer.ReadComment : string;
-var
-  commentText : string;
 begin
-  commentText := '';
+  FStringBuilder.Clear;
   // Skip the '#' character
   FReader.Read;
 
@@ -178,21 +179,24 @@ begin
   // Read the comment text until end of line
   while (not CharInSet(FReader.Current, [#10, #13])) and not IsAtEnd do
   begin
-    commentText := commentText + FReader.Current;
+    FStringBuilder.Append(FReader.Current);
     FReader.Read;
   end;
   
-  result := commentText;
+  result := FStringBuilder.ToString;
 end;
 
 function TYAMLLexer.ReadDirective: string;
 begin
+  FStringBuilder.Clear;
   //just read the whole directive, we'll parse it later
   while (FReader.Current <> #10) and (FReader.Current <> #13) and not IsAtEnd do
   begin
-    result := result + FReader.Current;
+    FStringBuilder.Append(FReader.Current);
     FReader.Read;
   end;
+  
+  result := FStringBuilder.ToString;
 end;
 
 function TYAMLLexer.ReadQuotedString(Quote : Char) : string;
@@ -205,7 +209,7 @@ var
   codePoint64 : Int64;
   peekChar : Char;
 begin
-  result := '';
+  FStringBuilder.Clear;
   FReader.Read; // Skip opening quote
   foundClosingQuote := False;
 
@@ -258,7 +262,7 @@ begin
                 // Null character - not valid in JSON mode
                 if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \0 is not supported', FReader.Line, FReader.Column);
-                result := result + #0;     // Null character
+                FStringBuilder.Append(#0);     // Null character
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
@@ -266,22 +270,22 @@ begin
                 // Bell character - not valid in JSON mode
                 if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \a is not supported', FReader.Line, FReader.Column);
-                result := result + #7;     // Bell character
+                FStringBuilder.Append(#7);     // Bell character
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
               'b': begin
-                result := result + #8;     // Backspace
+                FStringBuilder.Append(#8);     // Backspace
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
               't': begin
-                result := result + #9;     // Horizontal tab
+                FStringBuilder.Append(#9);     // Horizontal tab
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
               'n': begin
-                result := result + #10;    // Line feed
+                FStringBuilder.Append(#10);    // Line feed
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
@@ -289,17 +293,17 @@ begin
                 // Vertical tab - not valid in JSON mode
                 if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \v is not supported', FReader.Line, FReader.Column);
-                result := result + #11;    // Vertical tab
+                FStringBuilder.Append(#11);    // Vertical tab
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
               'f': begin
-                result := result + #12;    // Form feed
+                FStringBuilder.Append(#12);    // Form feed
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
               'r': begin
-                result := result + #13;    // Carriage return
+                FStringBuilder.Append(#13);    // Carriage return
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
@@ -307,7 +311,7 @@ begin
                 // Escape character - not valid in JSON mode
                 if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \e is not supported', FReader.Line, FReader.Column);
-                result := result + #27;    // Escape character
+                FStringBuilder.Append(#27);    // Escape character
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
@@ -315,22 +319,22 @@ begin
                 // Space - not valid in JSON mode
                 if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \ (space) is not supported', FReader.Line, FReader.Column);
-                result := result + ' ';    // Space
+                FStringBuilder.Append(' ');    // Space
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
               '"': begin
-                result := result + '"';    // Double quote
+                FStringBuilder.Append('"');    // Double quote
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
               '/': begin
-                result := result + '/';    // Forward slash
+                FStringBuilder.Append('/');    // Forward slash
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
               '\': begin
-                result := result + '\';    // Backslash
+                FStringBuilder.Append('\');    // Backslash
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
@@ -338,7 +342,7 @@ begin
                 // Next line (NEL) - not valid in JSON mode
                 if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \N is not supported', FReader.Line, FReader.Column);
-                result := result + #$85;   // Next line (NEL)
+                FStringBuilder.Append(#$85);   // Next line (NEL)
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
@@ -346,7 +350,7 @@ begin
                 // Non-breaking space - not valid in JSON mode
                 if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \_ is not supported', FReader.Line, FReader.Column);
-                result := result + #$A0;   // Non-breaking space
+                FStringBuilder.Append(#$A0);   // Non-breaking space
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
@@ -354,7 +358,7 @@ begin
                 // Line separator - not valid in JSON mode
                 if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \L is not supported', FReader.Line, FReader.Column);
-                result := result + #$2028; // Line separator
+                FStringBuilder.Append(#$2028); // Line separator
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
@@ -362,7 +366,7 @@ begin
                 // Paragraph separator - not valid in JSON mode
                 if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \P is not supported', FReader.Line, FReader.Column);
-                result := result + #$2029; // Paragraph separator
+                FStringBuilder.Append(#$2029); // Paragraph separator
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
@@ -398,7 +402,7 @@ begin
                   end;
                   // Convert hex to character
                   codePoint := StrToInt('$' + hexStr);
-                  result := result + Char(codePoint);
+                  FStringBuilder.Append(Char(codePoint));
                   Continue; // Skip the FReader.Read at the end of the loop
                 end
                 else
@@ -443,16 +447,16 @@ begin
                   // Convert hex to character
                   codePoint64 := StrToInt64('$' + hexStr);
                   if codePoint64 <= $FFFF then
-                    result := result + Char(codePoint64)
+                    FStringBuilder.Append(Char(codePoint64))
                   else if codePoint64 <= $10FFFF then
                   begin
                     // Convert to UTF-16 surrogate pair for code points > U+FFFF
                     codePoint64 := codePoint64 - $10000;
-                    result := result + Char($D800 + (codePoint64 shr 10));    // High surrogate
-                    result := result + Char($DC00 + (codePoint64 and $3FF)); // Low surrogate
+                    FStringBuilder.Append(Char($D800 + (codePoint64 shr 10)));    // High surrogate
+                    FStringBuilder.Append(Char($DC00 + (codePoint64 and $3FF))); // Low surrogate
                   end
                   else
-                    result := result + '?'; // Invalid Unicode code point
+                    FStringBuilder.Append('?'); // Invalid Unicode code point
                   Continue; // Skip the FReader.Read at the end of the loop
                 end
                 else
@@ -473,7 +477,7 @@ begin
                    ((FReader.Current >= 'a') and (FReader.Current <= 'f'))) then
                 begin
                   // For now, simplified - just include literally
-                  result := result + '\x' + FReader.Current;
+                  FStringBuilder.Append('\x' + FReader.Current);
                   FReader.Read; // Read the hex character we just processed
                   Continue; // Skip the FReader.Read at the end of the loop
                 end
@@ -501,7 +505,7 @@ begin
         begin
           raise EYAMLParseException.Create('Literal line breaks are not allowed in JSON strings. Use \n for newlines.', FReader.Line, FReader.Column);
         end;
-        result := result + FReader.Current;
+        FStringBuilder.Append(FReader.Current);
       end;
     end
     else if Quote = '''' then
@@ -512,7 +516,7 @@ begin
         if FReader.Peek() = '''' then
         begin
           // Escaped single quote: '' becomes '
-          result := result + '''';
+          FStringBuilder.Append('''');
           FReader.Read; // Skip the first quote
           FReader.Read; // Skip the second quote
           Continue;
@@ -561,7 +565,7 @@ begin
         else
         begin
           // All other backslashes are literal in single-quoted strings
-          result := result + FReader.Current;
+          FStringBuilder.Append(FReader.Current);
         end;
       end
       else
@@ -573,7 +577,7 @@ begin
           raise EYAMLParseException.Create('Literal line breaks are not allowed in JSON strings. Use \n for newlines.', FReader.Line, FReader.Column);
         end;
         // All other characters are literal
-        result := result + FReader.Current;
+        FStringBuilder.Append(FReader.Current);
       end;
     end;
 
@@ -583,6 +587,8 @@ begin
   // If we exited the loop without finding a closing quote, it's an error
   if not foundClosingQuote then
     raise EYAMLParseException.Create('Unterminated quoted string', FReader.Line, FReader.Column);
+  
+  result := FStringBuilder.ToString;
 end;
 
 function TYAMLLexer.ReadUnquotedString : string;
@@ -599,15 +605,15 @@ const
   end;
 
 begin
-  result := '';
+  FStringBuilder.Clear;
 
   while not IsAtEnd and DoCheck do
   begin
-    result := result + FReader.Current;
+    FStringBuilder.Append(FReader.Current);
     FReader.Read;
   end;
 
-  result := Trim(result);
+  result := Trim(FStringBuilder.ToString);
 end;
 
 function TYAMLLexer.ReadNumber : string;
@@ -615,7 +621,7 @@ var
   dotCount : integer;
   tempChar : Char;
 begin
-  result := '';
+  FStringBuilder.Clear;
   dotCount := 0;
   FReader.Save;
   // First, scan ahead to count dots - if more than 1, this is not a valid number
@@ -645,14 +651,14 @@ begin
   // Handle negative numbers
   if FReader.Current = '-' then
   begin
-    result := result + FReader.Current;
+    FStringBuilder.Append(FReader.Current);
     FReader.Read;
   end;
 
   // Check for hex, octal, or binary prefixes after optional minus
   if FReader.Current = '0' then
   begin
-    result := result + FReader.Current;
+    FStringBuilder.Append(FReader.Current);
     FReader.Read;
 
     // Check for hex prefix (0x or 0X)
@@ -662,42 +668,45 @@ begin
       if FJSONMode then
         raise EYAMLParseException.Create('Hexadecimal numbers are not valid in JSON', FReader.Line, FReader.Column);
         
-      result := result + FReader.Current;
+      FStringBuilder.Append(FReader.Current);
       FReader.Read;
       // Read hex digits
       while ((FReader.Current >= '0') and (FReader.Current <= '9')) or
             ((FReader.Current >= 'a') and (FReader.Current <= 'f')) or
             ((FReader.Current >= 'A') and (FReader.Current <= 'F')) and not IsAtEnd do
       begin
-        result := result + FReader.Current;
+        FStringBuilder.Append(FReader.Current);
         FReader.Read;
       end;
+      result := FStringBuilder.ToString;
       Exit; // Done reading hex number
     end
     // Check for octal prefix (0o or 0O)
     else if (FReader.Current = 'o') or (FReader.Current = 'O') then
     begin
-      result := result + FReader.Current;
+      FStringBuilder.Append(FReader.Current);
       FReader.Read;
       // Read octal digits (0-7)
       while (FReader.Current >= '0') and (FReader.Current <= '7') and not IsAtEnd do
       begin
-        result := result + FReader.Current;
+        FStringBuilder.Append(FReader.Current);
         FReader.Read;
       end;
+      result := FStringBuilder.ToString;
       Exit; // Done reading octal number
     end
     // Check for binary prefix (0b or 0B)
     else if (FReader.Current = 'b') or (FReader.Current = 'B') then
     begin
-      result := result + FReader.Current;
+      FStringBuilder.Append(FReader.Current);
       FReader.Read;
       // Read binary digits (0-1)
       while ((FReader.Current = '0') or (FReader.Current = '1')) and not IsAtEnd do
       begin
-        result := result + FReader.Current;
+        FStringBuilder.Append(FReader.Current);
         FReader.Read;
       end;
+      result := FStringBuilder.ToString;
       Exit; // Done reading binary number
     end
     else
@@ -713,18 +722,18 @@ begin
   while TYAMLCharUtils.IsDigitOrUnderScore(FReader.Current) and not IsAtEnd do
   begin
     if FReader.Current <> '_' then
-      result := result + FReader.Current;
+      FStringBuilder.Append(FReader.Current);
     FReader.Read;
   end;
 
   // Read decimal part (only for decimal numbers, not hex/octal/binary)
   if FReader.Current = '.' then
   begin
-    result := result + FReader.Current;
+    FStringBuilder.Append(FReader.Current);
     FReader.Read;
     while TYAMLCharUtils.IsDigit(FReader.Current) and not IsAtEnd do
     begin
-      result := result + FReader.Current;
+      FStringBuilder.Append(FReader.Current);
       FReader.Read;
     end;
   end;
@@ -732,11 +741,11 @@ begin
   // Read exponent part (only for decimal numbers)
   if (FReader.Current = 'e') or (FReader.Current = 'E') then
   begin
-    result := result + FReader.Current;
+    FStringBuilder.Append(FReader.Current);
     FReader.Read;
     if (FReader.Current = '+') or (FReader.Current = '-') then
     begin
-      result := result + FReader.Current;
+      FStringBuilder.Append(FReader.Current);
       FReader.Read;
     end;
     
@@ -748,22 +757,26 @@ begin
     
     while TYAMLCharUtils.IsDigit(FReader.Current) and not IsAtEnd do
     begin
-      result := result + FReader.Current;
+      FStringBuilder.Append(FReader.Current);
       FReader.Read;
     end;
   end;
+  
+  result := FStringBuilder.ToString;
 end;
 
 function TYAMLLexer.ReadAnchorOrAlias : string;
 begin
-  result := '';
+  FStringBuilder.Clear;
 
   // Read anchor or alias name
   while (TYAMLCharUtils.IsAlphaNumeric(FReader.Current) or (FReader.Current = '_') or (FReader.Current = '-')) and not IsAtEnd do
   begin
-    result := result + FReader.Current;
+    FStringBuilder.Append(FReader.Current);
     FReader.Read;
   end;
+  
+  result := FStringBuilder.ToString;
 end;
 
 function TYAMLLexer.ReadTag : TTag;
@@ -775,64 +788,72 @@ begin
 
   if FReader.Current = '!' then
   begin
-    Result.Handle := '!';
+    FStringBuilder.Clear;
+    FStringBuilder.Append('!');
     FReader.Read; //skip the !
 
     // Check for verbatim tag format: !<uri>
     if FReader.Current = '<' then
     begin
-      Result.Handle := Result.Handle + FReader.Current;
+      FStringBuilder.Append(FReader.Current);
       FReader.Read;
       // Read everything until closing >
       while (FReader.Current <> '>') and not IsAtEnd and (FReader.Current <> #10) and (FReader.Current <> #13) do
       begin
-        Result.Handle := Result.Handle + FReader.Current;
+        FStringBuilder.Append(FReader.Current);
         FReader.Read;
       end;
       // Include the closing >
       if FReader.Current = '>' then
       begin
-        Result.Handle := Result.Handle + FReader.Current;
+        FStringBuilder.Append(FReader.Current);
         FReader.Read;
       end;
+      Result.Handle := FStringBuilder.ToString;
     end
     else if FReader.Current = '!' then
     begin
-      Result.Handle := Result.Handle + '!';
+      FStringBuilder.Append('!');
       // Short form: !!tag
       FReader.Read;
       // Read tag name (letters, digits, underscores, hyphens)
       while (TYAMLCharUtils.IsAlphaNumeric(FReader.Current) or (FReader.Current = '_') or (FReader.Current = '-')) and not IsAtEnd do
       begin
-        Result.Handle := Result.Handle + FReader.Current;
+        FStringBuilder.Append(FReader.Current);
         FReader.Read;
       end;
+      Result.Handle := FStringBuilder.ToString;
     end
     else
     begin
       // Prefixed form: !prefix!tag or just !tag
-      // Read prefix/tag name (letters, digits, underscores, hyphens)
+      // First read the prefix/tag name part
+      FStringBuilder.Clear;
       while (TYAMLCharUtils.IsAlphaNumeric(FReader.Current) or (FReader.Current = '_') or (FReader.Current = '-')) and not IsAtEnd do
       begin
-        Result.Prefix := Result.Prefix + FReader.Current;
+        FStringBuilder.Append(FReader.Current);
         FReader.Read;
       end;
 
       // Check for second ! (prefix!tag format)
       if FReader.Current = '!' then
       begin
+        // This was a prefix, store it
+        Result.Prefix := FStringBuilder.ToString;
         FReader.Read;
         // Read the tag name after the second !
+        FStringBuilder.Clear;
         while (TYAMLCharUtils.IsAlphaNumeric(FReader.Current) or (FReader.Current = '_') or (FReader.Current = '-')) and not IsAtEnd do
         begin
-          Result.Handle := Result.Handle + FReader.Current;
+          FStringBuilder.Append(FReader.Current);
           FReader.Read;
         end;
+        Result.Handle := FStringBuilder.ToString;
       end
       else
       begin
-        //local tag
-        result.Handle := result.Prefix;
+        //local tag - what we read is the handle
+        result.Handle := FStringBuilder.ToString;
         result.Prefix := '';
       end;
 
@@ -934,7 +955,7 @@ var
   i : integer;
   hasColon : boolean;
 begin
-  result := '';
+  FStringBuilder.Clear;
 
   // Read timestamp pattern : YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS or variations
   // This function should read complete timestamp tokens including colons within time portions
@@ -944,7 +965,7 @@ begin
     if (FReader.Current = ':') and IsWhitespace(FReader.Peek()) then
       Break;
 
-    result := result + FReader.Current;
+    FStringBuilder.Append(FReader.Current);
     FReader.Read;
   end;
 
@@ -963,7 +984,7 @@ begin
 
     if hasColon then
     begin
-      result := result + FReader.Current; // Add the space
+      FStringBuilder.Append(FReader.Current); // Add the space
       FReader.Read;
 
      // Read the time portion including colons
@@ -973,13 +994,13 @@ begin
         if (FReader.Current = ':') and IsWhitespace(FReader.Peek) then
           Break;
 
-        result := result + FReader.Current;
+        FStringBuilder.Append(FReader.Current);
         FReader.Read;
       end;
     end;
   end;
 
-  result := Trim(result);
+  result := Trim(FStringBuilder.ToString);
 end;
 
 function TYAMLLexer.IsSpecialFloat : boolean;
@@ -1027,28 +1048,30 @@ end;
 
 function TYAMLLexer.ReadSpecialFloat : string;
 begin
-  result := '';
+  FStringBuilder.Clear;
 
   // Handle optional sign
   if (FReader.Current = '+') or (FReader.Current = '-') then
   begin
-    result := result + FReader.Current;
+    FStringBuilder.Append(FReader.Current);
     FReader.Read;
   end;
 
   // Should be at '.' now
   if FReader.Current = '.' then
   begin
-    result := result + FReader.Current;
+    FStringBuilder.Append(FReader.Current);
     FReader.Read;
 
     // Read the special float identifier (nan, NaN, NAN, inf, Inf, INF)
     while TYAMLCharUtils.IsAlpha(FReader.Current) and not IsAtEnd do
     begin
-      result := result + FReader.Current;
+      FStringBuilder.Append(FReader.Current);
       FReader.Read;
     end;
   end;
+  
+  result := FStringBuilder.ToString;
 end;
 
 function TYAMLLexer.NextToken : TYAMLToken;
@@ -1412,7 +1435,7 @@ var
   i : integer;
   currentLine : string;
 begin
-  result := '';
+  FStringBuilder.Clear;
   chompIndicator := ' '; // Default (clip)
   indentIndicator := 0;   // Auto-detect
 
@@ -1516,8 +1539,8 @@ begin
           for i := 0 to lines.Count - 1 do
           begin
             if i > 0 then
-              result := result + sLineBreak;
-            result := result + lines[i];
+              FStringBuilder.Append(sLineBreak);
+            FStringBuilder.Append(lines[i]);
           end;
         end;
       '+': // Keep - preserve all trailing newlines
@@ -1525,11 +1548,11 @@ begin
           for i := 0 to lines.Count - 1 do
           begin
             if i > 0 then
-              result := result + sLineBreak;
-            result := result + lines[i];
+              FStringBuilder.Append(sLineBreak);
+            FStringBuilder.Append(lines[i]);
           end;
           if lines.Count > 0 then
-            result := result + sLineBreak; // Final newline
+            FStringBuilder.Append(sLineBreak); // Final newline
         end;
       else // Clip (default) - keep one trailing newline
       begin
@@ -1538,16 +1561,18 @@ begin
             lines.Delete(lines.Count - 1);
           for i := 0 to lines.Count - 1 do
           begin
-            if i > 0 then result := result + #13#10;
-            result := result + lines[i];
+            if i > 0 then FStringBuilder.Append(#13#10);
+            FStringBuilder.Append(lines[i]);
           end;
           if lines.Count > 0 then
-            result := result + sLineBreak; // Final newline
+            FStringBuilder.Append(sLineBreak); // Final newline
       end;
     end;
   finally
     lines.Free;
   end;
+  
+  result := FStringBuilder.ToString;
 end;
 
 function TYAMLLexer.ReadFoldedScalar : string;
@@ -1563,7 +1588,7 @@ var
   inParagraph : boolean;
   paragraphLines : TStringList;
 begin
-  result := '';
+  FStringBuilder.Clear;
   chompIndicator := ' '; // Default (clip)
   indentIndicator := 0;   // Auto-detect
 
@@ -1717,19 +1742,19 @@ begin
           // Join without final newline
           for i := 0 to lines.Count - 1 do
           begin
-            if i > 0 then result := result + sLineBreak;
-            result := result + lines[i];
+            if i > 0 then FStringBuilder.Append(sLineBreak);
+            FStringBuilder.Append(lines[i]);
           end;
         end;
       '+': // Keep - preserve all trailing newlines
         begin
           for i := 0 to lines.Count - 1 do
           begin
-            if i > 0 then result := result + sLineBreak;
-            result := result + lines[i];
+            if i > 0 then FStringBuilder.Append(sLineBreak);
+            FStringBuilder.Append(lines[i]);
           end;
           if lines.Count > 0 then
-            result := result + sLineBreak; // Final newline
+            FStringBuilder.Append(sLineBreak); // Final newline
         end;
     else // Clip (default) - keep one trailing newline
       begin
@@ -1738,11 +1763,11 @@ begin
           lines.Delete(lines.Count - 1);
         for i := 0 to lines.Count - 1 do
         begin
-          if i > 0 then result := result + sLineBreak;
-          result := result + lines[i];
+          if i > 0 then FStringBuilder.Append(sLineBreak);
+          FStringBuilder.Append(lines[i]);
         end;
         if lines.Count > 0 then
-          result := result + sLineBreak; // Final newline
+          FStringBuilder.Append(sLineBreak); // Final newline
       end;
     end;
 
@@ -1750,6 +1775,8 @@ begin
     lines.Free;
     paragraphLines.Free;
   end;
+  
+  result := FStringBuilder.ToString;
 end;
 
 end.
