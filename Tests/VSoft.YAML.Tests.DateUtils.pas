@@ -1,4 +1,4 @@
-unit VSoft.YAML.Tests.DateUtils;
+﻿unit VSoft.YAML.Tests.DateUtils;
 
 interface
 
@@ -91,6 +91,9 @@ type
   end;
 
 implementation
+
+uses
+  System.TimeSpan;
 
 { TYAMLDateUtilsTests }
 

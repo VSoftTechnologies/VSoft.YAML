@@ -157,6 +157,7 @@ type
     procedure SetComments(const value : TStrings);
     procedure AddComment(const value : string);
     procedure ClearComments;
+    procedure Clear;
 
     /// <summary>
     /// Executes a JSONPath expression on a collection.
@@ -504,8 +505,11 @@ type
   ['{193CE904-9AE9-4B02-9F76-58C739C1366D}']
     function GetDuplicateKeyBehavior : TYAMLDuplicateKeyBehavior;
     procedure SetDuplicateKeyBehavior(value : TYAMLDuplicateKeyBehavior);
+    function GetJSONMode : boolean;
+    procedure SetJSONMode(value : boolean);
 
     property DuplicateKeyBehavior : TYAMLDuplicateKeyBehavior read GetDuplicateKeyBehavior write SetDuplicateKeyBehavior;
+    property JSONMode : boolean read GetJSONMode write SetJSONMode;
   end;
 
 
@@ -677,7 +681,8 @@ begin
     lOptions := _defaultParserOptions
   else
     lOptions := parserOptions;
-
+  if SameText('.json', ExtractFileExt(fileName)) then
+    lOptions.JSONMode := true;
   Stream := TFileStream.Create(FileName, fmOpenRead + fmShareDenyWrite);
   try
     result := LoadAllFromStream(Stream, lOptions);
@@ -701,7 +706,7 @@ begin
 
   reader := TInputReaderFactory.CreateFromStream(stream);
 
-  lexer := TYAMLLexer.Create(reader);
+  lexer := TYAMLLexer.Create(reader, lOptions);
   try
     parser := TYAMLParser.Create(Lexer, lOptions);
     try
@@ -729,7 +734,7 @@ begin
 
   reader := TInputReaderFactory.CreateFromString(value);
 
-  Lexer := TYAMLLexer.Create(reader);
+  Lexer := TYAMLLexer.Create(reader, lOptions);
   try
     Parser := TYAMLParser.Create(Lexer, lOptions);
     try
@@ -776,7 +781,7 @@ begin
 
   reader := TInputReaderFactory.CreateFromStream(stream);
 
-  lexer := TYAMLLexer.Create(reader);
+  lexer := TYAMLLexer.Create(reader, lOptions);
   try
     parser := TYAMLParser.Create(Lexer, lOptions);
     try
@@ -803,7 +808,7 @@ begin
 
   reader := TInputReaderFactory.CreateFromString(value);
 
-  Lexer := TYAMLLexer.Create(reader);
+  Lexer := TYAMLLexer.Create(reader, lOptions);
   try
     Parser := TYAMLParser.Create(Lexer, lOptions);
     try

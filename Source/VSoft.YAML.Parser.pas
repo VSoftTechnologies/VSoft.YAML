@@ -56,7 +56,7 @@ type
 
     // Helper methods
     function IsTimestampPattern(const value : string) : boolean;
-    function IsScalarValue(const value : string) : TYAMLValueType;
+    function IsScalarValue(const value : string; jsonMode : boolean = false) : TYAMLValueType;
     procedure SkipNewlines;
     procedure RegisterAnchor(const anchorName : string; const value : IYAMLValue);
     function ResolveAlias(const aliasName : string) : IYAMLValue;
@@ -152,7 +152,7 @@ begin
     end;
 end;
 
-function TYAMLParser.IsScalarValue(const value : string) : TYAMLValueType;
+function TYAMLParser.IsScalarValue(const value : string; jsonMode : boolean) : TYAMLValueType;
 var
   intVal : Int64;
   floatVal : Double;
@@ -160,51 +160,70 @@ var
 begin
   trimmedValue := Trim(value);
 
-  // Check for explicit null
-  if SameText(trimmedValue, 'null') or SameText(trimmedValue, '~') or (trimmedValue = '') then
-    result := TYAMLValueType.vtNull
-  else if SameText(trimmedValue, 'true') or SameText(trimmedValue, 'false') or
-          SameText(trimmedValue, 'yes') or SameText(trimmedValue, 'no') or
-          SameText(trimmedValue, 'on') or SameText(trimmedValue, 'off') then
-    result := TYAMLValueType.vtBoolean
-  else if IsTimestampPattern(trimmedValue) then
-    result := TYAMLValueType.vtTimestamp
-  else if TryStrToInt64(trimmedValue, intVal) then
-    result := TYAMLValueType.vtInteger
-  // Check for hex, octal, and binary number formats
-  else if (Length(trimmedValue) > 2) and (trimmedValue[1] = '0') then
+  if jsonMode then
   begin
-    if ((trimmedValue[2] = 'x') or (trimmedValue[2] = 'X')) and (Length(trimmedValue) > 2) then
-    begin
-      // Hexadecimal format (0x or 0X)
-      result := TYAMLValueType.vtInteger;
-    end
-    else if ((trimmedValue[2] = 'o') or (trimmedValue[2] = 'O')) and (Length(trimmedValue) > 2) then
-    begin
-      // Octal format (0o or 0O)
-      result := TYAMLValueType.vtInteger;
-    end
-    else if ((trimmedValue[2] = 'b') or (trimmedValue[2] = 'B')) and (Length(trimmedValue) > 2) then
-    begin
-      // Binary format (0b or 0B)
-      result := TYAMLValueType.vtInteger;
-    end
+    // In JSON mode, only 'null' is valid null literal
+    if SameText(trimmedValue, 'null') then
+      result := TYAMLValueType.vtNull
+    // In JSON mode, only 'true' and 'false' are valid boolean literals
+    else if SameText(trimmedValue, 'true') or SameText(trimmedValue, 'false') then
+      result := TYAMLValueType.vtBoolean
+    else if TryStrToInt64(trimmedValue, intVal) then
+      result := TYAMLValueType.vtInteger
     else if TryStrToFloat(trimmedValue, floatVal, YAMLFormatSettings) then
       result := TYAMLValueType.vtFloat
+    // In JSON mode, default unrecognized values to string (will be validated later)
     else
       result := TYAMLValueType.vtString;
   end
-  else if TryStrToFloat(trimmedValue, floatVal, YAMLFormatSettings) then
-    result := TYAMLValueType.vtFloat
-  // Check for special YAML float values
-  else if SameText(trimmedValue, '.nan') or SameText(trimmedValue, '.NaN') or SameText(trimmedValue, '.NAN') or
-          SameText(trimmedValue, '.inf') or SameText(trimmedValue, '.Inf') or SameText(trimmedValue, '.INF') or
-          SameText(trimmedValue, '+.inf') or SameText(trimmedValue, '+.Inf') or SameText(trimmedValue, '+.INF') or
-          SameText(trimmedValue, '-.inf') or SameText(trimmedValue, '-.Inf') or SameText(trimmedValue, '-.INF') then
-    result := TYAMLValueType.vtFloat
-  // Default to string
   else
-    result := TYAMLValueType.vtString;
+  begin
+    // YAML mode - more permissive
+    if SameText(trimmedValue, 'null') or SameText(trimmedValue, '~') or (trimmedValue = '') then
+      result := TYAMLValueType.vtNull
+    else if SameText(trimmedValue, 'true') or SameText(trimmedValue, 'false') or
+            SameText(trimmedValue, 'yes') or SameText(trimmedValue, 'no') or
+            SameText(trimmedValue, 'on') or SameText(trimmedValue, 'off') then
+      result := TYAMLValueType.vtBoolean
+    else if IsTimestampPattern(trimmedValue) then
+      result := TYAMLValueType.vtTimestamp
+    else if TryStrToInt64(trimmedValue, intVal) then
+      result := TYAMLValueType.vtInteger
+    // Check for hex, octal, and binary number formats
+    else if (Length(trimmedValue) > 2) and (trimmedValue[1] = '0') then
+    begin
+      if ((trimmedValue[2] = 'x') or (trimmedValue[2] = 'X')) and (Length(trimmedValue) > 2) then
+      begin
+        // Hexadecimal format (0x or 0X)
+        result := TYAMLValueType.vtInteger;
+      end
+      else if ((trimmedValue[2] = 'o') or (trimmedValue[2] = 'O')) and (Length(trimmedValue) > 2) then
+      begin
+        // Octal format (0o or 0O)
+        result := TYAMLValueType.vtInteger;
+      end
+      else if ((trimmedValue[2] = 'b') or (trimmedValue[2] = 'B')) and (Length(trimmedValue) > 2) then
+      begin
+        // Binary format (0b or 0B)
+        result := TYAMLValueType.vtInteger;
+      end
+      else if TryStrToFloat(trimmedValue, floatVal, YAMLFormatSettings) then
+        result := TYAMLValueType.vtFloat
+      else
+        result := TYAMLValueType.vtString;
+    end
+    else if TryStrToFloat(trimmedValue, floatVal, YAMLFormatSettings) then
+      result := TYAMLValueType.vtFloat
+    // Check for special YAML float values
+    else if SameText(trimmedValue, '.nan') or SameText(trimmedValue, '.NaN') or SameText(trimmedValue, '.NAN') or
+            SameText(trimmedValue, '.inf') or SameText(trimmedValue, '.Inf') or SameText(trimmedValue, '.INF') or
+            SameText(trimmedValue, '+.inf') or SameText(trimmedValue, '+.Inf') or SameText(trimmedValue, '+.INF') or
+            SameText(trimmedValue, '-.inf') or SameText(trimmedValue, '-.Inf') or SameText(trimmedValue, '-.INF') then
+      result := TYAMLValueType.vtFloat
+    // Default to string
+    else
+      result := TYAMLValueType.vtString;
+  end;
 end;
 
 
@@ -393,7 +412,19 @@ begin
           parts.Free;
         end;
 
-        valueType := IsScalarValue(value);
+        valueType := IsScalarValue(value, (FOptions <> nil) and FOptions.JSONMode);
+
+        // Additional JSON mode validation for invalid literals
+        if (FOptions <> nil) and FOptions.JSONMode and (valueType = TYAMLValueType.vtString) then
+        begin
+          // Check for YAML-style boolean/null values that are invalid in JSON
+          if SameText(value, 'yes') or SameText(value, 'no') or SameText(value, 'on') or SameText(value, 'off') or
+             SameText(value, 'truth') or SameText(value, 'false') or SameText(value, 'True') or SameText(value, 'False') or
+             SameText(value, '~') or (value = '') then
+          begin
+            RaiseParseError('Invalid literal value in JSON: "' + value + '". JSON only supports true, false, null, numbers, and quoted strings.');
+          end;
+        end;
 
         // Additional validation for potentially problematic unquoted strings
         if (valueType = TYAMLValueType.vtString) then
@@ -445,8 +476,24 @@ begin
   if MatchToken(TYAMLTokenKind.RBracket) then
     Exit;
 
+  // In JSON mode, check for leading comma (missing first element)
+  if (FOptions <> nil) and FOptions.JSONMode and (FCurrentToken.TokenKind = TYAMLTokenKind.Comma) then
+  begin
+    RaiseParseError('Missing array element: array cannot start with comma in JSON');
+  end;
+
   // Parse items
   repeat
+    // In JSON mode, check for invalid mapping syntax inside arrays
+    if (FOptions <> nil) and FOptions.JSONMode then
+    begin
+      if (FCurrentToken.TokenKind in [TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString]) and 
+         (FLexer.PeekToken.TokenKind = TYAMLTokenKind.Colon) then
+      begin
+        RaiseParseError('Invalid syntax: object key-value pairs are not allowed in JSON arrays');
+      end;
+    end;
+    
     item := ParseValue(result);
     result.AddValue(item);
 
@@ -455,6 +502,18 @@ begin
     if MatchToken(TYAMLTokenKind.Comma) then
     begin
       SkipNewlines;
+      // In JSON mode, check for missing array elements after comma
+      if (FOptions <> nil) and FOptions.JSONMode then
+      begin
+        if (FCurrentToken.TokenKind = TYAMLTokenKind.Comma) then
+        begin
+          RaiseParseError('Missing array element: consecutive commas are not allowed in JSON');
+        end
+        else if (FCurrentToken.TokenKind = TYAMLTokenKind.RBracket) then
+        begin
+          RaiseParseError('Missing array element: trailing comma is not allowed in JSON');
+        end;
+      end;
       Continue;
     end
     else if FCurrentToken.TokenKind = TYAMLTokenKind.RBracket then
@@ -467,6 +526,23 @@ begin
 
   ExpectToken(TYAMLTokenKind.RBracket); // ']'
   CheckForSameLineComment(result);
+  
+  // Check for unexpected tokens after flow sequence
+  if (parent = nil) then
+  begin
+    case FCurrentToken.TokenKind of
+      TYAMLTokenKind.RBracket:
+        RaiseParseError('Unexpected closing bracket "]" - no matching opening bracket');
+      TYAMLTokenKind.Comma:
+        RaiseParseError('Unexpected comma after closing bracket');
+      TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString:
+        RaiseParseError('Unexpected text after closing bracket');
+      TYAMLTokenKind.EOF, TYAMLTokenKind.NewLine, TYAMLTokenKind.Comment:
+        ; // These are acceptable
+    else
+      RaiseParseError('Unexpected token after closing bracket: ' + GetEnumName(TypeInfo(TYAMLTokenKind), Ord(FCurrentToken.TokenKind)));
+    end;
+  end;
 end;
 
 function TYAMLParser.ParseFlowMapping(const parent : IYAMLValue; const tag : string) : IYAMLMapping;
@@ -492,6 +568,12 @@ begin
     // Parse key
     if (FCurrentToken.TokenKind = TYAMLTokenKind.Value) or (FCurrentToken.TokenKind = TYAMLTokenKind.QuotedString) then
     begin
+      // In JSON mode, keys must be quoted strings
+      if (FOptions <> nil) and FOptions.JSONMode and (FCurrentToken.TokenKind = TYAMLTokenKind.Value) then
+      begin
+        RaiseParseError('Object keys must be quoted strings in JSON');
+      end;
+      
       key := FCurrentToken.value;
       NextToken;
     end
@@ -500,6 +582,7 @@ begin
     else
       RaiseParseError('Expected key in flow mapping');
 
+    SkipNewlines; // Allow newlines before colon in both YAML and JSON modes
     ExpectToken(TYAMLTokenKind.Colon); // ':'
     SkipNewlines;
 
@@ -522,6 +605,23 @@ begin
 
   ExpectToken(TYAMLTokenKind.RBrace); // '}'
   CheckForSameLineComment(result);
+  
+  // Check for unexpected tokens after flow mapping
+  if (parent = nil) then
+  begin
+    case FCurrentToken.TokenKind of
+      TYAMLTokenKind.RBrace:
+        RaiseParseError('Unexpected closing brace "}" - no matching opening brace');
+      TYAMLTokenKind.Comma:
+        RaiseParseError('Unexpected comma after closing brace');
+      TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString:
+        RaiseParseError('Unexpected text after closing brace');
+      TYAMLTokenKind.EOF, TYAMLTokenKind.NewLine, TYAMLTokenKind.Comment:
+        ; // These are acceptable
+    else
+      RaiseParseError('Unexpected token after closing brace: ' + GetEnumName(TypeInfo(TYAMLTokenKind), Ord(FCurrentToken.TokenKind)));
+    end;
+  end;
 end;
 
 function TYAMLParser.ParseSequence(const parent : IYAMLValue; const tag : string) : IYAMLSequence;
@@ -597,6 +697,12 @@ begin
     begin
       if firstKey = '' then
       begin
+        // In JSON mode, keys must be quoted strings
+        if (FOptions <> nil) and FOptions.JSONMode and (FCurrentToken.TokenKind = TYAMLTokenKind.Value) then
+        begin
+          RaiseParseError('Object keys must be quoted strings in JSON');
+        end;
+        
         key := FCurrentToken.value;
         //don't check dupes here, we need to parse fully
         if result.ContainsKey(key) then
@@ -779,7 +885,13 @@ begin
     begin
       ProcessComment;
       result := ParseValue(parent);
-    end
+    end;
+
+    TYAMLTokenKind.RBracket :
+      RaiseParseError('Unexpected closing bracket "]" - no matching opening bracket');
+
+    TYAMLTokenKind.RBrace :
+      RaiseParseError('Unexpected closing brace "}" - no matching opening brace')
 
   else
     RaiseParseError('Unexpected token in value context : ' + GetEnumName(TypeInfo(TYAMLTokenKind), Ord(FCurrentToken.TokenKind)));

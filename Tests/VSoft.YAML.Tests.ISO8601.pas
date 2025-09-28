@@ -100,7 +100,7 @@ type
 implementation
 
 uses
-  VSoft.YAML.Utils, VSoft.YAML.Classes;
+  VSoft.YAML.Utils, VSoft.YAML.Classes, System.TimeSpan;
 
 { TTestISO8601DateTime }
 

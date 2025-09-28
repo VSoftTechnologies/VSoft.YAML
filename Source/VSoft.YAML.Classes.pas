@@ -96,7 +96,7 @@ type
     procedure SetComments(const value : TStrings);
     procedure AddComment(const value : string);
     procedure ClearComments;
-
+    procedure Clear;virtual;abstract;
     function Query(const AExpression : string) : IYAMLSequence;
     function QuerySingle(const AExpression : string; out AMatch : IYAMLValue) : boolean;
 
@@ -173,6 +173,7 @@ type
     function AddSet(const tag : string = '') : IYAMLSet;overload;
     function AddSet(const tagInfo : IYAMLTagInfo) : IYAMLSet;overload;
 
+    procedure Clear;override;
 
   public
     constructor Create(const parent : IYAMLValue; const tag : string);overload;virtual;
@@ -188,6 +189,8 @@ type
   protected
     class function GetNodeValueType : TYAMLValueType;override;
     procedure AddValue(const value : IYAMLValue);override;
+     procedure Clear;override;
+
   public
     constructor Create(const parent : IYAMLValue; const tag : string);override;
     constructor Create(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo);override;
@@ -280,6 +283,9 @@ type
     procedure SetObjectBool(const key: string; const Value: Boolean);
     procedure SetArray(const key: string; const Value: IYAMLSequence);
     procedure SetObject(const key: string; const Value: IYAMLMapping);
+
+    procedure Clear;override;
+
   public
     constructor Create(const parent : IYAMLValue; const tag : string);overload;
     constructor Create(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo);overload;
@@ -396,9 +402,13 @@ type
   TYAMLParserOptions = class(TInterfacedObject, IYAMLParserOptions)
   private
     FDuplicateKeyBehavior : TYAMLDuplicateKeyBehavior;
+    FJSONMode : boolean;
   protected
     procedure SetDuplicateKeyBehavior(value : TYAMLDuplicateKeyBehavior);
     function GetDuplicateKeyBehavior : TYAMLDuplicateKeyBehavior;
+    function GetJSONMode : boolean;
+    procedure SetJSONMode(value : boolean);
+
   public
     constructor Create;
   end;
@@ -1064,6 +1074,12 @@ begin
   FItems := TList<IYAMLValue>.Create;
 end;
 
+procedure TYAMLSequence.Clear;
+begin
+  FItems.Clear;
+  ClearComments;
+end;
+
 constructor TYAMLSequence.Create(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo);
 var
   vt : TYAMLValueType;
@@ -1512,6 +1528,15 @@ begin
   AddOrSetValue(key, result);
 end;
 
+
+procedure TYAMLMapping.Clear;
+begin
+  FKeys.Clear;
+  FPairs.Clear;
+  if FComments <> nil then
+    FComments.Clear;
+  FComment := '';
+end;
 
 function TYAMLMapping.Contains(const key: string): boolean;
 begin
@@ -2054,6 +2079,7 @@ end;
 constructor TYAMLParserOptions.Create;
 begin
   FDuplicateKeyBehavior := TYAMLDuplicateKeyBehavior.dkOverwrite;
+  FJSONMode := false;
 end;
 
 function TYAMLParserOptions.GetDuplicateKeyBehavior : TYAMLDuplicateKeyBehavior;
@@ -2061,9 +2087,19 @@ begin
   result := FDuplicateKeyBehavior;
 end;
 
+function TYAMLParserOptions.GetJSONMode: boolean;
+begin
+  result := FJSONMode;
+end;
+
 procedure TYAMLParserOptions.SetDuplicateKeyBehavior(value : TYAMLDuplicateKeyBehavior);
 begin
   FDuplicateKeyBehavior := value;
+end;
+
+procedure TYAMLParserOptions.SetJSONMode(value: boolean);
+begin
+  FJSONMode := value;
 end;
 
 { TYAMLSet }
@@ -2089,6 +2125,12 @@ begin
   inherited Create(parent, tag);
   FValues := TStringList.Create;
   FValues.Sorted := True;  // For fast duplicate detection
+end;
+
+procedure TYAMLSet.Clear;
+begin
+  inherited;
+  FValues.Clear;
 end;
 
 constructor TYAMLSet.Create(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo);

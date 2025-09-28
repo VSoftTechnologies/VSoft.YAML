@@ -60,6 +60,81 @@ type
     [Test]
     procedure TestJSONDeepNesting;
 
+    [Test]
+    procedure TestJSONMalformedMissingColon;
+
+    [Test]
+    procedure TestJSONMalformedMissingComma;
+
+    [Test]
+    procedure TestJSONMalformedUnterminatedString;
+
+    [Test]
+    procedure TestJSONMalformedTrailingComma;
+
+    [Test]
+    procedure TestJSONMalformedMissingQuotes;
+
+    [Test]
+    procedure TestJSONMalformedInvalidNumbers;
+
+    [Test]
+    procedure TestJSONMalformedDuplicateKeys;
+
+    [Test]
+    procedure TestJSONMalformedInvalidEscapes;
+
+    [Test]
+    procedure TestYAMLSingleQuotedStrings;
+
+    [Test]
+    procedure TestYAMLUnquotedKeys;
+
+    [Test]
+    procedure TestJSONInvalidHexEscape;
+
+    [Test]
+    procedure TestJSONSingleQuotedArray;
+
+    [Test]
+    procedure TestJSONColonInsteadOfComma;
+
+    [Test]
+    procedure TestJSONInvalidBooleanLiteral;
+
+    [Test]
+    procedure TestJSONLiteralLineBreak;
+
+    [Test]
+    procedure TestJSONLineContinuation;
+
+    [Test]
+    procedure TestJSONInvalidScientificNotation;
+
+    [Test]
+    procedure TestJSONUnquotedObjectKey;
+
+    [Test]
+    procedure TestJSONMissingArrayElement;
+
+    [Test]
+    procedure TestExtraClosingBracket;
+
+    [Test]
+    procedure TestCommaAfterClosingBracket;
+
+    [Test]
+    procedure TestCharacterAfterClosingBracket;
+
+    [Test]
+    procedure TestJSONDecimalWithoutLeadingDigit;
+
+    [Test]
+    procedure TestJSONHexNumber;
+
+    [Test]
+    procedure TestJSONLeadingZeros;
+
   end;
 
 
@@ -470,6 +545,472 @@ begin
   
   Assert.AreEqual('found it!', 
     level3.Values['level4'].Values['level5'].Values['deepValue'].AsString);
+end;
+
+procedure TJSONParsingTests.TestJSONMalformedMissingColon;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '{"Missing colon" null}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for missing colon'
+  );
+end;
+
+procedure TJSONParsingTests.TestJSONMalformedMissingComma;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '{"key1": "value1" "key2": "value2"}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for missing comma'
+  );
+end;
+
+procedure TJSONParsingTests.TestJSONMalformedUnterminatedString;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '{"unterminated": "this string has no closing quote}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for unterminated string'
+  );
+end;
+
+procedure TJSONParsingTests.TestJSONMalformedTrailingComma;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '{"key1": "value1", "key2": "value2",}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for trailing comma'
+  );
+end;
+
+procedure TJSONParsingTests.TestJSONMalformedMissingQuotes;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+begin
+  // YAML allows unquoted keys, so this actually parses successfully
+  jsonText := '{key: "value"}';
+  
+  doc := TYAML.LoadFromString(jsonText);
+  Assert.IsNotNull(doc.Root, 'LoadFromString returned null');
+  Assert.AreEqual(TYAMLValueType.vtMapping, doc.Root.ValueType);
+  Assert.AreEqual('value', doc.Root.Values['key'].AsString);
+end;
+
+procedure TJSONParsingTests.TestJSONMalformedInvalidNumbers;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+begin
+  // YAML parser treats this as a string since it's not a valid number
+  jsonText := '{"invalidNumber": 123.45.67}';
+  
+  doc := TYAML.LoadFromString(jsonText);
+  Assert.IsNotNull(doc.Root, 'LoadFromString returned null');
+  Assert.AreEqual(TYAMLValueType.vtMapping, doc.Root.ValueType);
+  // The invalid number should be parsed as a string
+  Assert.AreEqual('123.45.67', doc.Root.Values['invalidNumber'].AsString);
+end;
+
+procedure TJSONParsingTests.TestJSONMalformedDuplicateKeys;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+begin
+  jsonText := '{"key": "value1", "key": "value2"}';
+  
+  doc := TYAML.LoadFromString(jsonText);
+  Assert.IsNotNull(doc.Root, 'LoadFromString returned null');
+  
+  // JSON allows duplicate keys - the last one wins
+  Assert.AreEqual('value2', doc.Root.Values['key'].AsString);
+end;
+
+procedure TJSONParsingTests.TestJSONMalformedInvalidEscapes;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+begin
+  // YAML parser may handle this differently - let's test what it actually does
+  jsonText := '{"invalidEscape": "This has an invalid escape \\x sequence"}';
+  
+  doc := TYAML.LoadFromString(jsonText);
+  Assert.IsNotNull(doc.Root, 'LoadFromString returned null');
+  Assert.AreEqual(TYAMLValueType.vtMapping, doc.Root.ValueType);
+  // The escape sequence should be preserved as literal text
+  Assert.AreEqual('This has an invalid escape \x sequence', doc.Root.Values['invalidEscape'].AsString);
+end;
+
+procedure TJSONParsingTests.TestYAMLSingleQuotedStrings;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+begin
+  // YAML allows single quoted strings, so this should parse successfully
+  jsonText := '{''singleQuoted'': ''value''}';
+  
+  doc := TYAML.LoadFromString(jsonText);
+  Assert.IsNotNull(doc.Root, 'LoadFromString returned null');
+  Assert.AreEqual(TYAMLValueType.vtMapping, doc.Root.ValueType);
+  Assert.AreEqual('value', doc.Root.Values['singleQuoted'].AsString);
+end;
+
+procedure TJSONParsingTests.TestYAMLUnquotedKeys;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+begin
+  // YAML allows unquoted keys, so this should parse successfully
+  jsonText := '{unquotedKey: "value"}';
+  
+  doc := TYAML.LoadFromString(jsonText);
+  Assert.IsNotNull(doc.Root, 'LoadFromString returned null');
+  Assert.AreEqual(TYAMLValueType.vtMapping, doc.Root.ValueType);
+  Assert.AreEqual('value', doc.Root.Values['unquotedKey'].AsString);
+end;
+
+procedure TJSONParsingTests.TestJSONInvalidHexEscape;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '["Illegal backslash escape: \x15"]';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for invalid \x escape sequence'
+  );
+end;
+
+procedure TJSONParsingTests.TestJSONSingleQuotedArray;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '[''single quote'']';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for single-quoted strings in JSON'
+  );
+end;
+
+procedure TJSONParsingTests.TestJSONColonInsteadOfComma;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '["Colon instead of comma": false]';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for object syntax inside JSON array'
+  );
+end;
+
+procedure TJSONParsingTests.TestJSONInvalidBooleanLiteral;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '["Bad value", truth]';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for invalid boolean literal "truth" in JSON array'
+  );
+end;
+
+procedure TJSONParsingTests.TestJSONLiteralLineBreak;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '["line' + sLineBreak + 'break"]';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for literal line break in JSON string'
+  );
+end;
+
+procedure TJSONParsingTests.TestJSONLineContinuation;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '["line\' + sLineBreak + 'break"]';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for line continuation in JSON string'
+  );
+end;
+
+procedure TJSONParsingTests.TestJSONInvalidScientificNotation;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '[0e]';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for incomplete scientific notation in JSON'
+  );
+end;
+
+procedure TJSONParsingTests.TestJSONUnquotedObjectKey;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '{unquoted_key: "keys must be quoted"}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for unquoted object key in JSON'
+  );
+end;
+
+procedure TJSONParsingTests.TestJSONMissingArrayElement;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '[   , "<-- missing value"]';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for missing array element in JSON'
+  );
+end;
+
+procedure TJSONParsingTests.TestExtraClosingBracket;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '["Extra close"]]';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for extra closing bracket'
+  );
+end;
+
+procedure TJSONParsingTests.TestCommaAfterClosingBracket;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '["Comma after the close"],';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for comma after closing bracket'
+  );
+end;
+
+procedure TJSONParsingTests.TestCharacterAfterClosingBracket;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '["Comma after the close"]x';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for character after closing bracket'
+  );
+end;
+
+procedure TJSONParsingTests.TestJSONDecimalWithoutLeadingDigit;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '.234';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for decimal without leading digit in JSON'
+  );
+end;
+
+procedure TJSONParsingTests.TestJSONHexNumber;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '{"Numbers cannot be hex": 0x14}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for hex numbers in JSON'
+  );
+end;
+
+procedure TJSONParsingTests.TestJSONLeadingZeros;
+var
+  jsonText: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+begin
+  jsonText := '{"Numbers cannot have leading zeroes": 013}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Should raise parse error for numbers with leading zeros in JSON'
+  );
 end;
 
 
