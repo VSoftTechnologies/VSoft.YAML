@@ -421,8 +421,7 @@ begin
   // Test ClearTag method
   value.ClearTag;
   Assert.AreEqual('', value.Tag);
-  Assert.IsNotNull(value.TagInfo);
-  Assert.IsTrue(value.TagInfo.IsUnresolved);
+  Assert.IsNull(value.TagInfo);
 end;
 
 procedure TYAMLTagInfoTests.TestTagAwareValueWithStrings;
@@ -531,7 +530,7 @@ begin
   // Clear tag and verify
   value.ClearTag;
   Assert.AreEqual('', value.Tag);
-  Assert.IsTrue(value.TagInfo.IsUnresolved);
+  Assert.IsTrue(value.TagInfo = nil);
   Assert.AreEqual('', mapping.Values['test'].Tag);
 end;
 

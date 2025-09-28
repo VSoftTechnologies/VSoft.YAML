@@ -16,12 +16,13 @@ type
   TJSONWriterImpl = class
   private
     FOptions : IYAMLEmitOptions;
+    FPrettyPrint : boolean;
     FWriter : TYAMLStreamWriter;
     FIndentLevel : UInt32;
 
     // Helper methods for formatting
     function FormatScalar(const value : IYAMLValue) : string;
-    function GetIndent : string;
+    function GetIndent : string;inline;
     function GetNewlineAndIndent : string;
 
     // Core writing methods
@@ -65,6 +66,7 @@ begin
   inherited Create;
   // cloning options as we may need to modify them depending on methods called
   FOptions := options.Clone;
+  FPrettyPrint := FOptions.PrettyPrint;
   FWriter := nil;
   FIndentLevel := 0;
 end;
@@ -82,7 +84,7 @@ end;
 
 function TJSONWriterImpl.GetNewlineAndIndent : string;
 begin
-  if FOptions.PrettyPrint then
+  if FPrettyPrint then
     result := sLineBreak + GetIndent
   else
     result := '';
@@ -125,7 +127,7 @@ end;
 
 procedure TJSONWriterImpl.WriteString(const str : string);
 begin
-  Assert(FWriter <> nil);
+//  Assert(FWriter <> nil);
   FWriter.Write(str);
 end;
 
@@ -150,13 +152,16 @@ var
   i : integer;
   key : string;
   value : IYAMLValue;
+  count : integer;
 begin
   WriteString('{');
-  
-  if mapping.Count > 0 then
+
+  count := mapping.Count;
+
+  if count > 0 then
   begin
     IncIndent;
-    for i := 0 to mapping.Count - 1 do
+    for i := 0 to count - 1 do
     begin
       if not IsFirstItem(i) then
         WriteString(',');
@@ -167,7 +172,7 @@ begin
       value := mapping.Values[key];
       
       WriteString('"' + TYAMLCharUtils.EscapeStringForJSON(key) + '":');
-      if FOptions.PrettyPrint then
+      if FPrettyPrint then
         WriteString(' ');
       WriteValue(value);
     end;
@@ -182,13 +187,15 @@ procedure TJSONWriterImpl.WriteSequence(const sequence : IYAMLSequence);
 var
   i : integer;
   item : IYAMLValue;
+  count : integer;
 begin
   WriteString('[');
-  
-  if sequence.Count > 0 then
+
+  count := sequence.Count;
+  if count > 0 then
   begin
     IncIndent;
-    for i := 0 to sequence.Count - 1 do
+    for i := 0 to count - 1 do
     begin
       if not IsFirstItem(i) then
         WriteString(',');

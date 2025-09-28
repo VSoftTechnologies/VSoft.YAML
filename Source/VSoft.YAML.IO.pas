@@ -60,10 +60,10 @@ type
     class function CreateFromString(const value : string ) : IInputReader;static;
     class function CreateFromStream(const stream: TStream) : IInputReader; overload;static;
     class function CreateFromStream(const stream: TStream; detectBOM: Boolean) : IInputReader; overload;static;
-    class function CreateFromStream(const stream: TStream; encoding: TEncoding; detectBOM: boolean = False; bufferSize: Integer = 4096) : IInputReader; overload;static;
+    class function CreateFromStream(const stream: TStream; encoding: TEncoding; detectBOM: boolean = False; bufferSize: Integer = 32768) : IInputReader; overload;static;
     class function CreateFromFile(const fileName: string) : IInputReader; overload;static;
     class function CreateFromFile(const fileName: string; detectBOM: Boolean) : IInputReader; overload;static;
-    class function CreateFromFile(const fileName: string; encoding: TEncoding; detectBOM: boolean = False; bufferSize: Integer = 4096) : IInputReader; overload;static;
+    class function CreateFromFile(const fileName: string; encoding: TEncoding; detectBOM: boolean = False; bufferSize: Integer = 32768) : IInputReader; overload;static;
 
   end;
 
@@ -74,50 +74,37 @@ uses VSoft.YAML.StreamReader;
 
 
 type
-  TInputReader = class(TInterfacedObject)
-    function GetPosition : integer;virtual;abstract;
-    function GetLine : integer;virtual;abstract;
-    function GetColumn : integer;virtual;abstract;
-    function GetCurrent : Char;virtual;abstract;
-    function GetPreviousChar : Char;virtual;abstract;
-    function IsAtEnd : boolean;virtual;abstract;
-    function Read : Char;overload;virtual;abstract;
-    function Read(n : integer) : Char;overload;virtual;abstract;
-    function Peek : Char;overload;virtual;abstract;
-    function Peek(n : integer) : Char;overload;virtual;abstract;
-    procedure Save;virtual;abstract;
-    procedure Restore;virtual;abstract;
-  end;
-
-  TStringInputReader = class(TInputReader,IInputReader)
+  TStringInputReader = class(TInterfacedObject,IInputReader)
   private
     FInput : string;
     FLength : integer;
     FPosition : integer;
     FLine : integer;
     FColumn : integer;
+    FIsAtEnd : boolean;
 
     FSavedPosition : integer;
     FSavedLine : integer;
     FSavedColumn : integer;
+    FSavedIsAtEnd : boolean;
   protected
-    function GetPosition : integer;override;
-    function GetLine : integer;override;
-    function GetColumn : integer;override;
-    function GetCurrent : Char;override;
-    function GetPreviousChar : Char;override;
-    function IsAtEnd : boolean;override;
-    function Read : Char;overload;override;
-    function Read(n : integer) : Char;overload;override;
-    function Peek : Char;overload;override;
-    function Peek(n : integer) : Char;overload;override;
-    procedure Save;override;
-    procedure Restore;override;
+    function GetPosition : integer;inline;
+    function GetLine : integer;inline;
+    function GetColumn : integer;inline;
+    function GetCurrent : Char;inline;
+    function GetPreviousChar : Char;inline;
+    function IsAtEnd : boolean;inline;
+    function Read : Char;overload;
+    function Read(n : integer) : Char;overload;
+    function Peek : Char;overload;inline;
+    function Peek(n : integer) : Char;overload;
+    procedure Save;
+    procedure Restore;
   public
     constructor Create(const theString : string);
   end;
 
-  TStreamInputReader = class(TInputReader, IInputReader)
+  TStreamInputReader = class(TInterfacedObject, IInputReader)
   private
     FStream : TStream;
     FStreamReader : TYAMLStreamReader;
@@ -137,26 +124,27 @@ type
     FSavedStreamPos : Int64;
     FSavedCurrentChar : Char;
     FSavedPreviousChar : Char;
+    FSavedAtEnd : Boolean;
 
     procedure InitializeReader;
     procedure ReadNextChar;
   protected
-    function GetPosition : integer;override;
-    function GetLine : integer;override;
-    function GetColumn : integer;override;
-    function GetCurrent : Char;override;
-    function GetPreviousChar : Char;override;
-    function IsAtEnd : boolean;override;
-    function Read : Char;overload;override;
-    function Read(n : integer) : Char;overload;override;
-    function Peek : Char;overload;override;
-    function Peek(n : integer) : Char;overload;override;
-    procedure Save;override;
-    procedure Restore;override;
+    function GetPosition : integer;inline;
+    function GetLine : integer;inline;
+    function GetColumn : integer;inline;
+    function GetCurrent : Char;inline;
+    function GetPreviousChar : Char;inline;
+    function IsAtEnd : boolean;inline;
+    function Read : Char;overload;
+    function Read(n : integer) : Char;overload;
+    function Peek : Char;overload;
+    function Peek(n : integer) : Char;overload;
+    procedure Save;
+    procedure Restore;
   public
     constructor Create(stream: TStream); overload;
     constructor Create(stream: TStream; detectBOM: Boolean); overload;
-    constructor Create(stream: TStream; encoding: TEncoding; detectBOM: Boolean = False; bufferSize: integer = 4096); overload;
+    constructor Create(stream: TStream; encoding: TEncoding; detectBOM: Boolean = False; bufferSize: integer = 8192); overload;
     destructor Destroy; override;
   end;
 
@@ -165,7 +153,7 @@ type
   public
     constructor Create(const filename: string); overload;
     constructor Create(const filename: string; detectBOM: Boolean); overload;
-    constructor Create(const filename: string; encoding: TEncoding; detectBOM: Boolean = False; BufferSize: Integer = 4096); overload;
+    constructor Create(const filename: string; encoding: TEncoding; detectBOM: Boolean = False; BufferSize: Integer = 8192); overload;
     destructor Destroy;override;
   end;
 
@@ -226,6 +214,7 @@ begin
     FPosition := -1;
     FLine := -1;
     FColumn := -1;
+    FIsAtEnd := true;
   end;
   //default to not having saved anything;
   FSavedPosition := -1;
@@ -240,7 +229,7 @@ end;
 
 function TStringInputReader.GetCurrent: Char;
 begin
-  if (FLength = 0) or (FPosition < 1) or (FPosition > FLength) then
+  if FIsAtEnd then
     result := #0
   else
     result := FInput[FPosition];
@@ -258,7 +247,7 @@ end;
 
 function TStringInputReader.GetPreviousChar: Char;
 begin
-  if (FLength = 0) or (FPosition < 2) or (FPosition > FLength + 1)  then
+  if FIsAtEnd or (FPosition < 2) or (FPosition > FLength + 1)  then
     result := #0
   else
     result := FInput[FPosition - 1];
@@ -266,7 +255,7 @@ end;
 
 function TStringInputReader.IsAtEnd: boolean;
 begin
-  result := (FLength = 0) or (FPosition > FLength);
+  result := FIsAtEnd;
 end;
 
 function TStringInputReader.Peek: Char;
@@ -289,7 +278,7 @@ function TStringInputReader.Read: Char;
 begin
   // Return current character and then advance
   result := GetCurrent;
-  
+
   if FPosition <= FLength then
   begin
     Inc(FPosition);
@@ -300,6 +289,7 @@ begin
     end
     else if result <> #13 then
       Inc(FColumn);
+    FIsAtEnd :=  (FPosition > FLength)
   end;
 end;
 
@@ -326,6 +316,8 @@ begin
     FPosition := FSavedPosition;
     FLine := FSavedLine;
     FColumn := FSavedColumn;
+    FIsAtEnd := FSavedIsAtEnd;
+    FSavedPosition := -1;
   end
   else
     raise Exception.Create('No saved position');
@@ -336,6 +328,7 @@ begin
   FSavedPosition := FPosition;
   FSavedLine := FLine;
   FSavedColumn := FColumn;
+  FSavedIsAtEnd := FIsAtEnd;
 end;
 
 { TStreamInputReader }
@@ -447,18 +440,19 @@ begin
   if FSavedPosition = -1 then
     raise Exception.Create('No saved position');
 
-  // Restore stream position using DiscardBufferedData
-  if FPosition <> FSavedPosition then
-  begin
-    FStreamReader.RestorePosition;
-    // Restore parser state
-    FPosition := FSavedPosition;
-    FLine := FSavedLine;
-    FColumn := FSavedColumn;
-    FCurrentChar := FSavedCurrentChar;
-    FPreviousChar := FSavedPreviousChar;
-    FAtEnd := (FSavedCurrentChar = #0) and (FSavedPosition > 0);
-  end;
+  // Always restore the stream position and state
+  FStreamReader.RestorePosition;
+
+  // Restore parser state
+  FPosition := FSavedPosition;
+  FLine := FSavedLine;
+  FColumn := FSavedColumn;
+  FCurrentChar := FSavedCurrentChar;
+  FPreviousChar := FSavedPreviousChar;
+  FAtEnd := FSavedAtEnd;
+
+  FSavedPosition := -1;
+
 end;
 
 procedure TStreamInputReader.Save;
@@ -470,6 +464,7 @@ begin
   FSavedStreamPos := FStream.Position;
   FSavedCurrentChar := FCurrentChar;
   FSavedPreviousChar := FPreviousChar;
+  FSavedAtEnd := FAtEnd;
 end;
 
 procedure TStreamInputReader.InitializeReader;
@@ -507,11 +502,14 @@ begin
   FSavedStreamPos := -1;
   FSavedCurrentChar := #0;
   FSavedPreviousChar := #0;
+  FSavedAtEnd := False;
 
   // Note: First character already read in else block above
 end;
 
 procedure TStreamInputReader.ReadNextChar;
+var
+  charValue: Integer;
 begin
   if FAtEnd then
   begin
@@ -521,38 +519,31 @@ begin
   
   FPreviousChar := FCurrentChar;
   
-  try
-    if FStreamReader.EndOfStream then
-    begin
-      FAtEnd := True;
-      FCurrentChar := #0;
-      Exit;
-    end;
-    
-    FCurrentChar := Char(FStreamReader.Read);
-    Inc(FPosition);
-    
-    // Track line and column
-    if FPreviousChar = #10 then // LF
-    begin
-      Inc(FLine);
-      FColumn := 1;
-    end
-    else if (FPreviousChar = #13) and (FCurrentChar <> #10) then // CR not followed by LF
-    begin
-      Inc(FLine);
-      FColumn := 1;
-    end
-    else if FCurrentChar <> #13 then // Don't increment column for CR
-      Inc(FColumn);
-      
-  except
-    on E: Exception do
-    begin
-      FAtEnd := True;
-      FCurrentChar := #0;
-    end;
+  // Use Read() and check for -1 instead of EndOfStream for more reliable EOF detection
+  charValue := FStreamReader.Read;
+  if charValue = -1 then
+  begin
+    FAtEnd := True;
+    FCurrentChar := #0;
+    Exit;
   end;
+
+  FCurrentChar := Char(charValue);
+  Inc(FPosition);
+
+  // Track line and column
+  if FPreviousChar = #10 then // LF
+  begin
+    Inc(FLine);
+    FColumn := 1;
+  end
+  else if (FPreviousChar = #13) and (FCurrentChar <> #10) then // CR not followed by LF
+  begin
+    Inc(FLine);
+    FColumn := 1;
+  end
+  else if FCurrentChar <> #13 then // Don't increment column for CR
+    Inc(FColumn);
 end;
 
 

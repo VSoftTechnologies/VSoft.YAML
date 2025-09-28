@@ -58,11 +58,11 @@ type
     constructor Create(Stream: TStream); overload;
     constructor Create(Stream: TStream; DetectBOM: Boolean); overload;
     constructor Create(Stream: TStream; Encoding: TEncoding;
-      DetectBOM: Boolean = False; BufferSize: Integer = 4096); overload;
+      DetectBOM: Boolean = False; BufferSize: Integer = 8192); overload;
     constructor Create(const Filename: string); overload;
     constructor Create(const Filename: string; DetectBOM: Boolean); overload;
     constructor Create(const Filename: string; Encoding: TEncoding;
-      DetectBOM: Boolean = False; BufferSize: Integer = 4096); overload;
+      DetectBOM: Boolean = False; BufferSize: Integer = 8192); overload;
     destructor Destroy; override;
     procedure Close; override;
     procedure DiscardBufferedData;

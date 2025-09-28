@@ -72,7 +72,7 @@ begin
     if TDUnitX.Options.ConsoleMode <> TDunitXConsoleMode.Off then
     begin
       ReportMemoryLeaksOnShutdown := True;
-      logger := TDUnitXConsoleLogger.Create(TDUnitX.Options.ConsoleMode = TDunitXConsoleMode.Quiet);
+      logger := TDUnitXConsoleLogger.Create(TDUnitX.Options.ConsoleMode = TDunitXConsoleMode.Verbose);
       runner.AddLogger(logger);
     end;
     //Generate an NUnit compatible XML File

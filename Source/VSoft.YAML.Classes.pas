@@ -30,7 +30,7 @@ type
     function GetComment : string;
     procedure SetComment(const value : string);
     function GetCount : integer;virtual;
-    procedure ClearParent;
+    procedure ClearParent;inline;
     function GetParent : IYAMLValue;
     function FindRoot : IYAMLValue;
     function GetNodes(Index : integer) : IYAMLValue;virtual;
@@ -39,10 +39,10 @@ type
     procedure ApplyTagConversion;
 
 
-    function GetRawValue : string;
-    function GetTag : string;
-    function GetTagInfo : IYAMLTagInfo;
-    function GetValueType : TYAMLValueType;
+    function GetRawValue : string;inline;
+    function GetTag : string;inline;
+    function GetTagInfo : IYAMLTagInfo;inline;
+    function GetValueType : TYAMLValueType;inline;
 
    // Type checking methods
     function IsNull : boolean;inline;
@@ -57,7 +57,7 @@ type
     function IsAlias : boolean;inline;
     function IsTimeStamp : boolean;inline;
     function IsNumeric : boolean;inline;
-    function IsScalar : boolean;
+    function IsScalar : boolean;inline;
     // Value conversion methods
     function AsBoolean : boolean;
     function AsInteger : Int64;
@@ -81,7 +81,6 @@ type
     constructor Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string = ''; const tag : string = ''); overload;
     constructor Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string; const tagInfo : IYAMLTagInfo); overload;
     constructor CreateNull;
-    destructor Destroy; override;
     // String representation
     function ToString : string; override;
   end;
@@ -91,7 +90,7 @@ type
     FComments : TStringList; // lazy create;
   protected
     procedure EnsureComments;
-    function GetHasComments : boolean;
+    function GetHasComments : boolean;inline;
     function GetComments : TStrings;
     procedure SetComments(const value : TStrings);
     procedure AddComment(const value : string);
@@ -329,7 +328,7 @@ type
     procedure SetEmitTagDirectives(value : boolean);
     function GetEmitYAMLDirective : boolean;
     procedure SetEmitYAMLDirective(value : boolean);
-    function GetPrettyPrint : boolean;
+    function GetPrettyPrint : boolean;inline;
     procedure SetPrettyPrint(const value : boolean);
 
     function Clone : IYAMLEmitOptions;
@@ -406,7 +405,7 @@ type
   protected
     procedure SetDuplicateKeyBehavior(value : TYAMLDuplicateKeyBehavior);
     function GetDuplicateKeyBehavior : TYAMLDuplicateKeyBehavior;
-    function GetJSONMode : boolean;
+    function GetJSONMode : boolean;inline;
     procedure SetJSONMode(value : boolean);
 
   public
@@ -663,7 +662,7 @@ begin
     ApplyTagConversion;
   end
   else
-    FTagInfo := TYAMLTagInfoFactory.CreateUnresolvedTag();
+    FTagInfo := nil; //TYAMLTagInfoFactory.CreateUnresolvedTag();
 end;
 
 constructor TYAMLValue.Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string; const tagInfo : IYAMLTagInfo);
@@ -683,7 +682,7 @@ begin
   else
   begin
     FTag := '';
-    FTagInfo := TYAMLTagInfoFactory.CreateUnresolvedTag();
+    FTagInfo := nil; //TYAMLTagInfoFactory.CreateUnresolvedTag();
   end;
 end;
 
@@ -692,11 +691,6 @@ begin
   Create(nil, TYAMLValueType.vtNull, '','');
 end;
 
-destructor TYAMLValue.Destroy;
-begin
-
-  inherited;
-end;
 
 function TYAMLValue.FindRoot : IYAMLValue;
 var
@@ -877,7 +871,7 @@ begin
   if tag <> '' then
     FTagInfo := TYAMLTagInfoFactory.ParseTag(tag)
   else
-    FTagInfo := TYAMLTagInfoFactory.CreateUnresolvedTag();
+    FTagInfo := nil; //TYAMLTagInfoFactory.CreateUnresolvedTag();
 end;
 
 procedure TYAMLValue.SetTagInfo(const tagInfo : IYAMLTagInfo);
@@ -888,14 +882,14 @@ begin
   else
   begin
     FTag := '';
-    FTagInfo := TYAMLTagInfoFactory.CreateUnresolvedTag();
+    FTagInfo := nil;// TYAMLTagInfoFactory.CreateUnresolvedTag();
   end;
 end;
 
 procedure TYAMLValue.ClearTag;
 begin
   FTag := '';
-  FTagInfo := TYAMLTagInfoFactory.CreateUnresolvedTag();
+  FTagInfo := nil; //TYAMLTagInfoFactory.CreateUnresolvedTag();
 end;
 
 { TYAMLSequence }
@@ -2163,7 +2157,10 @@ end;
 procedure TYAMLCollection.ClearComments;
 begin
   if FComments <> nil then
+  begin
     FComments.Clear;
+    FreeAndNil(FComments);
+  end;
 end;
 
 constructor TYAMLCollection.Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string; const tag : string);

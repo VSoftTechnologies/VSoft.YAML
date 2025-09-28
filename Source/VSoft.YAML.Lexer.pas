@@ -59,6 +59,7 @@ type
   private
     FReader : IInputReader;
     FOptions : IYAMLParserOptions;
+    FJSONMode : boolean;
     FIndentStack : TList<Integer>;
     FSequenceItemIndent : integer;
     FInValueContext : boolean; // Track if we're reading a value (after colon) vs key
@@ -68,8 +69,8 @@ type
     function PopIndentLevel: Integer;
     function CurrentIndentLevel: Integer;
   protected
-    function GetLine : integer;
-    function GetColumn : integer;
+    function GetLine : integer;inline;
+    function GetColumn : integer;inline;
     function IsAtEnd : boolean;inline;
     function IsWhitespace(ch : Char) : boolean;inline;
 
@@ -94,7 +95,7 @@ type
 
     function NextToken : TYAMLToken;
     function PeekToken : TYAMLToken;
-    function PeekTokenKind : TYAMLTokenKind;
+    function PeekTokenKind : TYAMLTokenKind;inline;
 
     property Line : integer read GetLine;
     property Column : integer read GetColumn;
@@ -114,6 +115,11 @@ begin
   inherited Create;
   FReader := reader;
   FOptions := options;
+  if FOptions <> nil then
+    FJSONMode := FOptions.JSONMode
+  else
+    FJSONMode := false;
+
   FSequenceItemIndent := -1;
   FInValueContext := False;
 
@@ -197,6 +203,7 @@ var
   hexStr : string;
   codePoint : Integer;
   codePoint64 : Int64;
+  peekChar : Char;
 begin
   result := '';
   FReader.Read; // Skip opening quote
@@ -210,10 +217,11 @@ begin
       if FReader.Current = '\' then
       begin
         // Check if this is a line continuation (backslash followed by newline)
-        if (FReader.Peek() = #10) or (FReader.Peek() = #13) then
+        peekChar := FReader.Peek();
+        if (peekChar = #10) or (peekChar = #13) then
         begin
           // In JSON mode, line continuation is not allowed
-          if (FOptions <> nil) and FOptions.JSONMode then
+          if FJSONMode then
           begin
             raise EYAMLParseException.Create('Line continuation (backslash followed by newline) is not valid in JSON', FReader.Line, FReader.Column);
           end;
@@ -248,7 +256,7 @@ begin
               // Basic escape sequences
               '0': begin
                 // Null character - not valid in JSON mode
-                if (FOptions <> nil) and FOptions.JSONMode then
+                if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \0 is not supported', FReader.Line, FReader.Column);
                 result := result + #0;     // Null character
                 FReader.Read; // Read the escape character we just processed
@@ -256,7 +264,7 @@ begin
               end;
               'a': begin
                 // Bell character - not valid in JSON mode
-                if (FOptions <> nil) and FOptions.JSONMode then
+                if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \a is not supported', FReader.Line, FReader.Column);
                 result := result + #7;     // Bell character
                 FReader.Read; // Read the escape character we just processed
@@ -279,7 +287,7 @@ begin
               end;
               'v': begin
                 // Vertical tab - not valid in JSON mode
-                if (FOptions <> nil) and FOptions.JSONMode then
+                if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \v is not supported', FReader.Line, FReader.Column);
                 result := result + #11;    // Vertical tab
                 FReader.Read; // Read the escape character we just processed
@@ -297,7 +305,7 @@ begin
               end;
               'e': begin
                 // Escape character - not valid in JSON mode
-                if (FOptions <> nil) and FOptions.JSONMode then
+                if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \e is not supported', FReader.Line, FReader.Column);
                 result := result + #27;    // Escape character
                 FReader.Read; // Read the escape character we just processed
@@ -305,7 +313,7 @@ begin
               end;
               ' ': begin
                 // Space - not valid in JSON mode
-                if (FOptions <> nil) and FOptions.JSONMode then
+                if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \ (space) is not supported', FReader.Line, FReader.Column);
                 result := result + ' ';    // Space
                 FReader.Read; // Read the escape character we just processed
@@ -328,7 +336,7 @@ begin
               end;
               'N': begin
                 // Next line (NEL) - not valid in JSON mode
-                if (FOptions <> nil) and FOptions.JSONMode then
+                if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \N is not supported', FReader.Line, FReader.Column);
                 result := result + #$85;   // Next line (NEL)
                 FReader.Read; // Read the escape character we just processed
@@ -336,7 +344,7 @@ begin
               end;
               '_': begin
                 // Non-breaking space - not valid in JSON mode
-                if (FOptions <> nil) and FOptions.JSONMode then
+                if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \_ is not supported', FReader.Line, FReader.Column);
                 result := result + #$A0;   // Non-breaking space
                 FReader.Read; // Read the escape character we just processed
@@ -344,7 +352,7 @@ begin
               end;
               'L': begin
                 // Line separator - not valid in JSON mode
-                if (FOptions <> nil) and FOptions.JSONMode then
+                if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \L is not supported', FReader.Line, FReader.Column);
                 result := result + #$2028; // Line separator
                 FReader.Read; // Read the escape character we just processed
@@ -352,7 +360,7 @@ begin
               end;
               'P': begin
                 // Paragraph separator - not valid in JSON mode
-                if (FOptions <> nil) and FOptions.JSONMode then
+                if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \P is not supported', FReader.Line, FReader.Column);
                 result := result + #$2029; // Paragraph separator
                 FReader.Read; // Read the escape character we just processed
@@ -401,7 +409,7 @@ begin
               end;
               'U': begin
                 // Unicode escape sequence \UXXXXXXXX (8 hex digits) - not valid in JSON mode
-                if (FOptions <> nil) and FOptions.JSONMode then
+                if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \U is not supported, use \u instead', FReader.Line, FReader.Column);
                 // Unicode escape sequence \UXXXXXXXX (8 hex digits)
                 // Check if the next characters look like hex digits
@@ -455,7 +463,7 @@ begin
               end;
               'x': begin
                 // Hex escape sequence \xXX - not valid in JSON mode
-                if (FOptions <> nil) and FOptions.JSONMode then
+                if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \x is not supported', FReader.Line, FReader.Column);
                   
                 // Hex escape sequence \xXX  
@@ -488,7 +496,7 @@ begin
       else
       begin
         // In JSON mode, check for literal newlines which are not allowed
-        if (FOptions <> nil) and FOptions.JSONMode and 
+        if FJSONMode and
            ((FReader.Current = #10) or (FReader.Current = #13)) then
         begin
           raise EYAMLParseException.Create('Literal line breaks are not allowed in JSON strings. Use \n for newlines.', FReader.Line, FReader.Column);
@@ -521,10 +529,11 @@ begin
       begin
         // Check if this is a line continuation (backslash followed by newline)
         // Even in single-quoted strings, line continuation should work
-        if (FReader.Peek() = #10) or (FReader.Peek() = #13) then
+        peekChar := FReader.Peek(); //peek can be expensive so cache when possible;
+        if (peekChar = #10) or (peekChar = #13) then
         begin
           // In JSON mode, line continuation is not allowed
-          if (FOptions <> nil) and FOptions.JSONMode then
+          if FJSONMode then
           begin
             raise EYAMLParseException.Create('Line continuation (backslash followed by newline) is not valid in JSON', FReader.Line, FReader.Column);
           end;
@@ -558,7 +567,7 @@ begin
       else
       begin
         // In JSON mode, check for literal newlines which are not allowed
-        if (FOptions <> nil) and FOptions.JSONMode and 
+        if FJSONMode and
            ((FReader.Current = #10) or (FReader.Current = #13)) then
         begin
           raise EYAMLParseException.Create('Literal line breaks are not allowed in JSON strings. Use \n for newlines.', FReader.Line, FReader.Column);
@@ -650,7 +659,7 @@ begin
     if (FReader.Current = 'x') or (FReader.Current = 'X') then
     begin
       // In JSON mode, hex numbers are not allowed
-      if (FOptions <> nil) and FOptions.JSONMode then
+      if FJSONMode then
         raise EYAMLParseException.Create('Hexadecimal numbers are not valid in JSON', FReader.Line, FReader.Column);
         
       result := result + FReader.Current;
@@ -694,7 +703,7 @@ begin
     else
     begin
       // In JSON mode, numbers starting with 0 followed by digits are not allowed (leading zeros)
-      if (FOptions <> nil) and FOptions.JSONMode and TYAMLCharUtils.IsDigit(FReader.Current) then
+      if FJSONMode and TYAMLCharUtils.IsDigit(FReader.Current) then
         raise EYAMLParseException.Create('Numbers with leading zeros are not valid in JSON', FReader.Line, FReader.Column);
     end;
     // If no special prefix, continue reading as regular decimal number
@@ -732,7 +741,7 @@ begin
     end;
     
     // In JSON mode, there must be at least one digit after e/E (and optional sign)
-    if (FOptions <> nil) and FOptions.JSONMode and not TYAMLCharUtils.IsDigit(FReader.Current) then
+    if FJSONMode and not TYAMLCharUtils.IsDigit(FReader.Current) then
     begin
       raise EYAMLParseException.Create('Invalid number format in JSON: exponent must have at least one digit after e/E', FReader.Line, FReader.Column);
     end;
@@ -872,7 +881,7 @@ begin
       Inc(count)
     else if FReader.Current = #9 then
     begin
-      if (FOptions <> nil) and FOptions.JSONMode then
+      if FJSONMode then
       begin
         // In JSON mode, treat tabs as 2 spaces
         Inc(count, 2);
@@ -1047,6 +1056,7 @@ var
   startLine, startColumn : integer;
   currentIndent : integer;
   tag : TTag;
+  peekChar : Char;
 begin
   // Initialize token
   result.TokenKind := TYAMLTokenKind.EOF;
@@ -1127,7 +1137,8 @@ begin
 
     '-':
       begin
-        if IsWhitespace(FReader.Peek()) then
+        peekChar := FReader.Peek();
+        if IsWhitespace(peekChar) then
         begin
           result.TokenKind := TYAMLTokenKind.SequenceItem;
           // For sequence items, use the actual column position for proper nesting
@@ -1138,7 +1149,7 @@ begin
           FSequenceItemIndent := result.IndentLevel;
           FReader.Read;
         end
-        else if (FReader.Peek() = '-') and (FReader.Peek(2) = '-') then
+        else if (peekChar = '-') and (FReader.Peek(2) = '-') then
         begin
           result.TokenKind := TYAMLTokenKind.DocStart;
           // No value assignment needed for ttDocStart
@@ -1178,7 +1189,8 @@ begin
 
     '.':
       begin
-        if (FReader.Peek() = '.') and (FReader.Peek(2) = '.') then
+        peekChar := FReader.Peek();
+        if (peekChar = '.') and (FReader.Peek(2) = '.') then
         begin
           result.TokenKind := TYAMLTokenKind.DocEnd;
           // No value assignment needed for ttDocEnd
@@ -1189,10 +1201,10 @@ begin
           result.TokenKind := TYAMLTokenKind.Value;
           result.Value := ReadSpecialFloat;
         end
-        else if TYAMLCharUtils.IsDigit(FReader.Peek()) then
+        else if TYAMLCharUtils.IsDigit(peekChar) then
         begin
           // In JSON mode, decimal numbers must have a leading digit before the dot
-          if (FOptions <> nil) and FOptions.JSONMode then
+          if FJSONMode then
             raise EYAMLParseException.Create('Decimal numbers must have a leading digit before the dot in JSON', FReader.Line, FReader.Column);
             
           result.TokenKind := TYAMLTokenKind.Value;
@@ -1255,9 +1267,9 @@ begin
     '''':
       begin
         // Single-quoted strings are not valid in JSON mode
-        if (FOptions <> nil) and FOptions.JSONMode then
+        if FJSONMode then
           raise EYAMLParseException.Create('Single-quoted strings are not valid in JSON', FReader.Line, FReader.Column);
-          
+
         result.TokenKind := TYAMLTokenKind.QuotedString;
         result.Value := ReadQuotedString('''');
       end;
@@ -1327,7 +1339,8 @@ begin
       begin
         // Set item indicator or mapping key in complex key syntax
         // Check if this is followed by whitespace (set item) or more content (complex key)
-        if IsWhitespace(FReader.Peek()) or (FReader.Peek = #10) or (FReader.Peek = #13) then
+        peekChar := FReader.Peek();
+        if IsWhitespace(peekChar) or (peekChar = #10) or (peekChar = #13) then
         begin
           result.TokenKind := TYAMLTokenKind.SetItem;
           FReader.Read; // Skip '?'

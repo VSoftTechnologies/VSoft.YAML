@@ -15,6 +15,7 @@ type
   TYAMLParser = class
   private
     FOptions : IYAMLParserOptions;
+    FJSONMode : boolean;
     FLexer : TYAMLLexer;
     FCurrentToken : TYAMLToken;
     FCurrentIndentLevel : integer;
@@ -89,7 +90,10 @@ implementation
 uses
   System.SysUtils,
   System.TypInfo,
-  VSoft.YAML.Classes, VSoft.YAML.Utils, VSoft.YAML.TagInfo;
+  VSoft.YAML.IO,
+  VSoft.YAML.Classes,
+  VSoft.YAML.Utils,
+  VSoft.YAML.TagInfo;
 
 { TYAMLParser }
 
@@ -97,6 +101,11 @@ constructor TYAMLParser.Create(ALexer : TYAMLLexer; const options : IYAMLParserO
 begin
   inherited Create;
   FOptions := options;
+  if FOptions <> nil then
+    FJSONMode := FOptions.JSONMode
+  else
+    FJSONMode := false;
+
   FLexer := ALexer;
   FCurrentIndentLevel := 0;
   FAnchorMap := TDictionary<string, IYAMLValue>.Create;
@@ -412,10 +421,10 @@ begin
           parts.Free;
         end;
 
-        valueType := IsScalarValue(value, (FOptions <> nil) and FOptions.JSONMode);
+        valueType := IsScalarValue(value, FJSONMode);
 
         // Additional JSON mode validation for invalid literals
-        if (FOptions <> nil) and FOptions.JSONMode and (valueType = TYAMLValueType.vtString) then
+        if FJSONMode and (valueType = TYAMLValueType.vtString) then
         begin
           // Check for YAML-style boolean/null values that are invalid in JSON
           if SameText(value, 'yes') or SameText(value, 'no') or SameText(value, 'on') or SameText(value, 'off') or
@@ -477,7 +486,7 @@ begin
     Exit;
 
   // In JSON mode, check for leading comma (missing first element)
-  if (FOptions <> nil) and FOptions.JSONMode and (FCurrentToken.TokenKind = TYAMLTokenKind.Comma) then
+  if FJSONMode and (FCurrentToken.TokenKind = TYAMLTokenKind.Comma) then
   begin
     RaiseParseError('Missing array element: array cannot start with comma in JSON');
   end;
@@ -485,7 +494,7 @@ begin
   // Parse items
   repeat
     // In JSON mode, check for invalid mapping syntax inside arrays
-    if (FOptions <> nil) and FOptions.JSONMode then
+    if FJSONMode then
     begin
       if (FCurrentToken.TokenKind in [TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString]) and 
          (FLexer.PeekToken.TokenKind = TYAMLTokenKind.Colon) then
@@ -503,7 +512,7 @@ begin
     begin
       SkipNewlines;
       // In JSON mode, check for missing array elements after comma
-      if (FOptions <> nil) and FOptions.JSONMode then
+      if FJSONMode then
       begin
         if (FCurrentToken.TokenKind = TYAMLTokenKind.Comma) then
         begin
@@ -569,7 +578,7 @@ begin
     if (FCurrentToken.TokenKind = TYAMLTokenKind.Value) or (FCurrentToken.TokenKind = TYAMLTokenKind.QuotedString) then
     begin
       // In JSON mode, keys must be quoted strings
-      if (FOptions <> nil) and FOptions.JSONMode and (FCurrentToken.TokenKind = TYAMLTokenKind.Value) then
+      if FJSONMode and (FCurrentToken.TokenKind = TYAMLTokenKind.Value) then
       begin
         RaiseParseError('Object keys must be quoted strings in JSON');
       end;
@@ -698,7 +707,7 @@ begin
       if firstKey = '' then
       begin
         // In JSON mode, keys must be quoted strings
-        if (FOptions <> nil) and FOptions.JSONMode and (FCurrentToken.TokenKind = TYAMLTokenKind.Value) then
+        if FJSONMode and (FCurrentToken.TokenKind = TYAMLTokenKind.Value) then
         begin
           RaiseParseError('Object keys must be quoted strings in JSON');
         end;

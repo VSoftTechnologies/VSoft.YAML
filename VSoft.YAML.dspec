@@ -1,7 +1,7 @@
 {
  "metadata": {
   "id": "VSoft.YAML",
-  "version": "1.3.0",
+  "version": "1.3.2",
   "description": "YAML/JSON Parser/Writer for Delphi XE2+",
   "authors": "Vincent Parrett",
   "projectUrl": "https://github.com/VSoftTechnologies/VSoft.YAML",
