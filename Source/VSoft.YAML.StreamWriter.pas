@@ -10,7 +10,19 @@ uses
   System.Classes;
 
 type
-  TYAMLStreamWriter = class(TTextWriter)
+  TYAMLWriter = class
+    FNewLine: string;
+
+  public
+    procedure Write(const Value: string); virtual; abstract;
+    procedure WriteLine(const Value: string); overload; virtual; abstract;
+    procedure WriteLine; overload; virtual; abstract;
+    procedure Flush;virtual;abstract;
+
+    property NewLine: string read FNewLine write FNewLine;
+  end;
+
+  TYAMLStreamWriter = class(TYAMLWriter)
   private
     FStream: TStream;
     FEncoding: TEncoding;
@@ -22,45 +34,34 @@ type
     FBuffer: TBytes;
     procedure WriteBytes(Bytes: TBytes);
   public
-    constructor Create(Stream: TStream); overload;
-    constructor Create(Stream: TStream; WriteBOM : boolean; Encoding: TEncoding; BufferSize: Integer = 4096); overload;
+    constructor Create(const Stream: TStream); overload;
+    constructor Create(const Stream: TStream; WriteBOM : boolean; Encoding: TEncoding; BufferSize: Integer = 8192); overload;
     constructor Create(const Filename: string); overload;
-    constructor Create(const Filename: string; WriteBOM : boolean; Encoding: TEncoding; BufferSize: Integer = 4096); overload;
+    constructor Create(const Filename: string; WriteBOM : boolean; Encoding: TEncoding; BufferSize: Integer = 8192); overload;
     destructor Destroy; override;
-    procedure Close; override;
-    procedure Flush; override;
+    procedure Close;
+    procedure Flush;override;
     procedure OwnStream; inline;
-    procedure Write(Value: Boolean); override;
-    procedure Write(Value: Char); override;
-    procedure Write(const Value: TCharArray); override;
-    procedure Write(Value: Double); override;
-    procedure Write(Value: Integer); override;
-    procedure Write(Value: Int64); override;
-    procedure Write(Value: TObject); override;
-    procedure Write(Value: Single); override;
     procedure Write(const Value: string); override;
-    procedure Write(Value: Cardinal); override;
-    procedure Write(Value: UInt64); override;
-    procedure Write(const Format: string; Args: array of const); override;
-    procedure Write(const Value: TCharArray; Index, Count: Integer); override;
     procedure WriteLine; override;
-    procedure WriteLine(Value: Boolean); override;
-    procedure WriteLine(Value: Char); override;
-    procedure WriteLine(const Value: TCharArray); override;
-    procedure WriteLine(Value: Double); override;
-    procedure WriteLine(Value: Integer); override;
-    procedure WriteLine(Value: Int64); override;
-    procedure WriteLine(Value: TObject); override;
-    procedure WriteLine(Value: Single); override;
     procedure WriteLine(const Value: string); override;
-    procedure WriteLine(Value: Cardinal); override;
-    procedure WriteLine(Value: UInt64); override;
-    procedure WriteLine(const Format: string; Args: array of const); override;
-    procedure WriteLine(const Value: TCharArray; Index, Count: Integer); override;
     property AutoFlush: Boolean read FAutoFlush write FAutoFlush;
     property NewLine: string read FNewLine write FNewLine;
     property Encoding: TEncoding read FEncoding;
     property BaseStream: TStream read FStream;
+  end;
+
+  TYAMLStringWriter = class(TYAMLWriter)
+  private
+    FStringBuilder : TStringBuilder;
+  public
+    constructor Create;
+    destructor Destroy;override;
+    procedure Close;
+    procedure Flush;override;
+    procedure Write(const Value: string); override;
+    procedure WriteLine(const Value: string); override;
+    function ToString : string;override;
   end;
 
 
@@ -73,19 +74,19 @@ begin
     FreeAndNil(FStream);
 end;
 
-constructor TYAMLStreamWriter.Create(Stream: TStream);
+constructor TYAMLStreamWriter.Create(const Stream: TStream);
 begin
   inherited Create;
   FOwnsStream := False;
   FStream := Stream;
   FEncoding := TEncoding.UTF8;
-  SetLength(FBuffer, 1024);
+  SetLength(FBuffer, 8192);
   FBufferIndex := 0;
   FNewLine := sLineBreak;
-  FAutoFlush := True;
+  FAutoFlush := False;
 end;
 
-constructor TYAMLStreamWriter.Create(Stream: TStream; WriteBOM : boolean; Encoding: TEncoding; BufferSize: Integer);
+constructor TYAMLStreamWriter.Create(const Stream: TStream; WriteBOM : boolean; Encoding: TEncoding; BufferSize: Integer);
 begin
   inherited Create;
   FOwnsStream := False;
@@ -97,7 +98,7 @@ begin
     SetLength(FBuffer, 128);
   FBufferIndex := 0;
   FNewLine := sLineBreak;
-  FAutoFlush := True;
+  FAutoFlush := False;
   if WriteBOM and (Stream.Position = 0) then
     WriteBytes(FEncoding.GetPreamble);
 end;
@@ -142,29 +143,13 @@ begin
   FOwnsStream := True;
 end;
 
-procedure TYAMLStreamWriter.Write(Value: Cardinal);
-begin
-  WriteBytes(FEncoding.GetBytes(UIntToStr(Value)));
-end;
 
 procedure TYAMLStreamWriter.Write(const Value: string);
 begin
   WriteBytes(FEncoding.GetBytes(Value));
 end;
 
-procedure TYAMLStreamWriter.Write(Value: UInt64);
-begin
-  WriteBytes(FEncoding.GetBytes(UIntToStr(Value)));
-end;
 
-procedure TYAMLStreamWriter.Write(const Value: TCharArray; Index, Count: Integer);
-var
-  Bytes: TBytes;
-begin
-  SetLength(Bytes, Count * 4);
-  SetLength(Bytes, FEncoding.GetBytes(Value, Index, Count, Bytes, 0));
-  WriteBytes(Bytes);
-end;
 
 procedure TYAMLStreamWriter.WriteBytes(Bytes: TBytes);
 var
@@ -192,127 +177,56 @@ begin
     Flush;
 end;
 
-procedure TYAMLStreamWriter.Write(const Format: string; Args: array of const);
-begin
-  WriteBytes(FEncoding.GetBytes(System.SysUtils.Format(Format, Args)));
-end;
-
-procedure TYAMLStreamWriter.Write(Value: Single);
-begin
-  WriteBytes(FEncoding.GetBytes(FloatToStr(Value)));
-end;
-
-procedure TYAMLStreamWriter.Write(const Value: TCharArray);
-begin
-  WriteBytes(FEncoding.GetBytes(Value));
-end;
-
-procedure TYAMLStreamWriter.Write(Value: Double);
-begin
-  WriteBytes(FEncoding.GetBytes(FloatToStr(Value)));
-end;
-
-procedure TYAMLStreamWriter.Write(Value: Integer);
-begin
-  WriteBytes(FEncoding.GetBytes(IntToStr(Value)));
-end;
-
-procedure TYAMLStreamWriter.Write(Value: Char);
-begin
-  WriteBytes(FEncoding.GetBytes(Value));
-end;
-
-procedure TYAMLStreamWriter.Write(Value: TObject);
-begin
-  WriteBytes(FEncoding.GetBytes(Value.ToString));
-end;
-
-procedure TYAMLStreamWriter.Write(Value: Int64);
-begin
-  WriteBytes(FEncoding.GetBytes(IntToStr(Value)));
-end;
-
-procedure TYAMLStreamWriter.Write(Value: Boolean);
-begin
-  WriteBytes(FEncoding.GetBytes(BoolToStr(Value, True)));
-end;
-
-procedure TYAMLStreamWriter.WriteLine(const Value: TCharArray);
-begin
-  WriteBytes(FEncoding.GetBytes(Value));
-  WriteBytes(FEncoding.GetBytes(FNewLine));
-end;
-
-procedure TYAMLStreamWriter.WriteLine(Value: Double);
-begin
-  WriteBytes(FEncoding.GetBytes(FloatToStr(Value) + FNewLine));
-end;
-
-procedure TYAMLStreamWriter.WriteLine(Value: Integer);
-begin
-  WriteBytes(FEncoding.GetBytes(IntToStr(Value) + FNewLine));
-end;
 
 procedure TYAMLStreamWriter.WriteLine;
 begin
   WriteBytes(FEncoding.GetBytes(FNewLine));
 end;
 
-procedure TYAMLStreamWriter.WriteLine(Value: Boolean);
-begin
-  WriteBytes(FEncoding.GetBytes(BoolToStr(Value, True) + FNewLine));
-end;
-
-procedure TYAMLStreamWriter.WriteLine(Value: Char);
-begin
-  WriteBytes(FEncoding.GetBytes(Value));
-  WriteBytes(FEncoding.GetBytes(FNewLine));
-end;
-
-procedure TYAMLStreamWriter.WriteLine(Value: Int64);
-begin
-  WriteBytes(FEncoding.GetBytes(IntToStr(Value) + FNewLine));
-end;
-
-procedure TYAMLStreamWriter.WriteLine(Value: UInt64);
-begin
-  WriteBytes(FEncoding.GetBytes(UIntToStr(Value) + FNewLine));
-end;
-
-procedure TYAMLStreamWriter.WriteLine(const Format: string; Args: array of const);
-begin
-  WriteBytes(FEncoding.GetBytes(System.SysUtils.Format(Format, Args) + FNewLine));
-end;
-
-procedure TYAMLStreamWriter.WriteLine(const Value: TCharArray; Index, Count: Integer);
-var
-  Bytes: TBytes;
-begin
-  SetLength(Bytes, Count * 4);
-  SetLength(Bytes, FEncoding.GetBytes(Value, Index, Count, Bytes, 0));
-  WriteBytes(Bytes);
-  WriteBytes(FEncoding.GetBytes(FNewLine));
-end;
-
-procedure TYAMLStreamWriter.WriteLine(Value: Cardinal);
-begin
-  WriteBytes(FEncoding.GetBytes(UIntToStr(Value) + FNewLine));
-end;
-
-procedure TYAMLStreamWriter.WriteLine(Value: TObject);
-begin
-  WriteBytes(FEncoding.GetBytes(Value.ToString + FNewLine));
-end;
-
-procedure TYAMLStreamWriter.WriteLine(Value: Single);
-begin
-  WriteBytes(FEncoding.GetBytes(FloatToStr(Value) + FNewLine));
-end;
 
 procedure TYAMLStreamWriter.WriteLine(const Value: string);
 begin
   WriteBytes(FEncoding.GetBytes(Value + FNewLine));
 end;
 
+
+{ TYAMLStringWriter }
+
+procedure TYAMLStringWriter.Close;
+begin
+
+end;
+
+constructor TYAMLStringWriter.Create;
+begin
+  FStringBuilder := TStringBuilder.Create(8192);
+  FNewLine := sLineBreak;
+end;
+
+destructor TYAMLStringWriter.Destroy;
+begin
+  FStringBuilder.Free;
+  inherited Destroy;
+end;
+
+procedure TYAMLStringWriter.Flush;
+begin
+  //NOOP
+end;
+
+function TYAMLStringWriter.ToString: string;
+begin
+  result := FStringBuilder.ToString;
+end;
+
+procedure TYAMLStringWriter.Write(const Value: string);
+begin
+  FStringBuilder.Append(Value);
+end;
+
+procedure TYAMLStringWriter.WriteLine(const Value: string);
+begin
+  FStringBuilder.AppendLine(Value)
+end;
 
 end.

@@ -706,6 +706,7 @@ begin
 
   reader := TInputReaderFactory.CreateFromStream(stream);
 
+  //lexer owns the reader
   lexer := TYAMLLexer.Create(reader, lOptions);
   try
     parser := TYAMLParser.Create(Lexer, lOptions);
@@ -716,6 +717,7 @@ begin
     end;
   finally
     lexer.Free;
+    reader := nil;
   end;
 
 end;
@@ -758,7 +760,8 @@ begin
   else
     lOptions := parserOptions;
 
-
+  if SameText('.json', ExtractFileExt(fileName)) then
+    lOptions.JSONMode := true;
   Stream := TFileStream.Create(FileName, fmOpenRead + fmShareDenyWrite);
   try
     result := LoadFromStream(Stream, lOptions);
@@ -791,6 +794,7 @@ begin
     end;
   finally
     lexer.Free;
+    reader := nil;
   end;
 end;
 
@@ -1021,7 +1025,7 @@ var
 begin
   writer := TJSONWriterImpl.Create(doc.Options);
   try
-    writer.WriteToStream(doc, doc.Options.WriteByteOrderMark, stream);
+    writer.WriteToStream(doc, stream);
   finally
     writer.Free;
   end;
@@ -1080,7 +1084,7 @@ var
 begin
   Writer := TYAMLWriterImpl.Create(doc.Options);
   try
-    Writer.WriteToStream(doc, doc.Options.WriteByteOrderMark, stream);
+    Writer.WriteToStream(doc, stream);
   finally
     Writer.Free;
   end;
@@ -1092,7 +1096,6 @@ var
   len : integer;
   i: Integer;
   writer : TYAMLWriterImpl;
-  writeBOM : boolean;
 begin
   len := Length(docs);
   if len = 0 then
@@ -1104,11 +1107,10 @@ begin
     writerOptions.EmitDocumentMarkers := true;
   writer := TYAMLWriterImpl.Create(writerOptions);
   try
-    writeBOM := writerOptions.WriteByteOrderMark;
     for i := 0 to len -1 do
     begin
-      writer.WriteToStream(docs[i],writeBOM, stream);
-      writeBOM := false; //only write it on the first iteration!
+      writer.WriteToStream(docs[i],stream);
+      writer.Options.WriteByteOrderMark := false; //only write first time;
     end;
   finally
     writer.Free;

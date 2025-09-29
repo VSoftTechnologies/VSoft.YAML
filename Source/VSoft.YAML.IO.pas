@@ -59,11 +59,7 @@ type
   TInputReaderFactory = class
     class function CreateFromString(const value : string ) : IInputReader;static;
     class function CreateFromStream(const stream: TStream) : IInputReader; overload;static;
-    class function CreateFromStream(const stream: TStream; detectBOM: Boolean) : IInputReader; overload;static;
-    class function CreateFromStream(const stream: TStream; encoding: TEncoding; detectBOM: boolean = False; bufferSize: Integer = 32768) : IInputReader; overload;static;
     class function CreateFromFile(const fileName: string) : IInputReader; overload;static;
-    class function CreateFromFile(const fileName: string; detectBOM: Boolean) : IInputReader; overload;static;
-    class function CreateFromFile(const fileName: string; encoding: TEncoding; detectBOM: boolean = False; bufferSize: Integer = 32768) : IInputReader; overload;static;
 
   end;
 
@@ -71,6 +67,8 @@ type
 implementation
 
 uses VSoft.YAML.StreamReader;
+
+{$I 'VSoft.YAML.inc'}
 
 
 type
@@ -142,18 +140,14 @@ type
     procedure Save;
     procedure Restore;
   public
-    constructor Create(stream: TStream); overload;
-    constructor Create(stream: TStream; detectBOM: Boolean); overload;
-    constructor Create(stream: TStream; encoding: TEncoding; detectBOM: Boolean = False; bufferSize: integer = 8192); overload;
+    constructor Create(const stream: TStream); overload;
     destructor Destroy; override;
   end;
 
+
   TFileInputReader = class(TStreamInputReader, IInputReader)
-  private
   public
     constructor Create(const filename: string); overload;
-    constructor Create(const filename: string; detectBOM: Boolean); overload;
-    constructor Create(const filename: string; encoding: TEncoding; detectBOM: Boolean = False; BufferSize: Integer = 8192); overload;
     destructor Destroy;override;
   end;
 
@@ -167,30 +161,11 @@ begin
   result := TFileInputReader.Create(fileName);
 end;
 
-class function TInputReaderFactory.CreateFromFile(const fileName: string; detectBOM: Boolean): IInputReader;
-begin
-  result := TFileInputReader.Create(fileName, detectBOM);
-end;
-
-class function TInputReaderFactory.CreateFromFile(const fileName: string; encoding: TEncoding; detectBOM: boolean; bufferSize: Integer): IInputReader;
-begin
-  result := TFileInputReader.Create(fileName,encoding, detectBOM);
-end;
-
 class function TInputReaderFactory.CreateFromStream(const stream: TStream): IInputReader;
 begin
   result := TStreamInputReader.Create(stream)
 end;
 
-class function TInputReaderFactory.CreateFromStream(const stream: TStream; detectBOM: Boolean): IInputReader;
-begin
-  result := TStreamInputReader.Create(stream, detectBOM);
-end;
-
-class function TInputReaderFactory.CreateFromStream(const stream: TStream; encoding: TEncoding; detectBOM: boolean; bufferSize: Integer): IInputReader;
-begin
-  result := TStreamInputReader.Create(stream, encoding, detectBOM, bufferSize);
-end;
 
 class function TInputReaderFactory.CreateFromString(const value: string): IInputReader;
 begin
@@ -333,29 +308,14 @@ end;
 
 { TStreamInputReader }
 
-constructor TStreamInputReader.Create(stream: TStream);
+constructor TStreamInputReader.Create(const stream: TStream);
 begin
   inherited Create;
   FStream := stream;
-  FStreamReader := TYAMLStreamReader.Create(stream, TEncoding.UTF8, True); // Default UTF8 with BOM detection
+  FStreamReader := TYAMLStreamReader.Create(stream, TEncoding.UTF8, True, 2048); // Default UTF8 with BOM detection
   InitializeReader;
 end;
 
-constructor TStreamInputReader.Create(stream: TStream; detectBOM: Boolean);
-begin
-  inherited Create;
-  FStream := stream;
-  FStreamReader := TYAMLStreamReader.Create(stream, TEncoding.UTF8, detectBOM);
-  InitializeReader;
-end;
-
-constructor TStreamInputReader.Create(stream: TStream; encoding: TEncoding; detectBOM: Boolean; bufferSize: integer);
-begin
-  inherited Create;
-  FStream := stream;
-  FStreamReader := TYAMLStreamReader.Create(stream, encoding, detectBOM, bufferSize);
-  InitializeReader;
-end;
 
 function TStreamInputReader.GetColumn: integer;
 begin
@@ -554,15 +514,6 @@ begin
   inherited Create(TFileStream.Create(filename, fmOpenRead or fmShareDenyWrite));
 end;
 
-constructor TFileInputReader.Create(const filename: string; detectBOM: Boolean);
-begin
-  inherited Create(TFileStream.Create(Filename, fmOpenRead or fmShareDenyWrite), DetectBOM);
-end;
-
-constructor TFileInputReader.Create(const filename: string; encoding: TEncoding; detectBOM: Boolean; BufferSize: Integer);
-begin
-  inherited Create(TFileStream.Create(Filename, fmOpenRead or fmShareDenyWrite), Encoding, DetectBOM, BufferSize);
-end;
 
 destructor TFileInputReader.Destroy;
 begin

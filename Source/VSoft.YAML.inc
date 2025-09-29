@@ -21,6 +21,10 @@
     {$DEFINE XE5SDOWN}
 {$IFEND}
 
+{$IF CompilerVersion > 30.0 }
+  {$DEFINE HASBUFFEREDFILESTREAM}
+{$IFEND}
+
 
 {$IF CompilerVersion > 32.0 }
     {$DEFINE D10_3PLUS}

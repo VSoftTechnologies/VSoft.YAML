@@ -17,7 +17,7 @@ type
   private
     FOptions : IYAMLEmitOptions;
     FPrettyPrint : boolean;
-    FWriter : TYAMLStreamWriter;
+    FWriter : TYAMLWriter;
     FIndentLevel : UInt32;
     FStringBuilder : TStringBuilder;
 
@@ -54,7 +54,7 @@ type
     procedure WriteToFile(const doc : IYAMLDocument; const fileName : string);overload;
 
     procedure WriteToStream(const value : IYAMLValue; const stream : TStream);overload;
-    procedure WriteToStream(const doc : IYAMLDocument; writeBOM : boolean; const stream : TStream);overload;
+    procedure WriteToStream(const doc : IYAMLDocument; const stream : TStream);overload;
 
   end;
 
@@ -73,7 +73,7 @@ begin
   FPrettyPrint := FOptions.PrettyPrint;
   FWriter := nil;
   FIndentLevel := 0;
-  FStringBuilder := TStringBuilder.Create(4096);
+  FStringBuilder := TStringBuilder.Create(1024);
 end;
 
 destructor TJSONWriterImpl.Destroy;
@@ -239,7 +239,6 @@ begin
     WriteNewlineAndIndent;
     WriteString(FStringBuilder.ToString);
   end;
-
   WriteString(']');
 end;
 
@@ -281,34 +280,19 @@ begin
 end;
 
 function TJSONWriterImpl.WriteToString(const value : IYAMLValue) : string;
-var
-  stream : TStringStream;
 begin
-  //force utf16 to avoid round trip encoding conversions
-  FOptions.Encoding := TEncoding.Unicode;
-  stream := TStringStream.Create('', FOptions.Encoding, false);
+  FWriter := TYAMLStringWriter.Create;
   try
-    WriteToStream(value, stream);
-    result := stream.DataString;
+    WriteValue(value);
+    result := FWriter.ToString;
   finally
-    stream.Free;
+    FreeAndNil(FWriter);
   end;
 end;
 
 function TJSONWriterImpl.WriteToString(const doc : IYAMLDocument) : string;
-var
-  stream : TStringStream;
 begin
-  //force utf16 to avoid round trip encoding conversions
-  FOptions.Encoding := TEncoding.Unicode;
-  stream := TStringStream.Create('', FOptions.Encoding, false);
-  try
-    //WriteToStream will create the writer
-    WriteToStream(doc, false, stream);
-    result := stream.DataString;
-  finally
-    stream.Free;
-  end;
+  result := WriteToString(doc.Root)
 end;
 
 procedure TJSONWriterImpl.WriteToFile(const value : IYAMLValue; const fileName : string);
@@ -319,20 +303,14 @@ begin
   try
     WriteToStream(value, fileStream);
   finally
+    FWriter.Free;
     fileStream.Free;
   end;
 end;
 
 procedure TJSONWriterImpl.WriteToFile(const doc : IYAMLDocument; const fileName : string);
-var
-  fileStream : TFileStream;
 begin
-  fileStream := TFileStream.Create(fileName, fmCreate);
-  try
-    WriteToStream(doc, FOptions.WriteByteOrderMark, fileStream);
-  finally
-    fileStream.Free;
-  end;
+  WriteToFile(doc.Root, fileName);
 end;
 
 procedure TJSONWriterImpl.WriteToStream(const value : IYAMLValue; const stream : TStream);
@@ -354,14 +332,9 @@ begin
   end;
 end;
 
-procedure TJSONWriterImpl.WriteToStream(const doc : IYAMLDocument; writeBOM : boolean; const stream : TStream);
+procedure TJSONWriterImpl.WriteToStream(const doc : IYAMLDocument; const stream : TStream);
 begin
-  FWriter := TYAMLStreamWriter.Create(stream, writeBOM, FOptions.Encoding);
-  try
-    WriteToStream(doc.Root, stream);
-  finally
-    FreeAndNil(FWriter);
-  end;
+   WriteToStream(doc.Root, stream);
 end;
 
 end.

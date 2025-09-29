@@ -17,7 +17,7 @@ type
   private
     FIndentLevel : UInt32;
     FOptions : IYAMLEmitOptions;
-    FWriter : TYAMLStreamWriter;
+    FWriter : TYAMLWriter;
     FStringBuilder : TStringBuilder;
 
     // Helper methods for formatting
@@ -70,8 +70,9 @@ type
     procedure WriteToFile(const doc : IYAMLDocument; const fileName : string);overload;
 
     procedure WriteToStream(const value : IYAMLValue; const stream : TStream);overload;
-    procedure WriteToStream(const doc : IYAMLDocument; writeBOM : boolean; const stream : TStream);overload;
+    procedure WriteToStream(const doc : IYAMLDocument; const stream : TStream);overload;
 
+    property Options : IYAMLEmitOptions read FOptions;
   end;
 
 
@@ -545,7 +546,6 @@ begin
     else
       AddLine(AddCommentToLine(GetIndent + key + ': ' + tag + FormatScalar(value), value.Comment));
     end;
-
   end;
 end;
 
@@ -1043,34 +1043,48 @@ begin
 end;
 
 function TYAMLWriterImpl.WriteToString(const value : IYAMLValue) : string;
-var
-  stream : TStringStream;
 begin
   //force utf16 to avoid round trip encoding conversions
-  FOptions.Encoding := TEncoding.Unicode;
-  stream := TStringStream.Create('', FOptions.Encoding, false);
+  FWriter := TYAMLStringWriter.Create;
   try
-    WriteToStream(value, stream);
-    result := stream.DataString;
+    WriteValue(value);
+    result := FWriter.ToString;
   finally
-    stream.Free;
+    FreeAndNil(FWriter);
   end;
 end;
 
 function TYAMLWriterImpl.WriteToString(const doc : IYAMLDocument) : string;
 var
-  stream : TStringStream;
+  i : integer;
 begin
-  FIndentLevel := 0;
   //force utf16 to avoid round trip encoding conversions
   FOptions.Encoding := TEncoding.Unicode;
-  stream := TStringStream.Create('', FOptions.Encoding, false);
+  FWriter := TYAMLStringWriter.Create;
   try
-    //WriteToStream will create the writer
-    WriteToStream(doc, false, stream);
-    result := stream.DataString;
+    if FOptions.EmitYAMLDirective then
+      FWriter.WriteLine('%YAML ' + doc.Version.ToString);
+
+    if FOptions.EmitTagDirectives then
+    begin
+      //skip the standard tag directives
+      if doc.TagDirectives.Count > 2 then
+      begin
+        for i := 2 to doc.TagDirectives.Count -1 do
+          FWriter.WriteLine('%TAG ' + doc.TagDirectives[i].ToString);
+      end;
+    end;
+
+    if FOptions.EmitDocumentMarkers or FOptions.EmitTagDirectives or FOptions.EmitYAMLDirective then
+      FWriter.WriteLine('---');
+
+    WriteValue(doc.Root);
+    if FOptions.EmitDocumentMarkers then
+      FWriter.WriteLine('...') ;
+
+    result := FWriter.ToString;
   finally
-    stream.Free;
+    FreeAndNil(FWriter);
   end;
 end;
 
@@ -1089,10 +1103,31 @@ end;
 procedure TYAMLWriterImpl.WriteToFile(const doc : IYAMLDocument; const fileName : string);
 var
   fileStream : TFileStream;
+  i : integer;
 begin
   fileStream := TFileStream.Create(fileName, fmCreate);
   try
-    WriteToStream(doc, FOptions.WriteByteOrderMark, fileStream);
+    if FOptions.EmitYAMLDirective then
+      FWriter.WriteLine('%YAML ' + doc.Version.ToString);
+
+    if FOptions.EmitTagDirectives then
+    begin
+      //skip the standard tag directives
+      if doc.TagDirectives.Count > 2 then
+      begin
+        for i := 2 to doc.TagDirectives.Count -1 do
+          FWriter.WriteLine('%TAG ' + doc.TagDirectives[i].ToString);
+      end;
+    end;
+
+    if FOptions.EmitDocumentMarkers or FOptions.EmitTagDirectives or FOptions.EmitYAMLDirective then
+      FWriter.WriteLine('---');
+
+    WriteToStream(doc.Root,fileStream);
+
+    if FOptions.EmitDocumentMarkers then
+      FWriter.WriteLine('...') ;
+
   finally
     fileStream.Free;
   end;
@@ -1110,34 +1145,18 @@ begin
     ownsWriter := true;
   end;
   try
-    //if we own the writer then we are responsible for writing markers
-    if ownsWriter then
-    begin
-      if FOptions.EmitDocumentMarkers then
-        FWriter.WriteLine('---');
-    end;
-
     WriteValue(value);
-    if ownsWriter then
-    begin
-      if FOptions.EmitDocumentMarkers then
-        FWriter.WriteLine('---');
-    end;
-
   finally
     if ownsWriter then
       FreeAndNil(FWriter);
   end;
-
-
-
 end;
 
-procedure TYAMLWriterImpl.WriteToStream(const doc : IYAMLDocument; writeBOM : boolean; const stream : TStream);
+procedure TYAMLWriterImpl.WriteToStream(const doc : IYAMLDocument; const stream : TStream);
 var
   i : integer;
 begin
-  FWriter := TYAMLStreamWriter.Create(stream, writeBOM, FOptions.Encoding);
+  FWriter := TYAMLStreamWriter.Create(stream, FOptions.WriteByteOrderMark, FOptions.Encoding);
   try
     if FOptions.EmitYAMLDirective then
       FWriter.WriteLine('%YAML ' + doc.Version.ToString);

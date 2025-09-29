@@ -12,7 +12,7 @@ uses
 	System.Classes;
 
 type
-  TYAMLStreamReader = class(TTextReader)
+  TYAMLStreamReader = class
   private type
     TBufferedData = class(TStringBuilder)
     private
@@ -53,36 +53,31 @@ type
     FBufferedData: TBufferedData;
     FNoDataInStream: Boolean;
     procedure FillBuffer(var Encoding: TEncoding);
-    function GetEndOfStream: Boolean; {$IFDEF D12PLUS } override; {$ENDIF}
+    function GetEndOfStream: Boolean; //{$IFDEF D12PLUS } override; {$ENDIF}
   public
-    constructor Create(Stream: TStream); overload;
-    constructor Create(Stream: TStream; DetectBOM: Boolean); overload;
-    constructor Create(Stream: TStream; Encoding: TEncoding;
-      DetectBOM: Boolean = False; BufferSize: Integer = 8192); overload;
-    constructor Create(const Filename: string); overload;
-    constructor Create(const Filename: string; DetectBOM: Boolean); overload;
-    constructor Create(const Filename: string; Encoding: TEncoding;
-      DetectBOM: Boolean = False; BufferSize: Integer = 8192); overload;
-    destructor Destroy; override;
-    procedure Close; override;
+    constructor Create(const Stream: TStream; Encoding: TEncoding; DetectBOM: Boolean = False; BufferSize: Integer = 1024); overload;
+
+
+    destructor Destroy;override;
+    procedure Close;
     procedure DiscardBufferedData;
     procedure OwnStream; inline;
-    function Peek: Integer; overload;override;
-    function Peek(n : integer): Integer;reintroduce;overload;
-    function Read: Integer; overload; override;
+    function Peek: Integer; overload;
+    function Peek(n : integer): Integer;overload;
+    function Read: Integer; overload;
 
     {$IFDEF XE3PLUS}
-    function Read(var Buffer: TCharArray; Index, Count: Integer): Integer; overload; override;
-    function ReadBlock(var Buffer: TCharArray; Index, Count: Integer): Integer; override;
+    function Read(var Buffer: TCharArray; Index, Count: Integer): Integer; overload;
+    function ReadBlock(var Buffer: TCharArray; Index, Count: Integer): Integer;
     {$ELSE}
-    function Read(const Buffer: TCharArray; Index, Count: Integer): Integer; overload; override;
-    function ReadBlock(const Buffer: TCharArray; Index, Count: Integer): Integer; override;
+    function Read(const Buffer: TCharArray; Index, Count: Integer): Integer; overload;
+    function ReadBlock(const Buffer: TCharArray; Index, Count: Integer): Integer;
     {$ENDIF}
-    function ReadLine: string; override;
-    function ReadToEnd: string; override;
+    function ReadLine: string;
+    function ReadToEnd: string;
   	procedure SavePosition;
 	  procedure RestorePosition;
-    procedure Rewind; {$IFDEF D10_3PLUS} override; {$ENDIF}
+    procedure Rewind;// {$IFDEF D10_3PLUS} override; {$ENDIF}
     property BaseStream: TStream read FStream;
     property CurrentEncoding: TEncoding read FEncoding;
     property EndOfStream: Boolean read GetEndOfStream;
@@ -162,20 +157,7 @@ begin
 end;
 
 
-
-
-constructor TYAMLStreamReader.Create(Stream: TStream);
-begin
-  Create(Stream, TEncoding.UTF8, True);
-end;
-
-constructor TYAMLStreamReader.Create(Stream: TStream; DetectBOM: Boolean);
-begin
-  Create(Stream, TEncoding.UTF8, DetectBOM);
-end;
-
-constructor TYAMLStreamReader.Create(Stream: TStream; Encoding: TEncoding;
-  DetectBOM: Boolean; BufferSize: Integer);
+constructor TYAMLStreamReader.Create(const Stream: TStream; Encoding: TEncoding; DetectBOM: Boolean; BufferSize: Integer);
 begin
   inherited Create;
 
@@ -196,24 +178,6 @@ begin
   FSkipPreamble := not FDetectBOM;
 end;
 
-constructor TYAMLStreamReader.Create(const Filename: string; Encoding: TEncoding;
-  DetectBOM: Boolean; BufferSize: Integer);
-begin
-  Create(TFileStream.Create(Filename, fmOpenRead or fmShareDenyWrite), Encoding, DetectBOM, BufferSize);
-  FOwnsStream := True;
-end;
-
-constructor TYAMLStreamReader.Create(const Filename: string; DetectBOM: Boolean);
-begin
-  Create(TFileStream.Create(Filename, fmOpenRead or fmShareDenyWrite), DetectBOM);
-  FOwnsStream := True;
-end;
-
-constructor TYAMLStreamReader.Create(const Filename: string);
-begin
-  Create(TFileStream.Create(Filename, fmOpenRead or fmShareDenyWrite));
-  FOwnsStream := True;
-end;
 
 destructor TYAMLStreamReader.Destroy;
 begin
