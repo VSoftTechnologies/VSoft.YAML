@@ -214,9 +214,7 @@ end;
 function TYAMLLexer.ReadQuotedString(Quote : Char) : string;
 var
   foundClosingQuote : boolean;
-  isValidUnicodeEscape : Boolean;
   i : Integer;
-  hexStr : string;
   codePoint : Integer;
   codePoint64 : Int64;
   peekChar : Char;

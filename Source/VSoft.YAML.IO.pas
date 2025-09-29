@@ -66,7 +66,8 @@ type
 
 implementation
 
-uses VSoft.YAML.StreamReader;
+uses
+  System.RTLConsts;
 
 {$I 'VSoft.YAML.inc'}
 
@@ -103,10 +104,34 @@ type
   end;
 
   TStreamInputReader = class(TInterfacedObject, IInputReader)
+  private type
+    TBufferedData = class(TStringBuilder)
+    private
+      FStart: Integer;
+      FBufferSize: Integer;
+      function GetChars(AIndex: Integer): Char; inline;
+    public
+      constructor Create(ABufferSize: Integer);
+      procedure Clear; inline;
+      function Length: Integer; inline;
+      function PeekChar: Char; overload;inline;
+      function PeekChar(n : integer): Char; overload;inline;
+      function MoveChar: Char; inline;
+      procedure MoveArray(DestinationIndex, Count: Integer; var Destination: TCharArray);
+      procedure MoveString(Count, NewPos: Integer; var Destination: string);
+      procedure TrimBuffer;
+      property Chars[AIndex: Integer]: Char read GetChars;
+    end;
+
   private
     FStream : TStream;
-    FStreamReader : TYAMLStreamReader;
-
+    FBufferSize: Integer;
+    FDetectBOM: Boolean;
+    FEncoding: TEncoding;
+    FOwnsStream: Boolean;
+    FSkipPreamble: Boolean;
+    FBufferedData: TBufferedData;
+    FNoDataInStream: Boolean;
 
     FPosition : integer;
     FLine : integer;
@@ -115,7 +140,7 @@ type
     FPreviousChar : Char;
     FAtEnd : boolean;
 
-    // Save/restore state
+    // Save/restore state fields
     FSavedPosition : integer;
     FSavedLine : integer;
     FSavedColumn : integer;
@@ -123,9 +148,18 @@ type
     FSavedCurrentChar : Char;
     FSavedPreviousChar : Char;
     FSavedAtEnd : Boolean;
+    FSavedBufferStart: Integer;
+    FSavedNoDataInStream: Boolean;
+    FSavedSkipPreamble: Boolean;
+    FSavedDetectBOM: Boolean;
+    FSavedBufferData: string;
 
     procedure InitializeReader;
     procedure ReadNextChar;
+    function DetectBOM(var Encoding: TEncoding; Buffer: TBytes): Integer;
+    function SkipPreamble(Encoding: TEncoding; Buffer: TBytes): Integer;
+    procedure FillBuffer(var Encoding: TEncoding);
+    function GetEndOfStream: Boolean;
   protected
     function GetPosition : integer;inline;
     function GetLine : integer;inline;
@@ -148,7 +182,6 @@ type
   TFileInputReader = class(TStreamInputReader, IInputReader)
   public
     constructor Create(const filename: string); overload;
-    destructor Destroy;override;
   end;
 
 
@@ -311,8 +344,19 @@ end;
 constructor TStreamInputReader.Create(const stream: TStream);
 begin
   inherited Create;
+  if not Assigned(stream) then
+    raise EArgumentException.CreateResFmt(@SParamIsNil, ['Stream']); // DO NOT LOCALIZE
+
   FStream := stream;
-  FStreamReader := TYAMLStreamReader.Create(stream, TEncoding.UTF8, True, 2048); // Default UTF8 with BOM detection
+  FEncoding := TEncoding.UTF8;
+  FBufferSize := 1024;
+  if FBufferSize < 128 then
+    FBufferSize := 128;
+  FBufferedData := TBufferedData.Create(FBufferSize);
+  FNoDataInStream := False;
+  FOwnsStream := False;
+  FDetectBOM := True;
+  FSkipPreamble := not FDetectBOM;
   InitializeReader;
 end;
 
@@ -353,8 +397,6 @@ begin
 end;
 
 function TStreamInputReader.Peek(n: integer): Char;
-var
-  value : integer;
 begin
   result := #0;
 
@@ -364,10 +406,26 @@ begin
   if FAtEnd then
     Exit;
 
-  value := FStreamReader.Peek(n);
-  if value <> -1 then
-    result := Char(value);
+  // For n=1, we want the next character (PeekChar())
+  // For n>1, we want to look ahead n characters from current position
+  if n = 1 then
+  begin
+    // Ensure we have at least 1 character in buffer
+    while (FBufferedData.Length < 1) and (not FNoDataInStream) do
+      FillBuffer(FEncoding);
 
+    if (FBufferedData <> nil) and (FBufferedData.Length >= 1) then
+      result := FBufferedData.PeekChar;
+  end
+  else
+  begin
+    // Ensure we have enough data in buffer for n characters
+    while (FBufferedData.Length < n) and (not FNoDataInStream) do
+      FillBuffer(FEncoding);
+
+    if (FBufferedData <> nil) and (FBufferedData.Length >= n) then
+      result := FBufferedData.PeekChar(n);
+  end;
 end;
 
 function TStreamInputReader.Read: Char;
@@ -400,9 +458,24 @@ begin
   if FSavedPosition = -1 then
     raise Exception.Create('No saved position');
 
-  // Always restore the stream position and state
-  FStreamReader.RestorePosition;
-
+  // Restore stream position
+  FStream.Position := FSavedStreamPos;
+  
+  // Restore flags
+  FNoDataInStream := FSavedNoDataInStream;
+  FSkipPreamble := FSavedSkipPreamble;
+  FDetectBOM := FSavedDetectBOM;
+  
+  // Rebuild buffer with saved unconsumed data
+  FBufferedData.Clear;
+  
+  if FSavedBufferData <> '' then
+  begin
+    FBufferedData.Append(FSavedBufferData);
+    // Reset FStart to 0 since we only saved the unconsumed portion
+    FBufferedData.FStart := 0;
+  end;
+  
   // Restore parser state
   FPosition := FSavedPosition;
   FLine := FSavedLine;
@@ -412,16 +485,25 @@ begin
   FAtEnd := FSavedAtEnd;
 
   FSavedPosition := -1;
-
 end;
 
 procedure TStreamInputReader.Save;
 begin
-  FStreamReader.SavePosition;
+  FSavedStreamPos := FStream.Position;
+  FSavedBufferStart := FBufferedData.FStart;
+  FSavedNoDataInStream := FNoDataInStream;
+  FSavedSkipPreamble := FSkipPreamble;
+  FSavedDetectBOM := FDetectBOM;
+  
+  // Save current unconsumed buffer contents as string
+  if FBufferedData.Length > 0 then
+    FSavedBufferData := FBufferedData.ToString(FBufferedData.FStart, FBufferedData.Length)
+  else
+    FSavedBufferData := '';
+    
   FSavedPosition := FPosition;
   FSavedLine := FLine;
   FSavedColumn := FColumn;
-  FSavedStreamPos := FStream.Position;
   FSavedCurrentChar := FCurrentChar;
   FSavedPreviousChar := FPreviousChar;
   FSavedAtEnd := FAtEnd;
@@ -429,7 +511,11 @@ end;
 
 procedure TStreamInputReader.InitializeReader;
 begin
-  if FStreamReader.EndOfStream then
+  // Fill buffer initially to get some data
+  if not FNoDataInStream then
+    FillBuffer(FEncoding);
+    
+  if GetEndOfStream then
   begin
     FPosition := -1;
     FLine := -1;
@@ -444,10 +530,14 @@ begin
     FColumn := 1;
     FAtEnd := False;
     
-    // Read the first character
-    try
-      FCurrentChar := Char(FStreamReader.Read);
-    except
+    // Read the first character from buffer directly like original did
+    if (FBufferedData <> nil) and (FBufferedData.Length > 0) then
+    begin
+      FCurrentChar := FBufferedData.MoveChar;
+      FBufferedData.TrimBuffer;
+    end
+    else
+    begin
       FAtEnd := True;
       FCurrentChar := #0;
     end;
@@ -463,13 +553,14 @@ begin
   FSavedCurrentChar := #0;
   FSavedPreviousChar := #0;
   FSavedAtEnd := False;
-
-  // Note: First character already read in else block above
+  FSavedBufferStart := -1;
+  FSavedNoDataInStream := False;
+  FSavedSkipPreamble := False;
+  FSavedDetectBOM := False;
+  FSavedBufferData := '';
 end;
 
 procedure TStreamInputReader.ReadNextChar;
-var
-  charValue: Integer;
 begin
   if FAtEnd then
   begin
@@ -479,16 +570,22 @@ begin
   
   FPreviousChar := FCurrentChar;
   
-  // Use Read() and check for -1 instead of EndOfStream for more reliable EOF detection
-  charValue := FStreamReader.Read;
-  if charValue = -1 then
+  // Read from buffer, filling if needed
+  if (FBufferedData = nil) or (FBufferedData.Length < 1) then
   begin
-    FAtEnd := True;
-    FCurrentChar := #0;
-    Exit;
+    if not FNoDataInStream then
+      FillBuffer(FEncoding);
+      
+    if (FBufferedData = nil) or (FBufferedData.Length = 0) then
+    begin
+      FAtEnd := True;
+      FCurrentChar := #0;
+      Exit;
+    end;
   end;
 
-  FCurrentChar := Char(charValue);
+  FCurrentChar := FBufferedData.MoveChar;
+  FBufferedData.TrimBuffer;
   Inc(FPosition);
 
   // Track line and column
@@ -506,25 +603,228 @@ begin
     Inc(FColumn);
 end;
 
+{ TStreamInputReader.TBufferedData }
+
+constructor TStreamInputReader.TBufferedData.Create(ABufferSize: Integer);
+begin
+  inherited Create;
+  FBufferSize := ABufferSize;
+end;
+
+procedure TStreamInputReader.TBufferedData.Clear;
+begin
+  inherited Length := 0;
+  FStart := 0;
+end;
+
+function TStreamInputReader.TBufferedData.GetChars(AIndex: Integer): Char;
+begin
+  Result := FData[FStart + 1 + AIndex];
+end;
+
+function TStreamInputReader.TBufferedData.Length: Integer;
+begin
+  Result := FLength - FStart;
+end;
+
+function TStreamInputReader.TBufferedData.PeekChar: Char;
+begin
+  Result := FData[FStart + 1];
+end;
+
+function TStreamInputReader.TBufferedData.PeekChar(n : integer): Char;
+begin
+  Result := FData[FStart + n];
+end;
+
+function TStreamInputReader.TBufferedData.MoveChar: Char;
+begin
+  Result := FData[FStart + 1];
+  Inc(FStart);
+end;
+
+procedure TStreamInputReader.TBufferedData.MoveArray(DestinationIndex, Count: Integer;
+  var Destination: TCharArray);
+begin
+  CopyTo(FStart, Destination, DestinationIndex, Count);
+  Inc(FStart, Count);
+end;
+
+procedure TStreamInputReader.TBufferedData.MoveString(Count, NewPos: Integer; var Destination: string);
+begin
+  if (FStart = 0) and (Count = inherited Length) then
+  {$IFDEF D10_3PLUS}
+    Destination := ToString(True)
+  {$ELSE}
+    Destination := ToString
+  {$ENDIF}
+  else
+    Destination := ToString(FStart, Count);
+  Inc(FStart, NewPos);
+end;
+
+procedure TStreamInputReader.TBufferedData.TrimBuffer;
+begin
+  if inherited Length > FBufferSize then
+  begin
+    Remove(0, FStart);
+    FStart := 0;
+  end;
+end;
+
+function TStreamInputReader.DetectBOM(var Encoding: TEncoding; Buffer: TBytes): Integer;
+var
+  LEncoding: TEncoding;
+begin
+  // try to automatically detect the buffer encoding
+  LEncoding := nil;
+  Result := TEncoding.GetBufferEncoding(Buffer, LEncoding, nil);
+  if LEncoding <> nil then
+    Encoding := LEncoding
+  else if Encoding = nil then
+    Encoding := TEncoding.Default;
+
+  FDetectBOM := False;
+end;
+
+function TStreamInputReader.SkipPreamble(Encoding: TEncoding; Buffer: TBytes): Integer;
+var
+  I: Integer;
+  LPreamble: TBytes;
+  BOMPresent: Boolean;
+begin
+  Result := 0;
+  LPreamble := Encoding.GetPreamble;
+  if (Length(LPreamble) > 0) then
+  begin
+    if Length(Buffer) >= Length(LPreamble) then
+    begin
+      BOMPresent := True;
+      for I := 0 to Length(LPreamble) - 1 do
+        if LPreamble[I] <> Buffer[I] then
+        begin
+          BOMPresent := False;
+          Break;
+        end;
+      if BOMPresent then
+        Result := Length(LPreamble);
+    end;
+  end;
+  FSkipPreamble := False;
+end;
+
+procedure TStreamInputReader.FillBuffer(var Encoding: TEncoding);
+const
+  BufferPadding = 4;
+var
+  LString: string;
+  LBuffer: TBytes;
+  BytesRead: Integer;
+  StartIndex: Integer;
+  ByteCount: Integer;
+  ByteBufLen: Integer;
+  ExtraByteCount: Integer;
+
+  procedure AdjustEndOfBuffer(const ABuffer: TBytes; Offset: Integer);
+  var
+    Pos, Size: Integer;
+    Rewind: Integer;
+  begin
+    Dec(Offset);
+    for Pos := Offset downto 0 do
+    begin
+      for Size := Offset - Pos + 1 downto 1 do
+      begin
+        if Encoding.GetCharCount(ABuffer, Pos, Size) > 0 then
+        begin
+          Rewind := Offset - (Pos + Size - 1);
+          if Rewind <> 0 then
+          begin
+            FStream.Position := FStream.Position - Rewind;
+            BytesRead := BytesRead - Rewind;
+          end;
+          Exit;
+        end;
+      end;
+    end;
+  end;
+
+begin
+  SetLength(LBuffer, FBufferSize + BufferPadding);
+
+  // Read data from stream
+  BytesRead := FStream.Read(LBuffer[0], FBufferSize);
+  FNoDataInStream := BytesRead = 0;
+
+  // Check for byte order mark and calc start index for character data
+  if FDetectBOM then
+    StartIndex := DetectBOM(Encoding, LBuffer)
+  else if FSkipPreamble then
+    StartIndex := SkipPreamble(Encoding, LBuffer)
+  else
+    StartIndex := 0;
+
+  // Adjust the end of the buffer to be sure we have a valid encoding
+  if not FNoDataInStream then
+    AdjustEndOfBuffer(LBuffer, BytesRead);
+
+  // Convert to string and calc byte count for the string
+  ByteBufLen := BytesRead - StartIndex;
+  LString := FEncoding.GetString(LBuffer, StartIndex, ByteBufLen);
+  ByteCount := FEncoding.GetByteCount(LString);
+
+  // If byte count <> number of bytes read from the stream
+  // the buffer boundary is mid-character and additional bytes
+  // need to be read from the stream to complete the character
+  ExtraByteCount := 0;
+  while (ByteCount <> ByteBufLen) and (ExtraByteCount < FEncoding.GetMaxByteCount(1)) do
+  begin
+    // Expand buffer if padding is used
+    if (StartIndex + ByteBufLen) = Length(LBuffer) then
+      SetLength(LBuffer, Length(LBuffer) + BufferPadding);
+
+    // Read one more byte from the stream into the
+    // buffer padding and convert to string again
+    BytesRead := FStream.Read(LBuffer[StartIndex + ByteBufLen], 1);
+    if BytesRead = 0 then
+      // End of stream, append what's been read and discard remaining bytes
+      Break;
+
+    Inc(ExtraByteCount);
+
+    Inc(ByteBufLen);
+    LString := FEncoding.GetString(LBuffer, StartIndex, ByteBufLen);
+    ByteCount := FEncoding.GetByteCount(LString);
+  end;
+
+  if FBufferedData.Length < 1 then
+    FBufferedData.Clear;
+  // Add string to character data buffer
+  FBufferedData.Append(LString);
+end;
+
+function TStreamInputReader.GetEndOfStream: Boolean;
+begin
+  if not FNoDataInStream and (FBufferedData <> nil) and (FBufferedData.Length < 1) then
+    FillBuffer(FEncoding);
+  Result := FNoDataInStream and ((FBufferedData = nil) or (FBufferedData.Length = 0));
+end;
 
 { TFileInputReader }
 
 constructor TFileInputReader.Create(const filename: string);
 begin
   inherited Create(TFileStream.Create(filename, fmOpenRead or fmShareDenyWrite));
+  FOwnsStream := True;
 end;
 
 
-destructor TFileInputReader.Destroy;
-begin
-  //The fileinput reader always owns the stream
-  FStream.Free;
-  inherited;
-end;
 
 destructor TStreamInputReader.Destroy;
 begin
-  FStreamReader.Free;
+  if FOwnsStream then
+    FreeAndNil(FStream);
+  FreeAndNil(FBufferedData);
   inherited;
 end;
 
