@@ -127,7 +127,7 @@ begin
   // Initialize indent stack with base level 0
   FIndentStack := TList<Integer>.Create;
   FIndentStack.Add(0);
-  FStringBuilder := TStringBuilder.Create(256);
+  FStringBuilder := TStringBuilder.Create(1024);
 end;
 
 destructor TYAMLLexer.Destroy;
@@ -169,7 +169,7 @@ end;
 
 function TYAMLLexer.ReadComment : string;
 begin
-  FStringBuilder.Clear;
+  FStringBuilder.Reset;
   // Skip the '#' character
   FReader.Read;
 
@@ -188,7 +188,7 @@ end;
 
 function TYAMLLexer.ReadDirective: string;
 begin
-  FStringBuilder.Clear;
+  FStringBuilder.Reset;
   //just read the whole directive, we'll parse it later
   while (FReader.Current <> #10) and (FReader.Current <> #13) and not IsAtEnd do
   begin
@@ -209,7 +209,7 @@ var
   codePoint64 : Int64;
   peekChar : Char;
 begin
-  FStringBuilder.Clear;
+  FStringBuilder.Reset;
   FReader.Read; // Skip opening quote
   foundClosingQuote := False;
 
@@ -342,7 +342,7 @@ begin
                 // Next line (NEL) - not valid in JSON mode
                 if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \N is not supported', FReader.Line, FReader.Column);
-                FStringBuilder.Append(#$85);   // Next line (NEL)
+                FStringBuilder.Append(#$0085);   // Next line (NEL)
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
@@ -350,7 +350,7 @@ begin
                 // Non-breaking space - not valid in JSON mode
                 if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \_ is not supported', FReader.Line, FReader.Column);
-                FStringBuilder.Append(#$A0);   // Non-breaking space
+                FStringBuilder.Append(#$00A0);   // Non-breaking space
                 FReader.Read; // Read the escape character we just processed
                 Continue; // Skip the FReader.Read at the end of the loop
               end;
@@ -605,7 +605,7 @@ const
   end;
 
 begin
-  FStringBuilder.Clear;
+  FStringBuilder.Reset;
 
   while not IsAtEnd and DoCheck do
   begin
@@ -621,7 +621,7 @@ var
   dotCount : integer;
   tempChar : Char;
 begin
-  FStringBuilder.Clear;
+  FStringBuilder.Reset;
   dotCount := 0;
   FReader.Save;
   // First, scan ahead to count dots - if more than 1, this is not a valid number
@@ -767,7 +767,7 @@ end;
 
 function TYAMLLexer.ReadAnchorOrAlias : string;
 begin
-  FStringBuilder.Clear;
+  FStringBuilder.Reset;
 
   // Read anchor or alias name
   while (TYAMLCharUtils.IsAlphaNumeric(FReader.Current) or (FReader.Current = '_') or (FReader.Current = '-')) and not IsAtEnd do
@@ -788,7 +788,7 @@ begin
 
   if FReader.Current = '!' then
   begin
-    FStringBuilder.Clear;
+    FStringBuilder.Reset;
     FStringBuilder.Append('!');
     FReader.Read; //skip the !
 
@@ -828,7 +828,7 @@ begin
     begin
       // Prefixed form: !prefix!tag or just !tag
       // First read the prefix/tag name part
-      FStringBuilder.Clear;
+      FStringBuilder.Reset;
       while (TYAMLCharUtils.IsAlphaNumeric(FReader.Current) or (FReader.Current = '_') or (FReader.Current = '-')) and not IsAtEnd do
       begin
         FStringBuilder.Append(FReader.Current);
@@ -842,7 +842,7 @@ begin
         Result.Prefix := FStringBuilder.ToString;
         FReader.Read;
         // Read the tag name after the second !
-        FStringBuilder.Clear;
+        FStringBuilder.Reset;
         while (TYAMLCharUtils.IsAlphaNumeric(FReader.Current) or (FReader.Current = '_') or (FReader.Current = '-')) and not IsAtEnd do
         begin
           FStringBuilder.Append(FReader.Current);
@@ -955,7 +955,7 @@ var
   i : integer;
   hasColon : boolean;
 begin
-  FStringBuilder.Clear;
+  FStringBuilder.Reset;
 
   // Read timestamp pattern : YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS or variations
   // This function should read complete timestamp tokens including colons within time portions
@@ -1048,7 +1048,7 @@ end;
 
 function TYAMLLexer.ReadSpecialFloat : string;
 begin
-  FStringBuilder.Clear;
+  FStringBuilder.Reset;
 
   // Handle optional sign
   if (FReader.Current = '+') or (FReader.Current = '-') then
@@ -1435,7 +1435,7 @@ var
   i : integer;
   currentLine : string;
 begin
-  FStringBuilder.Clear;
+  FStringBuilder.Reset;
   chompIndicator := ' '; // Default (clip)
   indentIndicator := 0;   // Auto-detect
 
@@ -1515,7 +1515,7 @@ begin
 
       // Add line with proper indentation preserved
       if lineIndent >= baseIndent then
-        lines.Add(StringOfChar(' ', lineIndent - baseIndent) + currentLine)
+        lines.Add(TYAMLCharUtils.SpaceStr(lineIndent - baseIndent) + currentLine)
       else
         lines.Add(currentLine);
 
@@ -1588,7 +1588,7 @@ var
   inParagraph : boolean;
   paragraphLines : TStringList;
 begin
-  FStringBuilder.Clear;
+  FStringBuilder.Reset;
   chompIndicator := ' '; // Default (clip)
   indentIndicator := 0;   // Auto-detect
 
@@ -1702,7 +1702,7 @@ begin
           inParagraph := False;
         end;
         // Add indented line as-is
-        lines.Add(StringOfChar(' ', lineIndent - baseIndent) + currentLine);
+        lines.Add(TYAMLCharUtils.SpaceStr(lineIndent - baseIndent) + currentLine);
       end
       else
       begin

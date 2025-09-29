@@ -19,11 +19,14 @@ type
     FPrettyPrint : boolean;
     FWriter : TYAMLStreamWriter;
     FIndentLevel : UInt32;
+    FStringBuilder : TStringBuilder;
 
     // Helper methods for formatting
     function FormatScalar(const value : IYAMLValue) : string;
-    function GetIndent : string;inline;
-    function GetNewlineAndIndent : string;
+
+    // Direct writing helpers
+    procedure WriteIndent;inline;
+    procedure WriteNewlineAndIndent;inline;
 
     // Core writing methods
     procedure WriteValue(const value : IYAMLValue);
@@ -37,6 +40,7 @@ type
     function IsFirstItem(const index : integer) : boolean;inline;
     procedure IncIndent;inline;
     procedure DecIndent;inline;
+
 
   public
     constructor Create(const options : IYAMLEmitOptions);
@@ -69,27 +73,15 @@ begin
   FPrettyPrint := FOptions.PrettyPrint;
   FWriter := nil;
   FIndentLevel := 0;
+  FStringBuilder := TStringBuilder.Create(4096);
 end;
 
 destructor TJSONWriterImpl.Destroy;
 begin
   //do not free FWriter here we do not own it.
+  FStringBuilder.Free;
   inherited Destroy;
 end;
-
-function TJSONWriterImpl.GetIndent : string;
-begin
-  result := StringOfChar(' ', FIndentLevel * FOptions.IndentSize);
-end;
-
-function TJSONWriterImpl.GetNewlineAndIndent : string;
-begin
-  if FPrettyPrint then
-    result := sLineBreak + GetIndent
-  else
-    result := '';
-end;
-
 procedure TJSONWriterImpl.IncIndent;
 begin
   Inc(FIndentLevel);
@@ -100,29 +92,57 @@ begin
   Dec(FIndentLevel);
 end;
 
+procedure TJSONWriterImpl.WriteIndent;
+begin
+  FWriter.Write(TYAMLCharUtils.SpaceStr(FIndentLevel * FOptions.IndentSize));
+end;
+
+procedure TJSONWriterImpl.WriteNewlineAndIndent;
+begin
+  if FPrettyPrint then
+  begin
+    FWriter.Write(sLineBreak);
+    WriteIndent;
+  end;
+end;
+
 function TJSONWriterImpl.FormatScalar(const value : IYAMLValue) : string;
 begin
+  FStringBuilder.Reset;
   case value.ValueType of
     TYAMLValueType.vtNull :
-      result := 'null';
+      FStringBuilder.Append('null');
     TYAMLValueType.vtBoolean :
     begin
       if value.AsBoolean then
-        result := 'true'
+        FStringBuilder.Append('true')
       else
-        result := 'false';
+        FStringBuilder.Append('false');
     end;
-    TYAMLValueType.vtInteger : 
-      result := IntToStr(value.AsInteger);
-    TYAMLValueType.vtFloat :   
-      result := FloatToStr(value.AsFloat, YAMLFormatSettings);
+    TYAMLValueType.vtInteger :
+      FStringBuilder.Append(IntToStr(value.AsInteger));
+    TYAMLValueType.vtFloat :
+      FStringBuilder.Append(FloatToStr(value.AsFloat, YAMLFormatSettings));
     TYAMLValueType.vtString :
-      result := '"' + TYAMLCharUtils.EscapeStringForJSON(value.AsString) + '"';
+    begin
+      FStringBuilder.Append('"');
+      TYAMLCharUtils.EscapeStringForJSON(value.AsString, FStringBuilder);
+      FStringBuilder.Append('"');
+    end;
     TYAMLValueType.vtTimestamp :
-      result := '"' + value.AsString + '"';  // Convert timestamp to ISO8601 string
-  else
-    result := '"' + TYAMLCharUtils.EscapeStringForJSON(value.AsString) + '"';
+    begin
+      FStringBuilder.Append('"');
+      FStringBuilder.Append(value.AsString);
+      FStringBuilder.Append('"');
+    end;
+    else
+    begin
+      FStringBuilder.Append('"');
+      TYAMLCharUtils.EscapeStringForJSON(value.AsString, FStringBuilder);
+      FStringBuilder.Append('"');
+    end;
   end;
+  result := FStringBuilder.ToString;
 end;
 
 procedure TJSONWriterImpl.WriteString(const str : string);
@@ -165,21 +185,28 @@ begin
     begin
       if not IsFirstItem(i) then
         WriteString(',');
-      
-      WriteString(GetNewlineAndIndent);
-      
+
+      FStringBuilder.Reset;
+      WriteNewlineAndIndent;
+
       key := mapping.Keys[i];
       value := mapping.Values[key];
-      
-      WriteString('"' + TYAMLCharUtils.EscapeStringForJSON(key) + '":');
+
+      FStringBuilder.Append('"');
+      TYAMLCharUtils.EscapeStringForJSON(key, FStringBuilder);
+      FStringBuilder.Append('":');
       if FPrettyPrint then
-        WriteString(' ');
+        FStringBuilder.Append(' ');
+
+      WriteString(FStringBuilder.ToString);
       WriteValue(value);
     end;
     DecIndent;
-    WriteString(GetNewlineAndIndent);
+    FStringBuilder.Reset;
+    WriteNewlineAndIndent;
+    WriteString(FStringBuilder.ToString);
   end;
-  
+
   WriteString('}');
 end;
 
@@ -199,16 +226,20 @@ begin
     begin
       if not IsFirstItem(i) then
         WriteString(',');
-      
-      WriteString(GetNewlineAndIndent);
-      
+
+      FStringBuilder.Reset;
+      WriteNewlineAndIndent;
+      WriteString(FStringBuilder.ToString);
+
       item := sequence[i];
       WriteValue(item);
     end;
     DecIndent;
-    WriteString(GetNewlineAndIndent);
+    FStringBuilder.Reset;
+    WriteNewlineAndIndent;
+    WriteString(FStringBuilder.ToString);
   end;
-  
+
   WriteString(']');
 end;
 
@@ -219,7 +250,7 @@ var
 begin
   // JSON doesn't have sets, so write as array
   WriteString('[');
-  
+
   if aSet.Count > 0 then
   begin
     IncIndent;
@@ -227,16 +258,20 @@ begin
     begin
       if not IsFirstItem(i) then
         WriteString(',');
-      
-      WriteString(GetNewlineAndIndent);
-      
+
+      FStringBuilder.Reset;
+      WriteNewlineAndIndent;
+      WriteString(FStringBuilder.ToString);
+
       item := aSet[i];
       WriteValue(item);
     end;
     DecIndent;
-    WriteString(GetNewlineAndIndent);
+    FStringBuilder.Reset;
+    WriteNewlineAndIndent;
+    WriteString(FStringBuilder.ToString);
   end;
-  
+
   WriteString(']');
 end;
 

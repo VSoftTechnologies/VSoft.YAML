@@ -18,13 +18,14 @@ type
     FIndentLevel : UInt32;
     FOptions : IYAMLEmitOptions;
     FWriter : TYAMLStreamWriter;
+    FStringBuilder : TStringBuilder;
 
     // Helper methods for formatting
     function GetIndent : string;
     function NeedsQuoting(const value : string) : boolean;
     function ShouldUseDoubleQuotes(const value : string) : boolean;
-    function EscapeString(const value : string) : string;
-    function EscapeForSingleQuotes(const value : string) : string;
+    procedure EscapeString(const value : string; sb : TStringBuilder);overload;
+    procedure EscapeForSingleQuotes(const value : string; sb : TStringBuilder);overload;
     function FormatKey(const key : string) : string;
     function FormatScalar(const value : IYAMLValue) : string;
     function GetFormattedTag(const value : IYAMLValue) : string;
@@ -35,7 +36,6 @@ type
     procedure WriteSequence(const sequence : IYAMLSequence);
     procedure WriteSet(const ASet : IYAMLSet);
     procedure WriteScalar(const value : IYAMLValue);
-
     // Flow style methods
     procedure WriteMappingFlow(const mapping : IYAMLMapping; const mapKey : string = '');
     procedure WriteSequenceFlow(const sequence : IYAMLSequence; const key : string = '');
@@ -54,6 +54,9 @@ type
     procedure DecIndent;inline;
     function AddCommentToLine(const line : string; const comment : string) : string;
     procedure WriteCollectionComments(const collection : IYAMLCollection);
+
+    // Direct writing helpers
+    procedure WriteIndent;inline;
 
   public
     constructor Create(const options : IYAMLEmitOptions);
@@ -75,7 +78,8 @@ type
 implementation
 
 uses
-  VSoft.YAML.Classes;
+  VSoft.YAML.Classes,
+  VSoft.YAML.Utils;
 
 { TYAMLWriterImpl }
 
@@ -87,17 +91,19 @@ begin
   FOptions := options.Clone;
   FIndentLevel := 0;
   FWriter := nil;
+  FStringBuilder := TStringBuilder.Create(4096);
 end;
 
 destructor TYAMLWriterImpl.Destroy;
 begin
   //do not free FWriter here we do not own it.
+  FStringBuilder.Free;
   inherited Destroy;
 end;
 
 function TYAMLWriterImpl.GetIndent : string;
 begin
-  result := StringOfChar(' ', FIndentLevel * FOptions.IndentSize);
+  result := TYAMLCharUtils.SpaceStr(FIndentLevel * FOptions.IndentSize);
 end;
 
 function TYAMLWriterImpl.NeedsQuoting(const value : string) : boolean;
@@ -159,33 +165,32 @@ begin
   result := hasSpecialChars;
 end;
 
-function TYAMLWriterImpl.EscapeString(const value : string) : string;
+procedure TYAMLWriterImpl.EscapeString(const value: string; sb: TStringBuilder);
 var
   i : integer;
 begin
-  result := '';
   {$HIGHCHARUNICODE ON}
   for i := 1 to Length(value) do
   begin
     case value[i] of
-      #0: result := result + '\0';     // Null character
-      #7: result := result + '\a';     // Bell character
-      #8: result := result + '\b';     // Backspace
-      #9: result := result + '\t';     // Horizontal tab
-      #10: result := result + '\n';    // Line feed
-      #11: result := result + '\v';    // Vertical tab
-      #12: result := result + '\f';    // Form feed
-      #13: result := result + '\r';    // Carriage return
-      #27: result := result + '\e';    // Escape character
-      '"': result := result + '\"';    // Double quote
-      '\': result := result + '\\';    // Backslash
+      #0: sb.Append('\0');     // Null character
+      #7: sb.Append('\a');     // Bell character
+      #8: sb.Append('\b');     // Backspace
+      #9: sb.Append('\t');     // Horizontal tab
+      #10: sb.Append('\n');    // Line feed
+      #11: sb.Append('\v');    // Vertical tab
+      #12: sb.Append('\f');    // Form feed
+      #13: sb.Append('\r');    // Carriage return
+      #27: sb.Append('\e');    // Escape character
+      '"': sb.Append('\"');    // Double quote
+      '\': sb.Append('\\');    // Backslash
       // Unicode characters that YAML requires escaping
-      #$85: result := result + '\N';   // Next line (NEL)
-      #$A0: result := result + '\_';   // Non-breaking space
-      #$2028: result := result + '\L'; // Line separator
-      #$2029: result := result + '\P'; // Paragraph separator
+      #$85: sb.Append('\N');   // Next line (NEL)
+      #$A0: sb.Append('\_');   // Non-breaking space
+      #$2028: sb.Append('\L'); // Line separator
+      #$2029: sb.Append('\P'); // Paragraph separator
       else
-        result := result + value[i];
+        sb.Append(value[i]);
     end;
   end;
  {$HIGHCHARUNICODE OFF}
@@ -220,34 +225,52 @@ begin
   result := False;
 end;
 
-function TYAMLWriterImpl.EscapeForSingleQuotes(const value : string) : string;
+procedure TYAMLWriterImpl.EscapeForSingleQuotes(const value: string; sb: TStringBuilder);
 var
   i : integer;
 begin
-  result := '';
   for i := 1 to Length(value) do
   begin
     if value[i] = '''' then
-      result := result + '''''' // Double the single quote
+      sb.Append('''''') // Double the single quote
     else
-      result := result + value[i]; // All other characters are literal
+      sb.Append(value[i]); // All other characters are literal
   end;
 end;
 
+
 function TYAMLWriterImpl.FormatKey(const key : string) : string;
+var
+  sb : TStringBuilder;
 begin
   if NeedsQuoting(key) then
   begin
-    if ShouldUseDoubleQuotes(key) then
-      result := '"' + EscapeString(key) + '"'
-    else
-      result := '''' + EscapeForSingleQuotes(key) + '''';
+    sb := TStringBuilder.Create;
+    try
+      if ShouldUseDoubleQuotes(key) then
+      begin
+        sb.Append('"');
+        EscapeString(key, sb);
+        sb.Append('"');
+      end
+      else
+      begin
+        sb.Append('''');
+        EscapeForSingleQuotes(key, sb);
+        sb.Append('''');
+      end;
+      result := sb.ToString;
+    finally
+      sb.Free;
+    end;
   end
   else
     result := key;
 end;
 
 function TYAMLWriterImpl.FormatScalar(const value : IYAMLValue) : string;
+var
+  sb : TStringBuilder;
 begin
   case value.ValueType of
     TYAMLValueType.vtNull :
@@ -270,10 +293,24 @@ begin
     begin
       if NeedsQuoting(value.AsString) then
       begin
-        if ShouldUseDoubleQuotes(value.AsString) then
-          result := '"' + EscapeString(value.AsString) + '"'
-        else
-          result := '''' + EscapeForSingleQuotes(value.AsString) + '''';
+        sb := TStringBuilder.Create;
+        try
+          if ShouldUseDoubleQuotes(value.AsString) then
+          begin
+            sb.Append('"');
+            EscapeString(value.AsString, sb);
+            sb.Append('"');
+          end
+          else
+          begin
+            sb.Append('''');
+            EscapeForSingleQuotes(value.AsString, sb);
+            sb.Append('''');
+          end;
+          result := sb.ToString;
+        finally
+          sb.Free;
+        end;
       end
       else
         result := value.AsString;
@@ -283,12 +320,13 @@ begin
   end;
 end;
 
+
 function TYAMLWriterImpl.GetFormattedTag(const value : IYAMLValue) : string;
 var
   tagInfo : IYAMLTagInfo;
 begin
   result := '';
-  
+
   if value.Tag <> '' then
   begin
     tagInfo := value.TagInfo;
@@ -387,8 +425,19 @@ begin
   if collection.HasComments then
   begin
     for index := 0 to collection.Comments.Count - 1 do
-      AddLine(GetIndent + '# ' + collection.Comments[index]);
+    begin
+      FStringBuilder.Reset;
+      WriteIndent;
+      FStringBuilder.Append('# ');
+      FStringBuilder.Append(collection.Comments[index]);
+      AddLine(FStringBuilder.ToString);
+    end;
   end;
+end;
+
+procedure TYAMLWriterImpl.WriteIndent;
+begin
+  FStringBuilder.Append(TYAMLCharUtils.SpaceStr(FIndentLevel * FOptions.IndentSize));
 end;
 
 procedure TYAMLWriterImpl.WriteValue(const value : IYAMLValue);
@@ -410,10 +459,13 @@ var
   tag : string;
 begin
   WriteCollectionComments(mapping);
-  
+
   if mapping.Count = 0 then
   begin
-    AddLine(GetIndent + '{}');
+    FStringBuilder.Reset;
+    WriteIndent;
+    FStringBuilder.Append('{}');
+    AddLine(FStringBuilder.ToString);
     Exit;
   end;
 
@@ -444,7 +496,12 @@ begin
           WriteSequenceFlow(value.AsSequence, key + ': ')
         else
         begin
-          AddLine(GetIndent + key + ':' + tag);
+          FStringBuilder.Reset;
+          WriteIndent;
+          FStringBuilder.Append(key);
+          FStringBuilder.Append(':');
+          FStringBuilder.Append(tag);
+          AddLine(FStringBuilder.ToString);
           IncIndent;
           WriteValue(value);
           DecIndent;
@@ -456,7 +513,12 @@ begin
           WriteSequenceFlow(value.AsSet, key + ': ')
         else
         begin
-          AddLine(GetIndent + key + ':' + tag);
+          FStringBuilder.Reset;
+          WriteIndent;
+          FStringBuilder.Append(key);
+          FStringBuilder.Append(':');
+          FStringBuilder.Append(tag);
+          AddLine(FStringBuilder.ToString);
           IncIndent;
           WriteValue(value);
           DecIndent;
@@ -468,7 +530,12 @@ begin
           WriteMappingFlow(value.AsMapping, key + ': ')
         else
         begin
-          AddLine(GetIndent + key + ':' + tag);
+          FStringBuilder.Reset;
+          WriteIndent;
+          FStringBuilder.Append(key);
+          FStringBuilder.Append(':');
+          FStringBuilder.Append(tag);
+          AddLine(FStringBuilder.ToString);
           IncIndent;
           WriteValue(value);
           DecIndent;
@@ -488,10 +555,13 @@ var
   item : IYAMLValue;
 begin
   WriteCollectionComments(sequence);
-  
+
   if sequence.Count = 0 then
   begin
-    AddLine(GetIndent + '[]');
+    FStringBuilder.Reset;
+    WriteIndent;
+    FStringBuilder.Append('[]');
+    AddLine(FStringBuilder.ToString);
     Exit;
   end;
 
@@ -509,7 +579,10 @@ begin
       TYAMLValueType.vtSequence,
       TYAMLValueType.vtSet :
       begin
-        AddLine(GetIndent + '-');
+        FStringBuilder.Reset;
+        WriteIndent;
+        FStringBuilder.Append('-');
+        AddLine(FStringBuilder.ToString);
         IncIndent;
         WriteValue(item);
         DecIndent;
@@ -524,11 +597,12 @@ end;
 procedure TYAMLWriterImpl.WriteScalar(const value : IYAMLValue);
 var
   formattedValue : string;
-  lineWithComment : string;
 begin
   formattedValue := FormatScalar(value);
-  lineWithComment := AddCommentToLine(GetIndent + formattedValue, value.Comment);
-  AddLine(lineWithComment);
+  FStringBuilder.Reset;
+  WriteIndent;
+  FStringBuilder.Append(formattedValue);
+  AddLine(AddCommentToLine(FStringBuilder.ToString, value.Comment));
 end;
 
 procedure TYAMLWriterImpl.WriteMappingFlow(const mapping : IYAMLMapping; const mapKey : string);
@@ -536,46 +610,54 @@ var
   i : integer;
   key : string;
   value : IYAMLValue;
-  line : string;
   valueStr : string;
+  flowSB : TStringBuilder;
 begin
-  line := mapKey + '{';
+  flowSB := TStringBuilder.Create(512);
+  try
+    flowSB.Append(mapKey);
+    flowSB.Append('{');
 
-  for i := 0 to mapping.Count - 1 do
-  begin
-    key := mapping.Keys[i];
-    value := mapping.Values[key];
+    for i := 0 to mapping.Count - 1 do
+    begin
+      key := mapping.Keys[i];
+      value := mapping.Values[key];
 
-    if i > 0 then
-      line := line + ', ';
+      if i > 0 then
+        flowSB.Append(', ');
 
-    key := FormatKey(key);
+      key := FormatKey(key);
 
-    // Handle nested structures properly in flow style
-    case value.ValueType of
-      TYAMLValueType.vtMapping :
-      begin
-        if value.AsMapping.Count = 0 then
-          valueStr := '{}'
-        else
-          valueStr := WriteNestedMappingFlow(value.AsMapping);
+      // Handle nested structures properly in flow style
+      case value.ValueType of
+        TYAMLValueType.vtMapping :
+        begin
+          if value.AsMapping.Count = 0 then
+            valueStr := '{}'
+          else
+            valueStr := WriteNestedMappingFlow(value.AsMapping);
+        end;
+      TYAMLValueType.vtSequence :
+        begin
+          if value.AsSequence.Count = 0 then
+            valueStr := '[]'
+          else
+            valueStr := WriteNestedSequenceFlow(value.AsSequence);
+        end;
+      else
+        valueStr := FormatScalar(value);
       end;
-    TYAMLValueType.vtSequence :
-      begin
-        if value.AsSequence.Count = 0 then
-          valueStr := '[]'
-        else
-          valueStr := WriteNestedSequenceFlow(value.AsSequence);
-      end;
-    else
-      valueStr := FormatScalar(value);
+
+      flowSB.Append(key);
+      flowSB.Append(': ');
+      flowSB.Append(valueStr);
     end;
 
-    line := line + key + ': ' + valueStr;
+    flowSB.Append('}');
+    AddLine(AddCommentToLine(GetIndent + flowSB.ToString, mapping.Comment));
+  finally
+    flowSB.Free;
   end;
-
-  line := line + '}';
-  AddLine(AddCommentToLine(GetIndent + line, mapping.Comment));
 end;
 
 function TYAMLWriterImpl.WriteNestedMappingFlow(const mapping : IYAMLMapping) : string;
@@ -584,8 +666,11 @@ var
   key : string;
   value : IYAMLValue;
   valueStr : string;
+  sb : TStringBuilder;
 begin
-  result := '{';
+  sb := TStringBuilder.Create;
+  try
+    sb.Append('{');
 
   for i := 0 to mapping.Count - 1 do
   begin
@@ -593,7 +678,7 @@ begin
     value := mapping.Values[key];
 
     if i > 0 then
-      result := result + ', ';
+      sb.Append(', ');
 
     key := FormatKey(key);
 
@@ -624,10 +709,14 @@ begin
         valueStr := FormatScalar(value);
     end;
 
-    result := result + key + ': ' + valueStr;
+    sb.Append(key + ': ' + valueStr);
   end;
 
-  result := result + '}';
+  sb.Append('}');
+  result := sb.ToString;
+  finally
+    sb.Free;
+  end;
 end;
 
 function TYAMLWriterImpl.WriteNestedSequenceFlow(const sequence : IYAMLSequence) : string;
@@ -635,15 +724,18 @@ var
   i : integer;
   item : IYAMLValue;
   itemStr : string;
+  sb : TStringBuilder;
 begin
-  result := '[';
+  sb := TStringBuilder.Create;
+  try
+    sb.Append('[');
 
   for i := 0 to sequence.Count - 1 do
   begin
     item := sequence[i];
 
     if i > 0 then
-      result := result + ', ';
+      sb.Append(', ');
 
     // Recursively handle nested structures
     case item.ValueType of
@@ -672,10 +764,14 @@ begin
         itemStr := FormatScalar(item);
     end;
 
-    result := result + itemStr;
+    sb.Append(itemStr);
   end;
 
-  result := result + ']';
+  sb.Append(']');
+  result := sb.ToString;
+  finally
+    sb.Free;
+  end;
 end;
 
 function TYAMLWriterImpl.WriteNestedSetFlow(const ASet : IYAMLSet) : string;
@@ -683,15 +779,18 @@ var
   i : integer;
   item : IYAMLValue;
   itemStr : string;
+  sb : TStringBuilder;
 begin
-  result := '[';
+  sb := TStringBuilder.Create;
+  try
+    sb.Append('[');
 
   for i := 0 to ASet.Count - 1 do
   begin
     item := ASet[i];
 
     if i > 0 then
-      result := result + ', ';
+      sb.Append(', ');
 
     // Recursively handle nested structures
     case item.ValueType of
@@ -720,10 +819,14 @@ begin
         itemStr := FormatScalar(item);
     end;
 
-    result := result + itemStr;
+    sb.Append(itemStr);
   end;
 
-  result := result + ']';
+  sb.Append(']');
+  result := sb.ToString;
+  finally
+    sb.Free;
+  end;
 end;
 
 
@@ -731,43 +834,49 @@ procedure TYAMLWriterImpl.WriteSequenceFlow(const sequence : IYAMLSequence; cons
 var
   i : integer;
   item : IYAMLValue;
-  line : string;
   itemStr : string;
+  flowSB : TStringBuilder;
 begin
-  line := key + '[';
+  flowSB := TStringBuilder.Create(512);
+  try
+    flowSB.Append(key);
+    flowSB.Append('[');
 
-  for i := 0 to sequence.Count - 1 do
-  begin
-    item := sequence[i];
+    for i := 0 to sequence.Count - 1 do
+    begin
+      item := sequence[i];
 
-    if i > 0 then
-      line := line + ', ';
+      if i > 0 then
+        flowSB.Append(', ');
 
-    // Handle nested structures properly in flow style
-    case item.ValueType of
-      TYAMLValueType.vtMapping :
-      begin
-        if item.AsMapping.Count = 0 then
-          itemStr := '{}'
-        else
-          itemStr := WriteNestedMappingFlow(item.AsMapping);
+      // Handle nested structures properly in flow style
+      case item.ValueType of
+        TYAMLValueType.vtMapping :
+        begin
+          if item.AsMapping.Count = 0 then
+            itemStr := '{}'
+          else
+            itemStr := WriteNestedMappingFlow(item.AsMapping);
+        end;
+        TYAMLValueType.vtSequence :
+        begin
+          if item.AsSequence.Count = 0 then
+            itemStr := '[]'
+          else
+            itemStr := WriteNestedSequenceFlow(item.AsSequence);
+        end;
+      else
+        itemStr := FormatScalar(item);
       end;
-      TYAMLValueType.vtSequence :
-      begin
-        if item.AsSequence.Count = 0 then
-          itemStr := '[]'
-        else
-          itemStr := WriteNestedSequenceFlow(item.AsSequence);
-      end;
-    else
-      itemStr := FormatScalar(item);
+
+      flowSB.Append(itemStr);
     end;
 
-    line := line + itemStr;
+    flowSB.Append(']');
+    AddLine(AddCommentToLine(GetIndent + flowSB.ToString, sequence.Comment));
+  finally
+    flowSB.Free;
   end;
-
-  line := line + ']';
-  AddLine(AddCommentToLine(GetIndent + line, sequence.Comment));
 end;
 
 procedure TYAMLWriterImpl.WriteSequenceMapping(mapping : IYAMLMapping);
@@ -779,7 +888,10 @@ var
 begin
   if mapping.Count = 0 then
   begin
-    AddLine(GetIndent + '- {}');
+    FStringBuilder.Reset;
+    WriteIndent;
+    FStringBuilder.Append('- {}');
+    AddLine(FStringBuilder.ToString);
     Exit;
   end;
 
@@ -801,7 +913,12 @@ begin
             AddLine(AddCommentToLine(GetIndent + '- ' + key + ': ' + WriteNestedSequenceFlow(value.AsSequence), value.Comment))
           else
           begin
-            AddLine(GetIndent + '- ' + key + ':');
+            FStringBuilder.Reset;
+            WriteIndent;
+            FStringBuilder.Append('- ');
+            FStringBuilder.Append(key);
+            FStringBuilder.Append(':');
+            AddLine(FStringBuilder.ToString);
             IncIndent;
             WriteValue(value);
             DecIndent;
@@ -809,7 +926,12 @@ begin
         end;
         TYAMLValueType.vtMapping :
         begin
-          AddLine(GetIndent + '- ' + key + ':');
+          FStringBuilder.Reset;
+          WriteIndent;
+          FStringBuilder.Append('- ');
+          FStringBuilder.Append(key);
+          FStringBuilder.Append(':');
+          AddLine(FStringBuilder.ToString);
           IncIndent;
           WriteValue(value);
           DecIndent;
@@ -830,7 +952,12 @@ begin
             AddLine(AddCommentToLine(GetIndent + '  ' + key + ': ' + WriteNestedSequenceFlow(value.AsSequence), value.Comment))
           else
           begin
-            AddLine(GetIndent + '  ' + key + ':');
+            FStringBuilder.Reset;
+            WriteIndent;
+            FStringBuilder.Append('  ');
+            FStringBuilder.Append(key);
+            FStringBuilder.Append(':');
+            AddLine(FStringBuilder.ToString);
             IncIndent;
             IncIndent; // Extra indent for sequence context
             WriteValue(value);
@@ -840,7 +967,12 @@ begin
         end;
         TYAMLValueType.vtMapping :
         begin
-          AddLine(GetIndent + '  ' + key + ':');
+          FStringBuilder.Reset;
+          WriteIndent;
+          FStringBuilder.Append('  ');
+          FStringBuilder.Append(key);
+          FStringBuilder.Append(':');
+          AddLine(FStringBuilder.ToString);
           IncIndent;
           IncIndent; // Extra indent for sequence context
           WriteValue(value);
@@ -861,10 +993,13 @@ var
   item : IYAMLValue;
 begin
   WriteCollectionComments(ASet);
-  
+
   if ASet.Count = 0 then
   begin
-    AddLine(GetIndent + '[]');
+    FStringBuilder.Reset;
+    WriteIndent;
+    FStringBuilder.Append('[]');
+    AddLine(FStringBuilder.ToString);
     Exit;
   end;
 
@@ -882,14 +1017,20 @@ begin
     case item.ValueType of
       TYAMLValueType.vtSequence :
       begin
-        AddLine(GetIndent + '?');
+        FStringBuilder.Reset;
+        WriteIndent;
+        FStringBuilder.Append('?');
+        AddLine(FStringBuilder.ToString);
         IncIndent;
         WriteValue(item);
         DecIndent;
       end;
       TYAMLValueType.vtSet :
       begin
-        AddLine(GetIndent + '?');
+        FStringBuilder.Reset;
+        WriteIndent;
+        FStringBuilder.Append('?');
+        AddLine(FStringBuilder.ToString);
         IncIndent;
         WriteValue(item);
         DecIndent;

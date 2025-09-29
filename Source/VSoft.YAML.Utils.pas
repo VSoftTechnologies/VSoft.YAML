@@ -6,7 +6,8 @@ interface
 
 
 uses
-  System.SysUtils;
+  System.SysUtils,
+  VSoft.YAML.StreamWriter;
 
 type
   TYAMLDateUtils = class
@@ -24,8 +25,18 @@ type
     class function IsAlphaNumeric(C: Char): boolean; inline;static;
     class function IsAlpha(C: Char): boolean; static;inline;
     class function IsHexidecimal(c : Char) : boolean;inline;static;
-    class function EscapeStringForJSON(const value : string) : string;static;
+    class function EscapeStringForJSON(const value : string) : string;overload;static;
+    class procedure EscapeStringForJSON(const value : string; sb : TStringBuilder);overload;static;
+    class procedure EscapeStringForJSONToWriter(const value : string; writer : TYAMLStreamWriter);static;
+    class function SpaceStr(count : integer) : string;static;
+    class function StringOfChar(const c : Char; count : integer) : string;static;
   end;
+
+  TStringBuilderHelper = class helper for TStringBuilder
+  public
+    procedure Reset;
+  end;
+
 
 {$IFDEF XE5SDOWN}
 function TryStrToUInt64(const S: string; out Value: UInt64): Boolean;
@@ -40,6 +51,25 @@ uses
   System.TimeSpan,
   System.DateUtils;
 
+const _stringOfChar  : array[1..16] of string = (
+  ' ',
+  '  ',
+  '   ',
+  '    ',
+  '     ',
+  '      ',
+  '       ',
+  '        ',
+
+  '         ',
+  '          ',
+  '           ',
+  '            ',
+  '             ',
+  '              ',
+  '               ',
+  '                '
+);
 
 class function TYAMLCharUtils.IsAlphaNumeric(C: Char): Boolean;
 begin
@@ -117,6 +147,156 @@ begin
   {$HIGHCHARUNICODE OFF}
 end;
 
+class procedure TYAMLCharUtils.EscapeStringForJSON(const value: string; sb: TStringBuilder);
+var
+  i : integer;
+  charCode : Word;
+  highSurrogate, lowSurrogate : Word;
+begin
+  {$HIGHCHARUNICODE ON}
+  i := 1;
+  while i <= Length(value) do
+  begin
+    charCode := Ord(value[i]);
+    case value[i] of
+      '"': sb.Append('\"');       // Double quote
+      '\': sb.Append('\\');       // Backslash
+      #8: sb.Append('\b');        // Backspace
+      #12: sb.Append('\f');       // Form feed
+      #10: sb.Append('\n');       // Line feed
+      #13: sb.Append('\r');       // Carriage return
+      #9: sb.Append('\t');        // Horizontal tab
+      #0..#7, #11, #14..#31:      // Other control characters (U+0000 through U+001F)
+      begin
+        sb.Append('\u');
+        sb.Append(IntToHex(charCode, 4));
+      end;
+      else
+      begin
+        // Check for surrogate pairs
+        if (charCode >= $D800) and (charCode <= $DBFF) then // High surrogate
+        begin
+          if (i < Length(value)) then
+          begin
+            highSurrogate := charCode;
+            lowSurrogate := Ord(value[i + 1]);
+            if (lowSurrogate >= $DC00) and (lowSurrogate <= $DFFF) then // Valid low surrogate
+            begin
+              // Escape surrogate pairs as individual \uXXXX sequences (JSON standard)
+              sb.Append('\u');
+              sb.Append(IntToHex(highSurrogate, 4));
+              sb.Append('\u');
+              sb.Append(IntToHex(lowSurrogate, 4));
+              Inc(i, 2); // Skip both characters in the pair
+              Continue;
+            end
+            else
+            begin
+              // Unpaired high surrogate - escape it
+              sb.Append('\u');
+              sb.Append(IntToHex(charCode, 4));
+            end;
+          end
+          else
+          begin
+            // High surrogate at end of string - escape it
+            sb.Append('\u');
+            sb.Append(IntToHex(charCode, 4));
+          end;
+        end
+        else if (charCode >= $DC00) and (charCode <= $DFFF) then // Unpaired low surrogate
+        begin
+          // Escape unpaired low surrogate
+          sb.Append('\u');
+          sb.Append(IntToHex(charCode, 4));
+        end
+        else
+        begin
+          // Regular Unicode character - preserve as-is
+          sb.Append(value[i]);
+        end;
+      end;
+    end;
+    Inc(i);
+  end;
+  {$HIGHCHARUNICODE OFF}
+end;
+
+class procedure TYAMLCharUtils.EscapeStringForJSONToWriter(const value: string; writer: TYAMLStreamWriter);
+var
+  i : integer;
+  charCode : Word;
+  highSurrogate, lowSurrogate : Word;
+begin
+  {$HIGHCHARUNICODE ON}
+  i := 1;
+  while i <= Length(value) do
+  begin
+    charCode := Ord(value[i]);
+    case value[i] of
+      '"': writer.Write('\"');       // Double quote
+      '\': writer.Write('\\');       // Backslash
+      #8: writer.Write('\b');        // Backspace
+      #12: writer.Write('\f');       // Form feed
+      #10: writer.Write('\n');       // Line feed
+      #13: writer.Write('\r');       // Carriage return
+      #9: writer.Write('\t');        // Horizontal tab
+      #0..#7, #11, #14..#31:      // Other control characters (U+0000 through U+001F)
+      begin
+        writer.Write('\u');
+        writer.Write(IntToHex(charCode, 4));
+      end;
+      else
+      begin
+        // Check for surrogate pairs
+        if (charCode >= $D800) and (charCode <= $DBFF) then // High surrogate
+        begin
+          if (i < Length(value)) then
+          begin
+            highSurrogate := charCode;
+            lowSurrogate := Ord(value[i + 1]);
+            if (lowSurrogate >= $DC00) and (lowSurrogate <= $DFFF) then // Valid low surrogate
+            begin
+              // Escape surrogate pairs as individual \uXXXX sequences (JSON standard)
+              writer.Write('\u');
+              writer.Write(IntToHex(highSurrogate, 4));
+              writer.Write('\u');
+              writer.Write(IntToHex(lowSurrogate, 4));
+              Inc(i, 2); // Skip both characters in the pair
+              Continue;
+            end
+            else
+            begin
+              // Invalid surrogate pair - escape the high surrogate only
+              writer.Write('\u');
+              writer.Write(IntToHex(charCode, 4));
+            end;
+          end
+          else
+          begin
+            // High surrogate at end of string - invalid
+            writer.Write('\u');
+            writer.Write(IntToHex(charCode, 4));
+          end;
+        end
+        else if (charCode >= $DC00) and (charCode <= $DFFF) then // Lone low surrogate
+        begin
+          // Lone low surrogate - invalid, escape it
+          writer.Write('\u');
+          writer.Write(IntToHex(charCode, 4));
+        end
+        else
+        begin
+          // Regular Unicode character - preserve as-is
+          writer.Write(value[i]);
+        end;
+      end;
+    end;
+    Inc(i);
+  end;
+  {$HIGHCHARUNICODE OFF}
+end;
+
 class function TYAMLCharUtils.IsAlpha(C: Char): Boolean;
 begin
 {$IF CompilerVersion > 24.0}
@@ -143,6 +323,26 @@ begin
 end;
 
 
+
+class function TYAMLCharUtils.SpaceStr(count: integer): string;
+begin
+  if count < 1 then
+    exit('');
+  case count of
+    1..16: result := _stringOfChar[count];
+  else
+    result := TYAMLCharUtils.StringOfChar(' ',count);
+  end;
+end;
+
+class function TYAMLCharUtils.StringOfChar(const c: Char; count: integer): string;
+var
+  i: Integer;
+begin
+  SetLength(result, count);
+  for i := 1 to count do
+    result[i] := c;
+end;
 
 function DateToISO8601Str(const date: TDateTime; inputIsUTC: Boolean): string;
 var
@@ -527,6 +727,13 @@ var
 begin
   Value := _ValUInt64(S, E);
   Result := E = 0;
+end;
+
+{ TStringBuilderHelper }
+
+procedure TStringBuilderHelper.Reset;
+begin
+  Self.Length := 0;
 end;
 
 end.

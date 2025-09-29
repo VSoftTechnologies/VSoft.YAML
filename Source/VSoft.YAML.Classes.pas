@@ -206,7 +206,7 @@ type
   TYAMLMapping = class(TYAMLCollection, IYAMLMapping, IYAMLCollection, IYAMLValue, IYAMLValuePrivate, IYAMLMappingPrivate)
   private
     FPairs : TDictionary<string, IYAMLValue>;
-    FKeys : TStringList;  // To maintain order
+    FKeys : TList<string>;  // To maintain order
   protected
     function GetCount : integer;override;
     function GetNodes(Index : integer) : IYAMLValue;override;
@@ -1066,6 +1066,7 @@ begin
   vt := GetNodeValueType;
   inherited Create(parent, vt, '', tag);
   FItems := TList<IYAMLValue>.Create;
+  FItems.Capacity := 64;
 end;
 
 procedure TYAMLSequence.Clear;
@@ -1545,15 +1546,17 @@ end;
 constructor TYAMLMapping.Create(const parent : IYAMLValue; const tag : string);
 begin
   inherited Create(parent, TYAMLValueType.vtMapping, '', tag);
-  FPairs := TDictionary<string, IYAMLValue>.Create;
-  FKeys := TStringList.Create;
+  FPairs := TDictionary<string, IYAMLValue>.Create(64);
+  FKeys := TList<string>.Create;
+  FKeys.Capacity := 64;
 end;
 
 constructor TYAMLMapping.Create(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo);
 begin
   inherited Create(parent, TYAMLValueType.vtMapping, '', tagInfo);
-  FPairs := TDictionary<string, IYAMLValue>.Create;
-  FKeys := TStringList.Create;
+  FPairs := TDictionary<string, IYAMLValue>.Create(64);
+  FKeys := TList<string>.Create;
+  FKeys.Capacity := 64;
 end;
 
 

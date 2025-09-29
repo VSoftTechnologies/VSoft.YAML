@@ -864,6 +864,7 @@ var
   i : integer;
   writerOptions : IYAMLEmitOptions;
   writer : TJSONWriterImpl;
+  sb : TStringBuilder;
 begin
   result := '';
   if Length(docs) = 0 then
@@ -872,16 +873,19 @@ begin
   // Use the first document's options as default
   writerOptions := docs[0].Options;
   writer := TJSONWriterImpl.Create(writerOptions);
+  sb := TStringBuilder.Create(Length(docs) * 512);
   try
-    result := '[';
+    sb.Append('[');
     for i := 0 to Length(docs) - 1 do
     begin
       if i > 0 then
-        result := result + ',';
-      result := result + writer.WriteToString(docs[i]);
+        sb.Append(',');
+      sb.Append(writer.WriteToString(docs[i]));
     end;
-    result := result + ']';
+    sb.Append(']');
+    result := sb.ToString;
   finally
+    sb.Free;
     writer.Free;
   end;
 end;
@@ -891,6 +895,7 @@ var
   i : integer;
   writerOptions : IYAMLEmitOptions;
   writer : TYAMLWriterImpl;
+  sb : TStringBuilder;
 begin
 
   result := '';
@@ -903,14 +908,17 @@ begin
   if Length(docs) > 1 then
     writerOptions.EmitDocumentMarkers := true;
   writer := TYAMLWriterImpl.Create(writerOptions);
+  sb := TStringBuilder.Create(Length(docs) * 1024);
   try
     for i := 0 to Length(docs) - 1 do
     begin
-      result := result + Writer.WriteToString(docs[i]);
+      sb.Append(Writer.WriteToString(docs[i]));
       if i < Length(docs) - 1 then
-        result := result + sLineBreak;
+        sb.Append(sLineBreak);
     end;
+    result := sb.ToString;
   finally
+    sb.Free;
     writer.Free;
   end;
 end;
