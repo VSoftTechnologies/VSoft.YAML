@@ -65,6 +65,7 @@ type
     FSequenceItemIndent : integer;
     FInValueContext : boolean; // Track if we're reading a value (after colon) vs key
     FStringBuilder : TStringBuilder;
+    FHexBuilder : TStringBuilder;  // For building hex strings in Unicode escapes
 
     // Stack management methods
     procedure PushIndentLevel(level: Integer);
@@ -109,6 +110,15 @@ uses
   System.Character,
   System.Classes;
 
+// Static escape sequence lookup tables - initialized once at startup
+var
+  // Maps escape character to replacement character
+  // Special values: #0 = invalid escape, #1 = complex escape (u/U/x)
+  EscapeTable: array[0..255] of Char;
+  
+  // Tracks which escapes are valid in JSON mode
+  JSONValidEscapes: array[0..255] of Boolean;
+
 { TYAMLLexer }
 
 constructor TYAMLLexer.Create(const reader : IInputReader; const options : IYAMLParserOptions);
@@ -128,12 +138,14 @@ begin
   FIndentStack := TList<Integer>.Create;
   FIndentStack.Add(0);
   FStringBuilder := TStringBuilder.Create(1024);
+  FHexBuilder := TStringBuilder.Create(8);  // Max 8 chars for \UXXXXXXXX
 end;
 
 destructor TYAMLLexer.Destroy;
 begin
   FIndentStack.Free;
   FStringBuilder.Free;
+  FHexBuilder.Free;
   inherited Destroy;
 end;
 
@@ -208,6 +220,8 @@ var
   codePoint : Integer;
   codePoint64 : Int64;
   peekChar : Char;
+  escapeChar : Char;
+  currentCharOrd : Integer;
 begin
   FStringBuilder.Reset;
   FReader.Read; // Skip opening quote
@@ -252,241 +266,112 @@ begin
         end
         else
         begin
-          // This is an escape sequence - process it immediately
+          // This is an escape sequence - process it using lookup table
           FReader.Read; // Skip the backslash
           if not IsAtEnd then
           begin
-            case FReader.Current of
-              // Basic escape sequences
-              '0': begin
-                // Null character - not valid in JSON mode
-                if FJSONMode then
-                  raise EYAMLParseException.Create('Invalid escape sequence in JSON: \0 is not supported', FReader.Line, FReader.Column);
-                FStringBuilder.Append(#0);     // Null character
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              'a': begin
-                // Bell character - not valid in JSON mode
-                if FJSONMode then
-                  raise EYAMLParseException.Create('Invalid escape sequence in JSON: \a is not supported', FReader.Line, FReader.Column);
-                FStringBuilder.Append(#7);     // Bell character
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              'b': begin
-                FStringBuilder.Append(#8);     // Backspace
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              't': begin
-                FStringBuilder.Append(#9);     // Horizontal tab
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              'n': begin
-                FStringBuilder.Append(#10);    // Line feed
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              'v': begin
-                // Vertical tab - not valid in JSON mode
-                if FJSONMode then
-                  raise EYAMLParseException.Create('Invalid escape sequence in JSON: \v is not supported', FReader.Line, FReader.Column);
-                FStringBuilder.Append(#11);    // Vertical tab
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              'f': begin
-                FStringBuilder.Append(#12);    // Form feed
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              'r': begin
-                FStringBuilder.Append(#13);    // Carriage return
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              'e': begin
-                // Escape character - not valid in JSON mode
-                if FJSONMode then
-                  raise EYAMLParseException.Create('Invalid escape sequence in JSON: \e is not supported', FReader.Line, FReader.Column);
-                FStringBuilder.Append(#27);    // Escape character
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              ' ': begin
-                // Space - not valid in JSON mode
-                if FJSONMode then
-                  raise EYAMLParseException.Create('Invalid escape sequence in JSON: \ (space) is not supported', FReader.Line, FReader.Column);
-                FStringBuilder.Append(' ');    // Space
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              '"': begin
-                FStringBuilder.Append('"');    // Double quote
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              '/': begin
-                FStringBuilder.Append('/');    // Forward slash
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              '\': begin
-                FStringBuilder.Append('\');    // Backslash
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              'N': begin
-                // Next line (NEL) - not valid in JSON mode
-                if FJSONMode then
-                  raise EYAMLParseException.Create('Invalid escape sequence in JSON: \N is not supported', FReader.Line, FReader.Column);
-                FStringBuilder.Append(#$0085);   // Next line (NEL)
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              '_': begin
-                // Non-breaking space - not valid in JSON mode
-                if FJSONMode then
-                  raise EYAMLParseException.Create('Invalid escape sequence in JSON: \_ is not supported', FReader.Line, FReader.Column);
-                FStringBuilder.Append(#$00A0);   // Non-breaking space
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              'L': begin
-                // Line separator - not valid in JSON mode
-                if FJSONMode then
-                  raise EYAMLParseException.Create('Invalid escape sequence in JSON: \L is not supported', FReader.Line, FReader.Column);
-                FStringBuilder.Append(#$2028); // Line separator
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
-              'P': begin
-                // Paragraph separator - not valid in JSON mode
-                if FJSONMode then
-                  raise EYAMLParseException.Create('Invalid escape sequence in JSON: \P is not supported', FReader.Line, FReader.Column);
-                FStringBuilder.Append(#$2029); // Paragraph separator
-                FReader.Read; // Read the escape character we just processed
-                Continue; // Skip the FReader.Read at the end of the loop
-              end;
+            // Cache the character ordinal value
+            currentCharOrd := Ord(FReader.Current);
+            
+            // Check if character is in valid ASCII range for escape sequences
+            if currentCharOrd > 255 then
+              raise EYAMLParseException.Create('Invalid escape sequence: \' + FReader.Current, FReader.Line, FReader.Column);
+              
+            escapeChar := EscapeTable[currentCharOrd];
+            
+            // Check for invalid escape  
+            if escapeChar = #255 then
+              raise EYAMLParseException.Create('Invalid escape sequence: \' + FReader.Current, FReader.Line, FReader.Column);
+            
+            // Check JSON mode validity  
+            if FJSONMode and not JSONValidEscapes[currentCharOrd] then
+              raise EYAMLParseException.Create('Invalid escape sequence in JSON: \' + FReader.Current + ' is not supported', FReader.Line, FReader.Column);
+            
+            // Handle complex escapes that need special processing
+            if escapeChar = #1 then
+            begin
+              case FReader.Current of
               'u': begin
                 // Unicode escape sequence \uXXXX (4 hex digits)
-                // Check if the next characters look like hex digits
-                isValidUnicodeEscape := True;
-                FReader.Save;
-                FReader.Read;// Skip 'u'
-
-                // Check if we have 4 hex digits following
+                FReader.Read; // Skip 'u'
+                FHexBuilder.Clear;
+                
+                // Read and validate 4 hex digits
                 for i := 1 to 4 do
                 begin
                   if IsAtEnd or not TYAMLCharUtils.IsHexidecimal(FReader.Current) then
-                  begin
-                    isValidUnicodeEscape := False;
-                    break;
-                  end;
+                    raise EYAMLParseException.Create('Invalid Unicode escape sequence: \u requires 4 hex digits', FReader.Line, FReader.Column);
+                  FHexBuilder.Append(FReader.Current);
                   FReader.Read;
                 end;
-
-                // Restore position
-                FReader.Restore;
                 
-                if isValidUnicodeEscape then
-                begin
-                  FReader.Read; // Skip 'u'
-                  hexStr := '';
-                  for i := 1 to 4 do
-                  begin
-                    hexStr := hexStr + FReader.Current;
-                    FReader.Read;
-                  end;
-                  // Convert hex to character
-                  codePoint := StrToInt('$' + hexStr);
-                  FStringBuilder.Append(Char(codePoint));
-                  Continue; // Skip the FReader.Read at the end of the loop
-                end
-                else
-                begin
-                  // Invalid Unicode escape sequence - raise an error
-                  raise EYAMLParseException.Create('Invalid Unicode escape sequence: \u' + FReader.Current, FReader.Line, FReader.Column);
-                end;
+                // Convert hex to character
+                codePoint := StrToInt('$' + FHexBuilder.ToString);
+                FStringBuilder.Append(Char(codePoint));
+                Continue;
               end;
               'U': begin
                 // Unicode escape sequence \UXXXXXXXX (8 hex digits) - not valid in JSON mode
                 if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \U is not supported, use \u instead', FReader.Line, FReader.Column);
-                // Unicode escape sequence \UXXXXXXXX (8 hex digits)
-                // Check if the next characters look like hex digits
-                isValidUnicodeEscape := True;
-                FReader.Save;
+                
                 FReader.Read; // Skip 'U'
-
-                // Check if we have 8 hex digits following
+                FHexBuilder.Clear;
+                
+                // Read and validate 8 hex digits
                 for i := 1 to 8 do
                 begin
                   if IsAtEnd or not TYAMLCharUtils.IsHexidecimal(FReader.Current) then
-                  begin
-                    isValidUnicodeEscape := False;
-                    break;
-                  end;
+                    raise EYAMLParseException.Create('Invalid Unicode escape sequence: \U requires 8 hex digits', FReader.Line, FReader.Column);
+                  FHexBuilder.Append(FReader.Current);
                   FReader.Read;
                 end;
                 
-                // Restore position
-                FReader.Restore;
-
-                if isValidUnicodeEscape then
+                // Convert hex to character
+                codePoint64 := StrToInt64('$' + FHexBuilder.ToString);
+                if codePoint64 <= $FFFF then
+                  FStringBuilder.Append(Char(codePoint64))
+                else if codePoint64 <= $10FFFF then
                 begin
-                  FReader.Read; // Skip 'U'
-                  hexStr := '';
-                  for i := 1 to 8 do
-                  begin
-                    hexStr := hexStr + FReader.Current;
-                    FReader.Read;
-                  end;
-                  // Convert hex to character
-                  codePoint64 := StrToInt64('$' + hexStr);
-                  if codePoint64 <= $FFFF then
-                    FStringBuilder.Append(Char(codePoint64))
-                  else if codePoint64 <= $10FFFF then
-                  begin
-                    // Convert to UTF-16 surrogate pair for code points > U+FFFF
-                    codePoint64 := codePoint64 - $10000;
-                    FStringBuilder.Append(Char($D800 + (codePoint64 shr 10)));    // High surrogate
-                    FStringBuilder.Append(Char($DC00 + (codePoint64 and $3FF))); // Low surrogate
-                  end
-                  else
-                    FStringBuilder.Append('?'); // Invalid Unicode code point
-                  Continue; // Skip the FReader.Read at the end of the loop
+                  // Convert to UTF-16 surrogate pair for code points > U+FFFF
+                  codePoint64 := codePoint64 - $10000;
+                  FStringBuilder.Append(Char($D800 + (codePoint64 shr 10)));    // High surrogate
+                  FStringBuilder.Append(Char($DC00 + (codePoint64 and $3FF))); // Low surrogate
                 end
                 else
-                begin
-                  // Invalid Unicode escape sequence - raise an error
-                  raise EYAMLParseException.Create('Invalid Unicode escape sequence: \U' + FReader.Current, FReader.Line, FReader.Column);
-                end;
+                  FStringBuilder.Append('?'); // Invalid Unicode code point
+                Continue;
               end;
               'x': begin
                 // Hex escape sequence \xXX - not valid in JSON mode
                 if FJSONMode then
                   raise EYAMLParseException.Create('Invalid escape sequence in JSON: \x is not supported', FReader.Line, FReader.Column);
                   
-                // Hex escape sequence \xXX  
                 FReader.Read; // Skip 'x'
-                if not IsAtEnd and (((FReader.Current >= '0') and (FReader.Current <= '9')) or
-                   ((FReader.Current >= 'A') and (FReader.Current <= 'F')) or
-                   ((FReader.Current >= 'a') and (FReader.Current <= 'f'))) then
+                FHexBuilder.Clear;
+                
+                // Read and validate 2 hex digits
+                for i := 1 to 2 do
                 begin
-                  // For now, simplified - just include literally
-                  FStringBuilder.Append('\x' + FReader.Current);
-                  FReader.Read; // Read the hex character we just processed
-                  Continue; // Skip the FReader.Read at the end of the loop
-                end
-                else
-                  raise EYAMLParseException.Create('Invalid hex escape sequence', FReader.Line, FReader.Column);
+                  if IsAtEnd or not TYAMLCharUtils.IsHexidecimal(FReader.Current) then
+                    raise EYAMLParseException.Create('Invalid hex escape sequence: \x requires 2 hex digits', FReader.Line, FReader.Column);
+                  FHexBuilder.Append(FReader.Current);
+                  FReader.Read;
+                end;
+                
+                // Convert hex to character
+                codePoint := StrToInt('$' + FHexBuilder.ToString);
+                FStringBuilder.Append(Char(codePoint));
+                Continue;
               end;
+              end;
+            end
             else
-              // Invalid escape sequence - raise an error
-              raise EYAMLParseException.Create('Invalid escape sequence: \' + FReader.Current, FReader.Line, FReader.Column);
+            begin
+              // Simple escape - use lookup table result
+              FStringBuilder.Append(escapeChar);
+              FReader.Read; // Read the escape character we just processed
+              Continue;
             end;
           end;
         end;
@@ -513,7 +398,8 @@ begin
       // Single-quoted strings: only single quotes need escaping (by doubling)
       if FReader.Current = '''' then
       begin
-        if FReader.Peek() = '''' then
+        peekChar := FReader.Peek();
+        if peekChar = '''' then
         begin
           // Escaped single quote: '' becomes '
           FStringBuilder.Append('''');
@@ -1777,6 +1663,51 @@ begin
   end;
   
   result := FStringBuilder.ToString;
+end;
+
+initialization
+var
+  i: Integer;
+begin
+  // Initialize escape sequence lookup tables
+  for i := 0 to 255 do
+    EscapeTable[i] := #255;  // Initialize all to invalid
+  FillChar(JSONValidEscapes, SizeOf(JSONValidEscapes), False);
+  
+  // YAML escape sequences (valid in double-quoted strings)
+  EscapeTable[Ord('0')] := #0;    // Null
+  EscapeTable[Ord('a')] := #7;    // Bell
+  EscapeTable[Ord('b')] := #8;    // Backspace
+  EscapeTable[Ord('t')] := #9;    // Tab
+  EscapeTable[Ord('n')] := #10;   // Line feed
+  EscapeTable[Ord('v')] := #11;   // Vertical tab
+  EscapeTable[Ord('f')] := #12;   // Form feed
+  EscapeTable[Ord('r')] := #13;   // Carriage return
+  EscapeTable[Ord('e')] := #27;   // Escape
+  EscapeTable[Ord(' ')] := ' ';   // Space
+  EscapeTable[Ord('"')] := '"';   // Double quote
+  EscapeTable[Ord('/')] := '/';   // Forward slash
+  EscapeTable[Ord('\')] := '\';   // Backslash
+  EscapeTable[Ord('N')] := #$0085; // Next line (NEL)
+  EscapeTable[Ord('_')] := #$00A0; // Non-breaking space
+  EscapeTable[Ord('L')] := #$2028; // Line separator
+  EscapeTable[Ord('P')] := #$2029; // Paragraph separator
+  
+  // Complex escapes that need special handling
+  EscapeTable[Ord('u')] := #1;    // Unicode 16-bit
+  EscapeTable[Ord('U')] := #1;    // Unicode 32-bit
+  EscapeTable[Ord('x')] := #1;    // Hex 8-bit
+  
+  // JSON valid escapes (subset of YAML)
+  JSONValidEscapes[Ord('b')] := True;   // Backspace
+  JSONValidEscapes[Ord('f')] := True;   // Form feed
+  JSONValidEscapes[Ord('n')] := True;   // Line feed
+  JSONValidEscapes[Ord('r')] := True;   // Carriage return
+  JSONValidEscapes[Ord('t')] := True;   // Tab
+  JSONValidEscapes[Ord('"')] := True;   // Double quote
+  JSONValidEscapes[Ord('\')] := True;   // Backslash
+  JSONValidEscapes[Ord('/')] := True;   // Forward slash (optional)
+  JSONValidEscapes[Ord('u')] := True;   // Unicode 16-bit only
 end;
 
 end.
