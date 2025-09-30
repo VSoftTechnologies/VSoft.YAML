@@ -1,6 +1,6 @@
 # VSoft.YAML
 
-## A YAML 1.2 parser and emitter library for Delphi XE2+.
+## A YAML 1.2 and JSON parser and emitter library for Delphi XE2+.
 
 ## Features
 
@@ -25,7 +25,10 @@ For full YAML Feature details see - [YAML Features](/docs/YAML-Features-Implemen
 
 ### JSON Support
 
-VSoft.YAML can also parse/write JSON (since YAML 1.2 is a superset of JSON).
+VSoft.YAML can parse and write JSON (since YAML 1.2 is a superset of JSON):
+- **JSON Parsing** - Full JSON input support with strict validation
+- **JSON Output** - Export to JSON format with compact or pretty-print formatting
+- **Bidirectional Conversion** - Convert between YAML and JSON formats
 
 ### Parsing & Writing
 - **Multiple Input Sources** - Load from string, file, or stream
