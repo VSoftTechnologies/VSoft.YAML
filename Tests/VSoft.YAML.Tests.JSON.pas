@@ -135,9 +135,6 @@ type
     [Test]
     procedure TestJSONLeadingZeros;
 
-    [Test]
-    procedure TestJSONTestFile;
-
   end;
 
 
@@ -1015,25 +1012,6 @@ begin
     'Should raise parse error for numbers with leading zeros in JSON'
   );
 end;
-
-procedure TJSONParsingTests.TestJSONTestFile;
-var
-  doc: IYAMLDocument;
-  options: IYAMLParserOptions;
-begin
-  options := TYAML.CreateParserOptions;
-  options.JSONMode := true;
-  
-  // Test loading the large test.json file - should parse successfully  
-  doc := TYAML.LoadFromFile('..\..\TestFiles\test.json', options);
-  Assert.IsNotNull(doc.Root, 'Document root should not be null');
-  Assert.AreEqual(TYAMLValueType.vtMapping, doc.Root.ValueType, 'Root should be a mapping');
-  
-  // Verify it's actually a large mapping with many keys
-  Assert.IsTrue(doc.Root.AsMapping.Count > 1000, 'Should have more than 1000 keys');
-end;
-
-
 
 initialization
   TDUnitX.RegisterTestFixture(TJSONParsingTests);

@@ -19,6 +19,21 @@ type
     class function ISO8601StrToUTCDateTime(const value: string): TDateTime;static;
   end;
 
+  // Character classification helper using lookup table for performance
+  TCharClassHelper = record
+  public
+    class function IsWhitespace(ch: Char): Boolean; inline; static;
+    class function IsDigit(ch: Char): Boolean; inline; static;
+    class function IsHexDigit(ch: Char): Boolean; inline; static;
+    class function IsAlpha(ch: Char): Boolean; inline; static;
+    class function IsAlphaNumeric(ch: Char): Boolean; inline; static;
+    class function IsLineBreak(ch: Char): Boolean; inline; static;
+    class function IsIdentifierChar(ch: Char): Boolean; inline; static;
+    class function IsOctalDigit(ch: Char): Boolean; inline; static;
+    class function IsBinaryDigit(ch: Char): Boolean; inline; static;
+    class function IsDigitOrUnderscore(ch: Char): Boolean; inline; static;
+  end;
+
   TYAMLCharUtils = record
     class function IsDigit(c : Char) : boolean;static;inline;
     class function IsDigitOrUnderScore(c : Char) : boolean;static;inline;
@@ -42,6 +57,22 @@ type
 function TryStrToUInt64(const S: string; out Value: UInt64): Boolean;
 {$ENDIF}
 
+//only here because of inlining limitations.
+var
+  // Global character classification lookup table
+  CharClassTable: array[Char] of Word;
+
+const
+  // Character classification bit flags
+  CC_WHITESPACE    = $0001;  // Space, Tab
+  CC_DIGIT         = $0002;  // 0-9
+  CC_HEX_DIGIT     = $0004;  // 0-9, A-F, a-f
+  CC_ALPHA         = $0008;  // A-Z, a-z
+  CC_ALPHANUMERIC  = $0010;  // A-Z, a-z, 0-9
+  CC_LINEBREAK     = $0020;  // #10, #13
+  CC_IDENTIFIER    = $0040;  // Valid in identifiers: alphanumeric + _ -
+  CC_OCTAL_DIGIT   = $0080;  // 0-7
+  CC_BINARY_DIGIT  = $0100;  // 0-1
 
 implementation
 
@@ -51,7 +82,9 @@ uses
   System.TimeSpan,
   System.DateUtils;
 
-const _stringOfChar  : array[1..16] of string = (
+
+const
+  _stringOfChar  : array[1..16] of string = (
   ' ',
   '  ',
   '   ',
@@ -70,6 +103,61 @@ const _stringOfChar  : array[1..16] of string = (
   '               ',
   '                '
 );
+
+
+{ TCharClassHelper }
+
+class function TCharClassHelper.IsWhitespace(ch: Char): Boolean;
+begin
+  Result := (CharClassTable[ch] and CC_WHITESPACE) <> 0;
+end;
+
+class function TCharClassHelper.IsDigit(ch: Char): Boolean;
+begin
+  Result := (CharClassTable[ch] and CC_DIGIT) <> 0;
+end;
+
+class function TCharClassHelper.IsHexDigit(ch: Char): Boolean;
+begin
+  Result := (CharClassTable[ch] and CC_HEX_DIGIT) <> 0;
+end;
+
+class function TCharClassHelper.IsAlphaNumeric(ch: Char): Boolean;
+begin
+  Result := (CharClassTable[ch] and CC_ALPHANUMERIC) <> 0;
+end;
+
+class function TCharClassHelper.IsIdentifierChar(ch: Char): Boolean;
+begin
+  Result := (CharClassTable[ch] and CC_IDENTIFIER) <> 0;
+end;
+
+class function TCharClassHelper.IsOctalDigit(ch: Char): Boolean;
+begin
+  Result := (CharClassTable[ch] and CC_OCTAL_DIGIT) <> 0;
+end;
+
+class function TCharClassHelper.IsBinaryDigit(ch: Char): Boolean;
+begin
+  Result := (CharClassTable[ch] and CC_BINARY_DIGIT) <> 0;
+end;
+
+class function TCharClassHelper.IsLineBreak(ch: Char): Boolean;
+begin
+  Result := (CharClassTable[ch] and CC_LINEBREAK) <> 0;
+end;
+
+class function TCharClassHelper.IsAlpha(ch: Char): Boolean;
+begin
+  Result := (CharClassTable[ch] and CC_ALPHA) <> 0;
+end;
+
+class function TCharClassHelper.IsDigitOrUnderscore(ch: Char): Boolean;
+begin
+  Result := ((CharClassTable[ch] and CC_DIGIT) <> 0) or (ch = '_');
+end;
+
+{ TYAMLCharUtils }
 
 class function TYAMLCharUtils.IsAlphaNumeric(C: Char): Boolean;
 begin
@@ -735,5 +823,93 @@ procedure TStringBuilderHelper.Reset;
 begin
   Self.Length := 0;
 end;
+
+initialization
+  // Initialize character classification table
+  FillChar(CharClassTable, SizeOf(CharClassTable), 0);
+
+  // Digits 0-9: digit, hex digit, alphanumeric, identifier
+  CharClassTable['0'] := CC_DIGIT or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER or CC_BINARY_DIGIT or CC_OCTAL_DIGIT;
+  CharClassTable['1'] := CC_DIGIT or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER or CC_BINARY_DIGIT or CC_OCTAL_DIGIT;
+  CharClassTable['2'] := CC_DIGIT or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER or CC_OCTAL_DIGIT;
+  CharClassTable['3'] := CC_DIGIT or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER or CC_OCTAL_DIGIT;
+  CharClassTable['4'] := CC_DIGIT or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER or CC_OCTAL_DIGIT;
+  CharClassTable['5'] := CC_DIGIT or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER or CC_OCTAL_DIGIT;
+  CharClassTable['6'] := CC_DIGIT or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER or CC_OCTAL_DIGIT;
+  CharClassTable['7'] := CC_DIGIT or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER or CC_OCTAL_DIGIT;
+  CharClassTable['8'] := CC_DIGIT or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['9'] := CC_DIGIT or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER;
+
+  // Uppercase A-F: alpha, hex digit, alphanumeric, identifier
+  CharClassTable['A'] := CC_ALPHA or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['B'] := CC_ALPHA or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['C'] := CC_ALPHA or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['D'] := CC_ALPHA or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['E'] := CC_ALPHA or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['F'] := CC_ALPHA or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER;
+
+  // Uppercase G-Z: alpha, alphanumeric, identifier
+  CharClassTable['G'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['H'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['I'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['J'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['K'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['L'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['M'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['N'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['O'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['P'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['Q'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['R'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['S'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['T'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['U'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['V'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['W'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['X'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['Y'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['Z'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+
+  // Lowercase a-f: alpha, hex digit, alphanumeric, identifier
+  CharClassTable['a'] := CC_ALPHA or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['b'] := CC_ALPHA or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['c'] := CC_ALPHA or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['d'] := CC_ALPHA or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['e'] := CC_ALPHA or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['f'] := CC_ALPHA or CC_HEX_DIGIT or CC_ALPHANUMERIC or CC_IDENTIFIER;
+
+  // Lowercase g-z: alpha, alphanumeric, identifier
+  CharClassTable['g'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['h'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['i'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['j'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['k'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['l'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['m'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['n'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['o'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['p'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['q'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['r'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['s'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['t'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['u'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['v'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['w'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['x'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['y'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+  CharClassTable['z'] := CC_ALPHA or CC_ALPHANUMERIC or CC_IDENTIFIER;
+
+  // Whitespace
+  CharClassTable[' '] := CC_WHITESPACE;
+  CharClassTable[#9] := CC_WHITESPACE;
+
+  // Line breaks
+  CharClassTable[#10] := CC_LINEBREAK;
+  CharClassTable[#13] := CC_LINEBREAK;
+
+  // Identifier special chars
+  CharClassTable['_'] := CharClassTable['_'] or CC_IDENTIFIER;
+  CharClassTable['-'] := CharClassTable['-'] or CC_IDENTIFIER;
 
 end.

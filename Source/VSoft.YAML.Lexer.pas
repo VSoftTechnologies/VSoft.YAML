@@ -67,6 +67,10 @@ type
     FStringBuilder : TStringBuilder;
     FHexBuilder : TStringBuilder;  // For building hex strings in Unicode escapes
 
+    // Peek token cache for performance
+    FPeekedToken: TYAMLToken;
+    FHasPeekedToken: Boolean;
+
     // Stack management methods
     procedure PushIndentLevel(level: Integer);
     function PopIndentLevel: Integer;
@@ -134,6 +138,7 @@ begin
 
   FSequenceItemIndent := -1;
   FInValueContext := False;
+  FHasPeekedToken := False;
 
   // Initialize indent stack with base level 0
   FIndentStack := TList<Integer>.Create;
@@ -168,14 +173,14 @@ end;
 
 function TYAMLLexer.IsWhitespace(ch : Char) : boolean;
 begin
-  result := (ch = ' ') or (ch = #9);
+  result := TCharClassHelper.IsWhitespace(ch);
 end;
 
 
 
 procedure TYAMLLexer.SkipWhitespace;
 begin
-  while IsWhitespace(FReader.Current) and not IsAtEnd do
+  while TCharClassHelper.IsWhitespace(FReader.Current) and not IsAtEnd do
     FReader.Read;
 end;
 
@@ -208,6 +213,8 @@ begin
 end;
 
 function TYAMLLexer.ReadComment : string;
+var
+  ch: Char;
 begin
   FStringBuilder.Reset;
   // Skip the '#' character
@@ -215,11 +222,14 @@ begin
 
   // Skip any leading whitespace after #
   SkipWhitespace;
-    
+
   // Read the comment text until end of line
-  while (not CharInSet(FReader.Current, [#10, #13])) and not IsAtEnd do
+  while not IsAtEnd do
   begin
-    FStringBuilder.Append(FReader.Current);
+    ch := FReader.Current;
+    if (ch = #10) or (ch = #13) then
+      Break;
+    FStringBuilder.Append(ch);
     FReader.Read;
   end;
   
@@ -227,15 +237,20 @@ begin
 end;
 
 function TYAMLLexer.ReadDirective: string;
+var
+  ch: Char;
 begin
   FStringBuilder.Reset;
   //just read the whole directive, we'll parse it later
-  while (FReader.Current <> #10) and (FReader.Current <> #13) and not IsAtEnd do
+  while not IsAtEnd do
   begin
-    FStringBuilder.Append(FReader.Current);
+    ch := FReader.Current;
+    if (ch = #10) or (ch = #13) then
+      Break;
+    FStringBuilder.Append(ch);
     FReader.Read;
   end;
-  
+
   result := FStringBuilder.ToString;
 end;
 
@@ -432,6 +447,7 @@ function TYAMLLexer.ReadSingleQuotedString : string;
 var
   foundClosingQuote : boolean;
   peekChar : Char;
+  ch : Char;
 begin
   FStringBuilder.Reset;
   FReader.Read; // Skip opening quote
@@ -500,14 +516,14 @@ begin
     end
     else
     begin
+      ch := FReader.Current;
       // In JSON mode, check for literal newlines which are not allowed
-      if FJSONMode and
-         ((FReader.Current = #10) or (FReader.Current = #13)) then
+      if FJSONMode and ((ch = #10) or (ch = #13)) then
       begin
         raise EYAMLParseException.Create('Literal line breaks are not allowed in JSON strings. Use \n for newlines.', FReader.Line, FReader.Column);
       end;
       // All other characters are literal
-      FStringBuilder.Append(FReader.Current);
+      FStringBuilder.Append(ch);
     end;
 
     FReader.Read;
@@ -551,6 +567,7 @@ function TYAMLLexer.ReadNumber : string;
 var
   dotCount : integer;
   tempChar : Char;
+  ch : Char;
 begin
   FStringBuilder.Reset;
   dotCount := 0;
@@ -569,7 +586,8 @@ begin
     FReader.Read;
 
     // Check for hex prefix (0x or 0X)
-    if (FReader.Current = 'x') or (FReader.Current = 'X') then
+    ch := FReader.Current;
+    if (ch = 'x') or (ch = 'X') then
     begin
       // In JSON mode, hex numbers are not allowed - treat as unquoted string
       if FJSONMode then
@@ -581,9 +599,7 @@ begin
       FStringBuilder.Append(FReader.Current);
       FReader.Read;
       // Read hex digits
-      while ((FReader.Current >= '0') and (FReader.Current <= '9')) or
-            ((FReader.Current >= 'a') and (FReader.Current <= 'f')) or
-            ((FReader.Current >= 'A') and (FReader.Current <= 'F')) and not IsAtEnd do
+      while TCharClassHelper.IsHexDigit(FReader.Current) and not IsAtEnd do
       begin
         FStringBuilder.Append(FReader.Current);
         FReader.Read;
@@ -592,7 +608,7 @@ begin
       Exit; // Done reading hex number
     end
     // Check for octal prefix (0o or 0O)
-    else if (FReader.Current = 'o') or (FReader.Current = 'O') then
+    else if (ch = 'o') or (ch = 'O') then
     begin
       // In JSON mode, octal numbers are not allowed - treat as unquoted string
       if FJSONMode then
@@ -604,7 +620,7 @@ begin
       FStringBuilder.Append(FReader.Current);
       FReader.Read;
       // Read octal digits (0-7)
-      while (FReader.Current >= '0') and (FReader.Current <= '7') and not IsAtEnd do
+      while TCharClassHelper.IsOctalDigit(FReader.Current) and not IsAtEnd do
       begin
         FStringBuilder.Append(FReader.Current);
         FReader.Read;
@@ -613,7 +629,7 @@ begin
       Exit; // Done reading octal number
     end
     // Check for binary prefix (0b or 0B)
-    else if (FReader.Current = 'b') or (FReader.Current = 'B') then
+    else if (ch = 'b') or (ch = 'B') then
     begin
       // In JSON mode, binary numbers are not allowed - treat as unquoted string
       if FJSONMode then
@@ -625,7 +641,7 @@ begin
       FStringBuilder.Append(FReader.Current);
       FReader.Read;
       // Read binary digits (0-1)
-      while ((FReader.Current = '0') or (FReader.Current = '1')) and not IsAtEnd do
+      while TCharClassHelper.IsBinaryDigit(FReader.Current) and not IsAtEnd do
       begin
         FStringBuilder.Append(FReader.Current);
         FReader.Read;
@@ -636,14 +652,14 @@ begin
     else
     begin
       // In JSON mode, numbers starting with 0 followed by digits are not allowed (leading zeros)
-      if FJSONMode and TYAMLCharUtils.IsDigit(FReader.Current) then
+      if FJSONMode and TCharClassHelper.IsDigit(FReader.Current) then
         raise EYAMLParseException.Create('Numbers with leading zeros are not valid in JSON', FReader.Line, FReader.Column);
     end;
     // If no special prefix, continue reading as regular decimal number
   end;
 
   // Read remaining integer digits for decimal numbers with integrated dot checking
-  while TYAMLCharUtils.IsDigitOrUnderScore(FReader.Current) and not IsAtEnd do
+  while TCharClassHelper.IsDigitOrUnderscore(FReader.Current) and not IsAtEnd do
   begin
     tempChar := FReader.Current;
     if tempChar <> '_' then
@@ -681,23 +697,25 @@ begin
   end;
 
   // Read exponent part (only for decimal numbers)
-  if (FReader.Current = 'e') or (FReader.Current = 'E') then
+  ch := FReader.Current;
+  if (ch = 'e') or (ch = 'E') then
   begin
-    FStringBuilder.Append(FReader.Current);
+    FStringBuilder.Append(ch);
     FReader.Read;
-    if (FReader.Current = '+') or (FReader.Current = '-') then
+    ch := FReader.Current;
+    if (ch = '+') or (ch = '-') then
     begin
-      FStringBuilder.Append(FReader.Current);
+      FStringBuilder.Append(ch);
       FReader.Read;
     end;
     
     // In JSON mode, there must be at least one digit after e/E (and optional sign)
-    if FJSONMode and not TYAMLCharUtils.IsDigit(FReader.Current) then
+    if FJSONMode and not TCharClassHelper.IsDigit(FReader.Current) then
     begin
       raise EYAMLParseException.Create('Invalid number format in JSON: exponent must have at least one digit after e/E', FReader.Line, FReader.Column);
     end;
-    
-    while TYAMLCharUtils.IsDigit(FReader.Current) and not IsAtEnd do
+
+    while TCharClassHelper.IsDigit(FReader.Current) and not IsAtEnd do
     begin
       FStringBuilder.Append(FReader.Current);
       FReader.Read;
@@ -712,16 +730,18 @@ begin
   FStringBuilder.Reset;
 
   // Read anchor or alias name
-  while (TYAMLCharUtils.IsAlphaNumeric(FReader.Current) or (FReader.Current = '_') or (FReader.Current = '-')) and not IsAtEnd do
+  while TCharClassHelper.IsIdentifierChar(FReader.Current) and not IsAtEnd do
   begin
     FStringBuilder.Append(FReader.Current);
     FReader.Read;
   end;
-  
+
   result := FStringBuilder.ToString;
 end;
 
 function TYAMLLexer.ReadTag : TTag;
+var
+  ch: Char;
 begin
   // YAML supports multiple tag formats:
   // 1. !!tag (short form)
@@ -740,9 +760,12 @@ begin
       FStringBuilder.Append(FReader.Current);
       FReader.Read;
       // Read everything until closing >
-      while (FReader.Current <> '>') and not IsAtEnd and (FReader.Current <> #10) and (FReader.Current <> #13) do
+      while not IsAtEnd do
       begin
-        FStringBuilder.Append(FReader.Current);
+        ch := FReader.Current;
+        if (ch = '>') or (ch = #10) or (ch = #13) then
+          Break;
+        FStringBuilder.Append(ch);
         FReader.Read;
       end;
       // Include the closing >
@@ -759,7 +782,7 @@ begin
       // Short form: !!tag
       FReader.Read;
       // Read tag name (letters, digits, underscores, hyphens)
-      while (TYAMLCharUtils.IsAlphaNumeric(FReader.Current) or (FReader.Current = '_') or (FReader.Current = '-')) and not IsAtEnd do
+      while TCharClassHelper.IsIdentifierChar(FReader.Current) and not IsAtEnd do
       begin
         FStringBuilder.Append(FReader.Current);
         FReader.Read;
@@ -771,7 +794,7 @@ begin
       // Prefixed form: !prefix!tag or just !tag
       // First read the prefix/tag name part
       FStringBuilder.Reset;
-      while (TYAMLCharUtils.IsAlphaNumeric(FReader.Current) or (FReader.Current = '_') or (FReader.Current = '-')) and not IsAtEnd do
+      while TCharClassHelper.IsIdentifierChar(FReader.Current) and not IsAtEnd do
       begin
         FStringBuilder.Append(FReader.Current);
         FReader.Read;
@@ -785,7 +808,7 @@ begin
         FReader.Read;
         // Read the tag name after the second !
         FStringBuilder.Reset;
-        while (TYAMLCharUtils.IsAlphaNumeric(FReader.Current) or (FReader.Current = '_') or (FReader.Current = '-')) and not IsAtEnd do
+        while TCharClassHelper.IsIdentifierChar(FReader.Current) and not IsAtEnd do
         begin
           FStringBuilder.Append(FReader.Current);
           FReader.Read;
@@ -915,13 +938,15 @@ function TYAMLLexer.IsSpecialFloat : boolean;
 var
   i : integer;
   testStr : string;
+  ch : Char;
 begin
   result := False;
   testStr := '';
 
   // Handle optional sign for infinity
   i := 0;
-  if (FReader.Current = '+') or (FReader.Current = '-') then
+  ch := FReader.Current;
+  if (ch = '+') or (ch = '-') then
   begin
     testStr := testStr + FReader.Peek(i);
     Inc(i);
@@ -955,13 +980,16 @@ begin
 end;
 
 function TYAMLLexer.ReadSpecialFloat : string;
+var
+  ch: Char;
 begin
   FStringBuilder.Reset;
 
   // Handle optional sign
-  if (FReader.Current = '+') or (FReader.Current = '-') then
+  ch := FReader.Current;
+  if (ch = '+') or (ch = '-') then
   begin
-    FStringBuilder.Append(FReader.Current);
+    FStringBuilder.Append(ch);
     FReader.Read;
   end;
 
@@ -989,6 +1017,14 @@ var
   tag : TTag;
   peekChar : Char;
 begin
+  // Check for cached peeked token first
+  if FHasPeekedToken then
+  begin
+    result := FPeekedToken;
+    FHasPeekedToken := False;
+    Exit;
+  end;
+
   // Initialize token
   result.TokenKind := TYAMLTokenKind.EOF;
   result.Value := '';
@@ -1304,12 +1340,13 @@ end;
 
 function TYAMLLexer.PeekToken : TYAMLToken;
 begin
-  // Save current state
-  FReader.Save;
-  // Get next token
-  result := NextToken;
-  // Restore state
-  FReader.Restore;
+  // Use cached token if available
+  if not FHasPeekedToken then
+  begin
+    FPeekedToken := NextToken;
+    FHasPeekedToken := True;
+  end;
+  result := FPeekedToken;
 end;
 
 function TYAMLLexer.PeekTokenKind: TYAMLTokenKind;

@@ -31,6 +31,9 @@ type
 
     [Test]
     procedure TestNestedStructurePerformance;
+
+    [Test]
+    procedure TestJSONTestFile;
   end;
 
 implementation
@@ -51,7 +54,8 @@ var
   yamlFile: string;
   doc: IYAMLDocument;
   stopwatch: TStopwatch;
-  elapsed: Int64;
+  elapsedTicks: Int64;
+  elapsedMs: Double;
   fileSize: Int64;
   users: IYAMLSequence;
   userCount: Integer;
@@ -70,7 +74,8 @@ begin
   stopwatch := TStopwatch.StartNew;
   doc := TYAML.LoadFromFile(yamlFile);
   stopwatch.Stop;
-  elapsed := stopwatch.ElapsedMilliseconds;
+  elapsedTicks := stopwatch.ElapsedTicks;
+  elapsedMs := (elapsedTicks * 1000.0) / TStopwatch.Frequency;
 
   // Verify we parsed something
   Assert.IsNotNull(doc, 'Document should not be null');
@@ -97,12 +102,15 @@ begin
   WriteLn('');
   WriteLn('=== YAML Parsing Performance ===');
   WriteLn('File size: ' + IntToStr(fileSize div 1024) + ' KB');
-  WriteLn('Parse time: ' + IntToStr(elapsed) + ' ms');
-  WriteLn('Throughput: ' + FormatFloat('0.00', (fileSize / 1024.0) / (elapsed / 1000.0)) + ' KB/s');
+  WriteLn('Parse time: ' + FormatFloat('0.00', elapsedMs) + ' ms');
+  if elapsedMs > 0 then
+    WriteLn('Throughput: ' + FormatFloat('0.00', (fileSize / 1024.0) / (elapsedMs / 1000.0)) + ' KB/s')
+  else
+    WriteLn('Throughput: Very fast (< 0.01 ms)');
   WriteLn('');
 
-  // Assert reasonable performance (should parse at least 500 KB/s)
-  Assert.IsTrue(elapsed < 10000, 'Parse should complete in less than 10 seconds');
+  // Assert reasonable performance
+  Assert.IsTrue(elapsedMs < 10000, 'Parse should complete in less than 10 seconds');
 end;
 
 procedure TPerformanceTests.TestLargeJSONFileParsing;
@@ -111,7 +119,8 @@ var
   doc: IYAMLDocument;
   options: IYAMLParserOptions;
   stopwatch: TStopwatch;
-  elapsed: Int64;
+  elapsedTicks: Int64;
+  elapsedMs: Double;
   fileSize: Int64;
   users: IYAMLSequence;
   userCount: Integer;
@@ -134,7 +143,8 @@ begin
   stopwatch := TStopwatch.StartNew;
   doc := TYAML.LoadFromFile(jsonFile, options);
   stopwatch.Stop;
-  elapsed := stopwatch.ElapsedMilliseconds;
+  elapsedTicks := stopwatch.ElapsedTicks;
+  elapsedMs := (elapsedTicks * 1000.0) / TStopwatch.Frequency;
 
   // Verify we parsed something
   Assert.IsNotNull(doc, 'Document should not be null');
@@ -161,12 +171,15 @@ begin
   WriteLn('');
   WriteLn('=== JSON Parsing Performance ===');
   WriteLn('File size: ' + IntToStr(fileSize div 1024) + ' KB');
-  WriteLn('Parse time: ' + IntToStr(elapsed) + ' ms');
-  WriteLn('Throughput: ' + FormatFloat('0.00', (fileSize / 1024.0) / (elapsed / 1000.0)) + ' KB/s');
+  WriteLn('Parse time: ' + FormatFloat('0.00', elapsedMs) + ' ms');
+  if elapsedMs > 0 then
+    WriteLn('Throughput: ' + FormatFloat('0.00', (fileSize / 1024.0) / (elapsedMs / 1000.0)) + ' KB/s')
+  else
+    WriteLn('Throughput: Very fast (< 0.01 ms)');
   WriteLn('');
 
   // Assert reasonable performance
-  Assert.IsTrue(elapsed < 15000, 'Parse should complete in less than 15 seconds');
+  Assert.IsTrue(elapsedMs < 15000, 'Parse should complete in less than 15 seconds');
 end;
 
 procedure TPerformanceTests.TestScalarValuePerformance;
@@ -311,6 +324,60 @@ begin
   WriteLn('');
 
   Assert.IsTrue(elapsed < 5000, 'Should complete ' + IntToStr(iterations) + ' iterations in less than 5 seconds');
+end;
+
+procedure TPerformanceTests.TestJSONTestFile;
+var
+  jsonFile: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+  stopwatch: TStopwatch;
+  elapsedTicks: Int64;
+  elapsedMs: Double;
+  fileSize: Int64;
+begin
+  jsonFile := TPath.Combine(FTestFilesPath, 'test.json');
+
+  if not FileExists(jsonFile) then
+  begin
+    Assert.Fail('Test file not found: ' + jsonFile);
+    Exit;
+  end;
+
+  fileSize := TFile.GetSize(jsonFile);
+
+  // Create options for JSON mode
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  // Parse the JSON file
+  stopwatch := TStopwatch.StartNew;
+  doc := TYAML.LoadFromFile(jsonFile, options);
+  stopwatch.Stop;
+  elapsedTicks := stopwatch.ElapsedTicks;
+  elapsedMs := (elapsedTicks * 1000.0) / TStopwatch.Frequency;
+
+  // Verify we parsed something
+  Assert.IsNotNull(doc, 'Document should not be null');
+  Assert.IsNotNull(doc.Root, 'Document root should not be null');
+  Assert.AreEqual(TYAMLValueType.vtMapping, doc.Root.ValueType, 'Root should be a mapping');
+
+  // Verify it's actually a large mapping with many keys
+  Assert.IsTrue(doc.Root.AsMapping.Count > 1000, 'Should have more than 1000 keys');
+
+  // Output performance metrics
+  WriteLn('');
+  WriteLn('=== JSON Test File Parsing Performance ===');
+  WriteLn('File size: ' + IntToStr(fileSize div 1024) + ' KB');
+  WriteLn('Parse time: ' + FormatFloat('0.00', elapsedMs) + ' ms');
+  if elapsedMs > 0 then
+    WriteLn('Throughput: ' + FormatFloat('0.00', (fileSize / 1024.0) / (elapsedMs / 1000.0)) + ' KB/s')
+  else
+    WriteLn('Throughput: Very fast (< 0.01 ms)');
+  WriteLn('');
+
+  // Assert reasonable performance
+  Assert.IsTrue(elapsedMs < 10000, 'Parse should complete in less than 10 seconds');
 end;
 
 initialization

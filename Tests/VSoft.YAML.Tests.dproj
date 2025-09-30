@@ -140,7 +140,7 @@
         <Debugger_RunParams>-exitbehavior:pause -hidebanner -run:VSoft.YAML.Tests.Performance</Debugger_RunParams>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_2_Win64)'!=''">
-        <Debugger_RunParams>-exitbehavior:pause -hidebanner -run:VSoft.YAML.Tests.Performance</Debugger_RunParams>
+        <Debugger_RunParams>-exitbehavior:pause -hidebanner</Debugger_RunParams>
     </PropertyGroup>
     <ItemGroup>
         <DelphiCompile Include="$(MainSource)">
