@@ -370,8 +370,7 @@ function TYAMLParser.IsScalarValueYAML(const trimmedValue : string; len : Intege
 var
   firstChar : Char;
   secondChar : Char;
-  intVal : Int64;
-  floatVal : Double;
+  isFloat : Boolean;
 begin
   firstChar := trimmedValue[1];
 
@@ -511,13 +510,6 @@ begin
     Exit;
   end;
 
-  // Try integer parsing first
-  if TryStrToInt64(trimmedValue, intVal) then
-  begin
-    result := TYAMLValueType.vtInteger;
-    Exit;
-  end;
-
   // Check for hex, octal, and binary number formats
   if (len > 2) and (firstChar = '0') then
   begin
@@ -529,11 +521,18 @@ begin
     end;
   end;
 
-  // Try float parsing
-  if TryStrToFloat(trimmedValue, floatVal, YAMLFormatSettings) then
-    result := TYAMLValueType.vtFloat
-  else
-    result := TYAMLValueType.vtString;
+  // Try number parsing using fast checker
+  if FastIsNumber(trimmedValue, isFloat) then
+  begin
+    if isFloat then
+      result := TYAMLValueType.vtFloat
+    else
+      result := TYAMLValueType.vtInteger;
+    Exit;
+  end;
+
+  // Not a recognized type, treat as string
+  result := TYAMLValueType.vtString;
 end;
 
 
