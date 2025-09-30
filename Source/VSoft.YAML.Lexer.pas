@@ -78,10 +78,12 @@ type
     function IsWhitespace(ch : Char) : boolean;inline;
 
     procedure SkipWhitespace;
+    function SkipWhitespaceAndCalculateIndent : integer;
     function ReadDirective : string;
     function ReadComment : string;
-    function ReadQuotedString(Quote : Char) : string;
-    function ReadUnquotedString : string;
+    function ReadDoubleQuotedString : string;
+    function ReadSingleQuotedString : string;
+    function ReadUnquotedString(reset : boolean = true) : string;
     function ReadNumber : string;
     function ReadAnchorOrAlias : string;
     function ReadTag : TTag;
@@ -91,7 +93,6 @@ type
     function IsTimestampStart : boolean;
     function IsSpecialFloat : boolean;
     function ReadSpecialFloat : string;
-    function CalculateIndentLevel : integer;
   public
     constructor Create(const reader : IInputReader; const options : IYAMLParserOptions = nil);
     destructor Destroy; override;
@@ -178,6 +179,33 @@ begin
     FReader.Read;
 end;
 
+function TYAMLLexer.SkipWhitespaceAndCalculateIndent : integer;
+var
+  count : integer;
+begin
+  count := 0;
+  while IsWhitespace(FReader.Current) and not IsAtEnd do
+  begin
+    if FReader.Current = ' ' then
+      Inc(count)
+    else if FReader.Current = #9 then
+    begin
+      if FJSONMode then
+      begin
+        // In JSON mode, treat tabs as 2 spaces
+        Inc(count, 2);
+      end
+      else
+      begin
+        // YAML 1.2 specification: Tabs are not allowed for indentation
+        raise EYAMLParseException.Create('Tabs are not allowed for indentation in YAML', FReader.Line, FReader.Column);
+      end;
+    end;
+    FReader.Read;
+  end;
+
+  result := count;
+end;
 
 function TYAMLLexer.ReadComment : string;
 begin
@@ -211,7 +239,7 @@ begin
   result := FStringBuilder.ToString;
 end;
 
-function TYAMLLexer.ReadQuotedString(Quote : Char) : string;
+function TYAMLLexer.ReadDoubleQuotedString : string;
 var
   foundClosingQuote : boolean;
   i : Integer;
@@ -227,242 +255,167 @@ begin
 
   while not IsAtEnd do
   begin
-    if Quote = '"' then
+    // Double-quoted strings: backslash acts as escape character
+    if FReader.Current = '\' then
     begin
-      // Double-quoted strings: backslash acts as escape character
-      if FReader.Current = '\' then
+      // Check if this is a line continuation (backslash followed by newline)
+      peekChar := FReader.Peek();
+      if (peekChar = #10) or (peekChar = #13) then
       begin
-        // Check if this is a line continuation (backslash followed by newline)
-        peekChar := FReader.Peek();
-        if (peekChar = #10) or (peekChar = #13) then
+        // In JSON mode, line continuation is not allowed
+        if FJSONMode then
         begin
-          // In JSON mode, line continuation is not allowed
-          if FJSONMode then
-          begin
-            raise EYAMLParseException.Create('Line continuation (backslash followed by newline) is not valid in JSON', FReader.Line, FReader.Column);
-          end;
-          
-          // Line continuation - skip the backslash and newline, consume any leading whitespace on next line
-          FReader.Read; // Skip the backslash
-          
-          // Skip the newline character(s)
-          if FReader.Current = #13 then
-          begin
+          raise EYAMLParseException.Create('Line continuation (backslash followed by newline) is not valid in JSON', FReader.Line, FReader.Column);
+        end;
+        
+        // Line continuation - skip the backslash and newline, consume any leading whitespace on next line
+        FReader.Read; // Skip the backslash
+        
+        // Skip the newline character(s)
+        if FReader.Current = #13 then
+        begin
+          FReader.Read;
+          if FReader.Current = #10 then
             FReader.Read;
-            if FReader.Current = #10 then
-              FReader.Read;
-          end
-          else if FReader.Current = #10 then
-            FReader.Read;
-          
-          // Skip any leading whitespace on the continuation line
-          while IsWhitespace(FReader.Current) and not IsAtEnd do
-            FReader.Read;
-          
-          // Continue processing without adding anything to the result
-          Continue;
         end
-        else
+        else if FReader.Current = #10 then
+          FReader.Read;
+        
+        // Skip any leading whitespace on the continuation line
+        while IsWhitespace(FReader.Current) and not IsAtEnd do
+          FReader.Read;
+        
+        // Continue processing without adding anything to the result
+        Continue;
+      end
+      else
+      begin
+        // This is an escape sequence - process it using lookup table
+        FReader.Read; // Skip the backslash
+        if not IsAtEnd then
         begin
-          // This is an escape sequence - process it using lookup table
-          FReader.Read; // Skip the backslash
-          if not IsAtEnd then
+          // Cache the character ordinal value
+          currentCharOrd := Ord(FReader.Current);
+          
+          // Check if character is in valid ASCII range for escape sequences
+          if currentCharOrd > 255 then
+            raise EYAMLParseException.Create('Invalid escape sequence: \' + FReader.Current, FReader.Line, FReader.Column);
+            
+          escapeChar := EscapeTable[currentCharOrd];
+          
+          // Check for invalid escape
+          {$WARN CVT_ACHAR_TO_WCHAR OFF}
+          if escapeChar = #255 then
+            raise EYAMLParseException.Create('Invalid escape sequence: \' + FReader.Current, FReader.Line, FReader.Column);
+          {$WARN CVT_ACHAR_TO_WCHAR ON}
+
+          // Check JSON mode validity  
+          if FJSONMode and not JSONValidEscapes[currentCharOrd] then
+            raise EYAMLParseException.Create('Invalid escape sequence in JSON: \' + FReader.Current + ' is not supported', FReader.Line, FReader.Column);
+          
+          // Handle complex escapes that need special processing
+          if escapeChar = #1 then
           begin
-            // Cache the character ordinal value
-            currentCharOrd := Ord(FReader.Current);
-            
-            // Check if character is in valid ASCII range for escape sequences
-            if currentCharOrd > 255 then
-              raise EYAMLParseException.Create('Invalid escape sequence: \' + FReader.Current, FReader.Line, FReader.Column);
+            case FReader.Current of
+            'u': begin
+              // Unicode escape sequence \uXXXX (4 hex digits)
+              FReader.Read; // Skip 'u'
+              FHexBuilder.Clear;
               
-            escapeChar := EscapeTable[currentCharOrd];
-            
-            // Check for invalid escape  
-            if escapeChar = #255 then
-              raise EYAMLParseException.Create('Invalid escape sequence: \' + FReader.Current, FReader.Line, FReader.Column);
-            
-            // Check JSON mode validity  
-            if FJSONMode and not JSONValidEscapes[currentCharOrd] then
-              raise EYAMLParseException.Create('Invalid escape sequence in JSON: \' + FReader.Current + ' is not supported', FReader.Line, FReader.Column);
-            
-            // Handle complex escapes that need special processing
-            if escapeChar = #1 then
-            begin
-              case FReader.Current of
-              'u': begin
-                // Unicode escape sequence \uXXXX (4 hex digits)
-                FReader.Read; // Skip 'u'
-                FHexBuilder.Clear;
-                
-                // Read and validate 4 hex digits
-                for i := 1 to 4 do
-                begin
-                  if IsAtEnd or not TYAMLCharUtils.IsHexidecimal(FReader.Current) then
-                    raise EYAMLParseException.Create('Invalid Unicode escape sequence: \u requires 4 hex digits', FReader.Line, FReader.Column);
-                  FHexBuilder.Append(FReader.Current);
-                  FReader.Read;
-                end;
-                
-                // Convert hex to character
-                codePoint := StrToInt('$' + FHexBuilder.ToString);
-                FStringBuilder.Append(Char(codePoint));
-                Continue;
+              // Read and validate 4 hex digits
+              for i := 1 to 4 do
+              begin
+                if IsAtEnd or not TYAMLCharUtils.IsHexidecimal(FReader.Current) then
+                  raise EYAMLParseException.Create('Invalid Unicode escape sequence: \u requires 4 hex digits', FReader.Line, FReader.Column);
+                FHexBuilder.Append(FReader.Current);
+                FReader.Read;
               end;
-              'U': begin
-                // Unicode escape sequence \UXXXXXXXX (8 hex digits) - not valid in JSON mode
-                if FJSONMode then
-                  raise EYAMLParseException.Create('Invalid escape sequence in JSON: \U is not supported, use \u instead', FReader.Line, FReader.Column);
-                
-                FReader.Read; // Skip 'U'
-                FHexBuilder.Clear;
-                
-                // Read and validate 8 hex digits
-                for i := 1 to 8 do
-                begin
-                  if IsAtEnd or not TYAMLCharUtils.IsHexidecimal(FReader.Current) then
-                    raise EYAMLParseException.Create('Invalid Unicode escape sequence: \U requires 8 hex digits', FReader.Line, FReader.Column);
-                  FHexBuilder.Append(FReader.Current);
-                  FReader.Read;
-                end;
-                
-                // Convert hex to character
-                codePoint64 := StrToInt64('$' + FHexBuilder.ToString);
-                if codePoint64 <= $FFFF then
-                  FStringBuilder.Append(Char(codePoint64))
-                else if codePoint64 <= $10FFFF then
-                begin
-                  // Convert to UTF-16 surrogate pair for code points > U+FFFF
-                  codePoint64 := codePoint64 - $10000;
-                  FStringBuilder.Append(Char($D800 + (codePoint64 shr 10)));    // High surrogate
-                  FStringBuilder.Append(Char($DC00 + (codePoint64 and $3FF))); // Low surrogate
-                end
-                else
-                  FStringBuilder.Append('?'); // Invalid Unicode code point
-                Continue;
-              end;
-              'x': begin
-                // Hex escape sequence \xXX - not valid in JSON mode
-                if FJSONMode then
-                  raise EYAMLParseException.Create('Invalid escape sequence in JSON: \x is not supported', FReader.Line, FReader.Column);
-                  
-                FReader.Read; // Skip 'x'
-                FHexBuilder.Clear;
-                
-                // Read and validate 2 hex digits
-                for i := 1 to 2 do
-                begin
-                  if IsAtEnd or not TYAMLCharUtils.IsHexidecimal(FReader.Current) then
-                    raise EYAMLParseException.Create('Invalid hex escape sequence: \x requires 2 hex digits', FReader.Line, FReader.Column);
-                  FHexBuilder.Append(FReader.Current);
-                  FReader.Read;
-                end;
-                
-                // Convert hex to character
-                codePoint := StrToInt('$' + FHexBuilder.ToString);
-                FStringBuilder.Append(Char(codePoint));
-                Continue;
-              end;
-              end;
-            end
-            else
-            begin
-              // Simple escape - use lookup table result
-              FStringBuilder.Append(escapeChar);
-              FReader.Read; // Read the escape character we just processed
+              
+              // Convert hex to character
+              codePoint := StrToInt('$' + FHexBuilder.ToString);
+              FStringBuilder.Append(Char(codePoint));
               Continue;
             end;
+            'U': begin
+              // Unicode escape sequence \UXXXXXXXX (8 hex digits) - not valid in JSON mode
+              if FJSONMode then
+                raise EYAMLParseException.Create('Invalid escape sequence in JSON: \U is not supported, use \u instead', FReader.Line, FReader.Column);
+              
+              FReader.Read; // Skip 'U'
+              FHexBuilder.Clear;
+              
+              // Read and validate 8 hex digits
+              for i := 1 to 8 do
+              begin
+                if IsAtEnd or not TYAMLCharUtils.IsHexidecimal(FReader.Current) then
+                  raise EYAMLParseException.Create('Invalid Unicode escape sequence: \U requires 8 hex digits', FReader.Line, FReader.Column);
+                FHexBuilder.Append(FReader.Current);
+                FReader.Read;
+              end;
+              
+              // Convert hex to character
+              codePoint64 := StrToInt64('$' + FHexBuilder.ToString);
+              if codePoint64 <= $FFFF then
+                FStringBuilder.Append(Char(codePoint64))
+              else if codePoint64 <= $10FFFF then
+              begin
+                // Convert to UTF-16 surrogate pair for code points > U+FFFF
+                codePoint64 := codePoint64 - $10000;
+                FStringBuilder.Append(Char($D800 + (codePoint64 shr 10)));    // High surrogate
+                FStringBuilder.Append(Char($DC00 + (codePoint64 and $3FF))); // Low surrogate
+              end
+              else
+                FStringBuilder.Append('?'); // Invalid Unicode code point
+              Continue;
+            end;
+            'x': begin
+              // Hex escape sequence \xXX - not valid in JSON mode
+              if FJSONMode then
+                raise EYAMLParseException.Create('Invalid escape sequence in JSON: \x is not supported', FReader.Line, FReader.Column);
+                
+              FReader.Read; // Skip 'x'
+              FHexBuilder.Clear;
+              
+              // Read and validate 2 hex digits
+              for i := 1 to 2 do
+              begin
+                if IsAtEnd or not TYAMLCharUtils.IsHexidecimal(FReader.Current) then
+                  raise EYAMLParseException.Create('Invalid hex escape sequence: \x requires 2 hex digits', FReader.Line, FReader.Column);
+                FHexBuilder.Append(FReader.Current);
+                FReader.Read;
+              end;
+              
+              // Convert hex to character
+              codePoint := StrToInt('$' + FHexBuilder.ToString);
+              FStringBuilder.Append(Char(codePoint));
+              Continue;
+            end;
+            end;
+          end
+          else
+          begin
+            // Simple escape - use lookup table result
+            FStringBuilder.Append(escapeChar);
+            FReader.Read; // Read the escape character we just processed
+            Continue;
           end;
         end;
-      end
-      else if FReader.Current = Quote then
-      begin
-        FReader.Read; // Skip closing quote
-        foundClosingQuote := True;
-        Break;
-      end
-      else
-      begin
-        // In JSON mode, check for literal newlines which are not allowed
-        if FJSONMode and
-           ((FReader.Current = #10) or (FReader.Current = #13)) then
-        begin
-          raise EYAMLParseException.Create('Literal line breaks are not allowed in JSON strings. Use \n for newlines.', FReader.Line, FReader.Column);
-        end;
-        FStringBuilder.Append(FReader.Current);
       end;
     end
-    else if Quote = '''' then
+    else if FReader.Current = '"' then
     begin
-      // Single-quoted strings: only single quotes need escaping (by doubling)
-      if FReader.Current = '''' then
+      FReader.Read; // Skip closing quote
+      foundClosingQuote := True;
+      Break;
+    end
+    else
+    begin
+      // In JSON mode, check for literal newlines which are not allowed
+      if FJSONMode and CharInSet(FReader.Current,[#10, #13]) then
       begin
-        peekChar := FReader.Peek();
-        if peekChar = '''' then
-        begin
-          // Escaped single quote: '' becomes '
-          FStringBuilder.Append('''');
-          FReader.Read; // Skip the first quote
-          FReader.Read; // Skip the second quote
-          Continue;
-        end
-        else
-        begin
-          // End of string
-          FReader.Read; // Skip closing quote
-          foundClosingQuote := True;
-          Break;
-        end;
-      end
-      else if FReader.Current = '\' then
-      begin
-        // Check if this is a line continuation (backslash followed by newline)
-        // Even in single-quoted strings, line continuation should work
-        peekChar := FReader.Peek(); //peek can be expensive so cache when possible;
-        if (peekChar = #10) or (peekChar = #13) then
-        begin
-          // In JSON mode, line continuation is not allowed
-          if FJSONMode then
-          begin
-            raise EYAMLParseException.Create('Line continuation (backslash followed by newline) is not valid in JSON', FReader.Line, FReader.Column);
-          end;
-          
-          // Line continuation - skip the backslash and newline, consume any leading whitespace on next line
-          FReader.Read; // Skip the backslash
-          
-          // Skip the newline character(s)
-          if FReader.Current = #13 then
-          begin
-            FReader.Read;
-            if FReader.Current = #10 then
-              FReader.Read;
-          end
-          else if FReader.Current = #10 then
-            FReader.Read;
-          
-          // Skip any leading whitespace on the continuation line
-          while IsWhitespace(FReader.Current) and not IsAtEnd do
-            FReader.Read;
-          
-          // Continue processing without adding anything to the result
-          Continue;
-        end
-        else
-        begin
-          // All other backslashes are literal in single-quoted strings
-          FStringBuilder.Append(FReader.Current);
-        end;
-      end
-      else
-      begin
-        // In JSON mode, check for literal newlines which are not allowed
-        if FJSONMode and
-           ((FReader.Current = #10) or (FReader.Current = #13)) then
-        begin
-          raise EYAMLParseException.Create('Literal line breaks are not allowed in JSON strings. Use \n for newlines.', FReader.Line, FReader.Column);
-        end;
-        // All other characters are literal
-        FStringBuilder.Append(FReader.Current);
+        raise EYAMLParseException.Create('Literal line breaks are not allowed in JSON strings. Use \n for newlines.', FReader.Line, FReader.Column);
       end;
+      FStringBuilder.Append(FReader.Current);
     end;
 
     FReader.Read;
@@ -475,7 +428,99 @@ begin
   result := FStringBuilder.ToString;
 end;
 
-function TYAMLLexer.ReadUnquotedString : string;
+function TYAMLLexer.ReadSingleQuotedString : string;
+var
+  foundClosingQuote : boolean;
+  peekChar : Char;
+begin
+  FStringBuilder.Reset;
+  FReader.Read; // Skip opening quote
+  foundClosingQuote := False;
+
+  while not IsAtEnd do
+  begin
+    // Single-quoted strings: only single quotes need escaping (by doubling)
+    if FReader.Current = '''' then
+    begin
+      peekChar := FReader.Peek();
+      if peekChar = '''' then
+      begin
+        // Escaped single quote: '' becomes '
+        FStringBuilder.Append('''');
+        FReader.Read; // Skip the first quote
+        FReader.Read; // Skip the second quote
+        Continue;
+      end
+      else
+      begin
+        // End of string
+        FReader.Read; // Skip closing quote
+        foundClosingQuote := True;
+        Break;
+      end;
+    end
+    else if FReader.Current = '\' then
+    begin
+      // Check if this is a line continuation (backslash followed by newline)
+      // Even in single-quoted strings, line continuation should work
+      peekChar := FReader.Peek(); //peek can be expensive so cache when possible;
+      if (peekChar = #10) or (peekChar = #13) then
+      begin
+        // In JSON mode, line continuation is not allowed
+        if FJSONMode then
+        begin
+          raise EYAMLParseException.Create('Line continuation (backslash followed by newline) is not valid in JSON', FReader.Line, FReader.Column);
+        end;
+        
+        // Line continuation - skip the backslash and newline, consume any leading whitespace on next line
+        FReader.Read; // Skip the backslash
+        
+        // Skip the newline character(s)
+        if FReader.Current = #13 then
+        begin
+          FReader.Read;
+          if FReader.Current = #10 then
+            FReader.Read;
+        end
+        else if FReader.Current = #10 then
+          FReader.Read;
+        
+        // Skip any leading whitespace on the continuation line
+        while IsWhitespace(FReader.Current) and not IsAtEnd do
+          FReader.Read;
+        
+        // Continue processing without adding anything to the result
+        Continue;
+      end
+      else
+      begin
+        // All other backslashes are literal in single-quoted strings
+        FStringBuilder.Append(FReader.Current);
+      end;
+    end
+    else
+    begin
+      // In JSON mode, check for literal newlines which are not allowed
+      if FJSONMode and
+         ((FReader.Current = #10) or (FReader.Current = #13)) then
+      begin
+        raise EYAMLParseException.Create('Literal line breaks are not allowed in JSON strings. Use \n for newlines.', FReader.Line, FReader.Column);
+      end;
+      // All other characters are literal
+      FStringBuilder.Append(FReader.Current);
+    end;
+
+    FReader.Read;
+  end;
+
+  // If we exited the loop without finding a closing quote, it's an error
+  if not foundClosingQuote then
+    raise EYAMLParseException.Create('Unterminated quoted string', FReader.Line, FReader.Column);
+  
+  result := FStringBuilder.ToString;
+end;
+
+function TYAMLLexer.ReadUnquotedString(reset : boolean) : string;
 const
   cValueSet =  [#10, #13, '#', '[', ']', '{', '}', ','];
   cNonValueSet = [':', #10, #13, '#', '[', ']', '{', '}', ','];
@@ -489,7 +534,9 @@ const
   end;
 
 begin
-  FStringBuilder.Reset;
+  if reset then
+    FStringBuilder.Reset;
+
 
   while not IsAtEnd and DoCheck do
   begin
@@ -507,30 +554,6 @@ var
 begin
   FStringBuilder.Reset;
   dotCount := 0;
-  FReader.Save;
-  // First, scan ahead to count dots - if more than 1, this is not a valid number
-  if FReader.Current = '-' then
-    FReader.Read; // Skip potential minus sign
-
-  while not FReader.IsEOF do
-  begin
-    tempChar := FReader.Current;
-    if tempChar = '.' then
-      Inc(dotCount)
-    else if not TYAMLCharUtils.IsDigitOrUnderScore(tempChar) and not CharInSet(tempChar, ['e','E','+','-']) then
-      Break; // End of potential number
-    FReader.Read;
-  end;
-
-  // If more than 1 dot, this is not a valid number - return empty to indicate caller should use ReadUnquotedString
-  if dotCount > 1 then
-  begin
-    FReader.Restore;
-    result := '';
-    Exit;
-  end;
-
-  FReader.Restore;
 
   // Handle negative numbers
   if FReader.Current = '-' then
@@ -548,9 +571,12 @@ begin
     // Check for hex prefix (0x or 0X)
     if (FReader.Current = 'x') or (FReader.Current = 'X') then
     begin
-      // In JSON mode, hex numbers are not allowed
+      // In JSON mode, hex numbers are not allowed - treat as unquoted string
       if FJSONMode then
-        raise EYAMLParseException.Create('Hexadecimal numbers are not valid in JSON', FReader.Line, FReader.Column);
+      begin
+        result := ReadUnquotedString(false); // Tell it not to reset the stringbuilder
+        Exit;
+      end;
         
       FStringBuilder.Append(FReader.Current);
       FReader.Read;
@@ -568,6 +594,13 @@ begin
     // Check for octal prefix (0o or 0O)
     else if (FReader.Current = 'o') or (FReader.Current = 'O') then
     begin
+      // In JSON mode, octal numbers are not allowed - treat as unquoted string
+      if FJSONMode then
+      begin
+        result := ReadUnquotedString(false); // Tell it not to reset the stringbuilder
+        Exit;
+      end;
+      
       FStringBuilder.Append(FReader.Current);
       FReader.Read;
       // Read octal digits (0-7)
@@ -582,6 +615,13 @@ begin
     // Check for binary prefix (0b or 0B)
     else if (FReader.Current = 'b') or (FReader.Current = 'B') then
     begin
+      // In JSON mode, binary numbers are not allowed - treat as unquoted string
+      if FJSONMode then
+      begin
+        result := ReadUnquotedString(false); // Tell it not to reset the stringbuilder
+        Exit;
+      end;
+      
       FStringBuilder.Append(FReader.Current);
       FReader.Read;
       // Read binary digits (0-1)
@@ -602,23 +642,41 @@ begin
     // If no special prefix, continue reading as regular decimal number
   end;
 
-  // Read remaining integer digits for decimal numbers
+  // Read remaining integer digits for decimal numbers with integrated dot checking
   while TYAMLCharUtils.IsDigitOrUnderScore(FReader.Current) and not IsAtEnd do
   begin
-    if FReader.Current <> '_' then
-      FStringBuilder.Append(FReader.Current);
+    tempChar := FReader.Current;
+    if tempChar <> '_' then
+    begin
+      FStringBuilder.Append(tempChar);
+    end;
     FReader.Read;
   end;
 
-  // Read decimal part (only for decimal numbers, not hex/octal/binary)
+  // Read decimal part with dot counting integrated
   if FReader.Current = '.' then
   begin
+    Inc(dotCount);
     FStringBuilder.Append(FReader.Current);
     FReader.Read;
+    
     while TYAMLCharUtils.IsDigit(FReader.Current) and not IsAtEnd do
     begin
-      FStringBuilder.Append(FReader.Current);
+      tempChar := FReader.Current;
+      FStringBuilder.Append(tempChar);
       FReader.Read;
+    end;
+  end;
+
+  // Check for second dot - if found, delegate to ReadUnquotedString
+  if FReader.Current = '.' then
+  begin
+    Inc(dotCount);
+    if dotCount > 1 then
+    begin
+      // Hit second dot - this is not a number, delegate to ReadUnquotedString
+      result := ReadUnquotedString(false); //tell it not to reset the stringbuilder
+      Exit;
     end;
   end;
 
@@ -771,40 +829,6 @@ begin
     result := 0
   else
     result := FIndentStack[FIndentStack.Count - 1];
-end;
-
-function TYAMLLexer.CalculateIndentLevel : integer;
-var
-  count : integer;
-begin
-  // Save current position
-  FReader.Save;
-  count := 0;
-  while IsWhitespace(FReader.Current) and not IsAtEnd do
-  begin
-    if FReader.Current = ' ' then
-      Inc(count)
-    else if FReader.Current = #9 then
-    begin
-      if FJSONMode then
-      begin
-        // In JSON mode, treat tabs as 2 spaces
-        Inc(count, 2);
-      end
-      else
-      begin
-        // YAML 1.2 specification: Tabs are not allowed for indentation
-        FReader.Restore;
-        raise EYAMLParseException.Create('Tabs are not allowed for indentation in YAML', FReader.Line, FReader.Column);
-      end;
-    end;
-    FReader.Read;
-  end;
-
-  // Restore position
-  FReader.Restore;
-
-  result := count;
 end;
 
 function TYAMLLexer.IsTimestampStart : boolean;
@@ -975,13 +999,12 @@ begin
   // Skip whitespace but track indentation at line start
   if FReader.Column = 1 then
   begin
-    currentIndent := CalculateIndentLevel;
+    currentIndent := SkipWhitespaceAndCalculateIndent;
     result.IndentLevel := currentIndent;
     if currentIndent > CurrentIndentLevel then
     begin
       PushIndentLevel(currentIndent);
       result.TokenKind := TYAMLTokenKind.Indent;
-      SkipWhitespace;
       Exit;
     end
     else if currentIndent < CurrentIndentLevel then
@@ -992,13 +1015,11 @@ begin
       
       // Set the result indent level to the current level after popping
       result.IndentLevel := currentIndent;
-      SkipWhitespace;
     end
     else
     begin
-      // Same indentation level, just skip whitespace but preserve indent level
+      // Same indentation level, just preserve indent level
       result.IndentLevel := currentIndent;
-      SkipWhitespace;
     end;
   end
   else
@@ -1070,10 +1091,7 @@ begin
         else
         begin
           result.TokenKind := TYAMLTokenKind.Value;
-          result.Value := ReadNumber;
-          // If ReadNumber returns empty (due to multiple dots), treat as unquoted string
-          if result.Value = '' then
-            result.Value := ReadUnquotedString;
+          result.Value := ReadNumber; //if it isn't a numbeer then it will call ReadUnquotedString
         end;
       end;
 
@@ -1088,9 +1106,6 @@ begin
         begin
           result.TokenKind := TYAMLTokenKind.Value;
           result.Value := ReadNumber;
-          // If ReadNumber returns empty (due to multiple dots), treat as unquoted string
-          if result.Value = '' then
-            result.Value := ReadUnquotedString;
         end;
       end;
 
@@ -1116,9 +1131,6 @@ begin
             
           result.TokenKind := TYAMLTokenKind.Value;
           result.Value := ReadNumber;
-          // If ReadNumber returns empty (due to multiple dots), treat as unquoted string
-          if result.Value = '' then
-            result.Value := ReadUnquotedString;
         end
         else
         begin
@@ -1168,7 +1180,7 @@ begin
     '"':
       begin
         result.TokenKind := TYAMLTokenKind.QuotedString;
-        result.Value := ReadQuotedString('"');
+        result.Value := ReadDoubleQuotedString;
       end;
 
     '''':
@@ -1178,7 +1190,7 @@ begin
           raise EYAMLParseException.Create('Single-quoted strings are not valid in JSON', FReader.Line, FReader.Column);
 
         result.TokenKind := TYAMLTokenKind.QuotedString;
-        result.Value := ReadQuotedString('''');
+        result.Value := ReadSingleQuotedString;
       end;
 
     '#':
@@ -1268,12 +1280,7 @@ begin
       if IsTimestampStart then
         result.Value := ReadTimestamp
       else
-      begin
         result.Value := ReadNumber;
-        // If ReadNumber returns empty (due to multiple dots), treat as unquoted string
-        if result.Value = '' then
-          result.Value := ReadUnquotedString;
-      end;
     end
     else if IsSpecialFloat then
     begin
@@ -1282,6 +1289,7 @@ begin
     end
     else
     begin
+
       result.Value := ReadUnquotedString;
       if result.Value <> '' then
         result.TokenKind := TYAMLTokenKind.Value
@@ -1668,10 +1676,12 @@ var
   i: Integer;
 begin
   // Initialize escape sequence lookup tables
+  {$WARN CVT_ACHAR_TO_WCHAR OFF}
   for i := 0 to 255 do
     EscapeTable[i] := #255;  // Initialize all to invalid
+  {$WARN CVT_ACHAR_TO_WCHAR ON}
   FillChar(JSONValidEscapes, SizeOf(JSONValidEscapes), False);
-  
+
   // YAML escape sequences (valid in double-quoted strings)
   EscapeTable[Ord('0')] := #0;    // Null
   EscapeTable[Ord('a')] := #7;    // Bell

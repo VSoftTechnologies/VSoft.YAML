@@ -2,9 +2,6 @@ unit VSoft.YAML.StreamWriter;
 
 interface
 
-// This exists because the RTL TStreamWrite always writes the BOM when you provide it with an encoding
-// we need control over that as we use mutliple writers on the same stream when writing multiple dodcuments
-
 uses
   System.SysUtils,
   System.Classes;

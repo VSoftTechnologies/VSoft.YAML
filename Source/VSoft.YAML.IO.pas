@@ -121,15 +121,19 @@ type
       procedure MoveString(Count, NewPos: Integer; var Destination: string);
       procedure TrimBuffer;
       property Chars[AIndex: Integer]: Char read GetChars;
+      property BufferSize : integer read FBufferSize;
+      property Position : integer read FStart;
     end;
 
   private
     FStream : TStream;
-    FBufferSize: Integer;
     FDetectBOM: Boolean;
     FEncoding: TEncoding;
     FOwnsStream: Boolean;
     FSkipPreamble: Boolean;
+    FBOMLength : integer;
+
+
     FBufferedData: TBufferedData;
     FNoDataInStream: Boolean;
 
@@ -148,11 +152,10 @@ type
     FSavedCurrentChar : Char;
     FSavedPreviousChar : Char;
     FSavedAtEnd : Boolean;
-    FSavedBufferStart: Integer;
     FSavedNoDataInStream: Boolean;
     FSavedSkipPreamble: Boolean;
     FSavedDetectBOM: Boolean;
-    FSavedBufferData: string;
+    FSavedBufferStart: Integer;
 
     procedure InitializeReader;
     procedure ReadNextChar;
@@ -349,14 +352,12 @@ begin
 
   FStream := stream;
   FEncoding := TEncoding.UTF8;
-  FBufferSize := 1024;
-  if FBufferSize < 128 then
-    FBufferSize := 128;
-  FBufferedData := TBufferedData.Create(FBufferSize);
+  FBufferedData := TBufferedData.Create(4096);
   FNoDataInStream := False;
   FOwnsStream := False;
   FDetectBOM := True;
   FSkipPreamble := not FDetectBOM;
+  FBOMLength := 0;
   InitializeReader;
 end;
 
@@ -455,27 +456,27 @@ end;
 
 procedure TStreamInputReader.Restore;
 begin
-  if FSavedPosition = -1 then
+  if FSavedStreamPos = -1 then
     raise Exception.Create('No saved position');
 
-  // Restore stream position
-  FStream.Position := FSavedStreamPos;
-  
+  // Check if stream position has changed
+  if FStream.Position <> FSavedStreamPos then
+  begin
+    // Stream moved - restore stream position and clear buffer
+    FStream.Position := FSavedStreamPos;
+    FBufferedData.Clear;
+  end
+  else
+  begin
+    // Stream unchanged - just restore buffer position
+    FBufferedData.FStart := FSavedBufferStart;
+  end;
+
   // Restore flags
   FNoDataInStream := FSavedNoDataInStream;
   FSkipPreamble := FSavedSkipPreamble;
   FDetectBOM := FSavedDetectBOM;
-  
-  // Rebuild buffer with saved unconsumed data
-  FBufferedData.Clear;
-  
-  if FSavedBufferData <> '' then
-  begin
-    FBufferedData.Append(FSavedBufferData);
-    // Reset FStart to 0 since we only saved the unconsumed portion
-    FBufferedData.FStart := 0;
-  end;
-  
+
   // Restore parser state
   FPosition := FSavedPosition;
   FLine := FSavedLine;
@@ -484,22 +485,20 @@ begin
   FPreviousChar := FSavedPreviousChar;
   FAtEnd := FSavedAtEnd;
 
-  FSavedPosition := -1;
+  FSavedStreamPos := -1;
 end;
 
 procedure TStreamInputReader.Save;
 begin
+  // Detect nested saves - should never happen
+  if FSavedStreamPos <> -1 then
+    raise Exception.Create('Nested save detected - not supported');
+    
   FSavedStreamPos := FStream.Position;
   FSavedBufferStart := FBufferedData.FStart;
   FSavedNoDataInStream := FNoDataInStream;
   FSavedSkipPreamble := FSkipPreamble;
   FSavedDetectBOM := FDetectBOM;
-  
-  // Save current unconsumed buffer contents as string
-  if FBufferedData.Length > 0 then
-    FSavedBufferData := FBufferedData.ToString(FBufferedData.FStart, FBufferedData.Length)
-  else
-    FSavedBufferData := '';
     
   FSavedPosition := FPosition;
   FSavedLine := FLine;
@@ -553,11 +552,9 @@ begin
   FSavedCurrentChar := #0;
   FSavedPreviousChar := #0;
   FSavedAtEnd := False;
-  FSavedBufferStart := -1;
   FSavedNoDataInStream := False;
   FSavedSkipPreamble := False;
   FSavedDetectBOM := False;
-  FSavedBufferData := '';
 end;
 
 procedure TStreamInputReader.ReadNextChar;
@@ -707,7 +704,10 @@ begin
           Break;
         end;
       if BOMPresent then
+      begin
         Result := Length(LPreamble);
+
+      end;
     end;
   end;
   FSkipPreamble := False;
@@ -750,10 +750,10 @@ var
   end;
 
 begin
-  SetLength(LBuffer, FBufferSize + BufferPadding);
+  SetLength(LBuffer, FBufferedData.BufferSize + BufferPadding);
 
   // Read data from stream
-  BytesRead := FStream.Read(LBuffer[0], FBufferSize);
+  BytesRead := FStream.Read(LBuffer[0], FBufferedData.BufferSize);
   FNoDataInStream := BytesRead = 0;
 
   // Check for byte order mark and calc start index for character data

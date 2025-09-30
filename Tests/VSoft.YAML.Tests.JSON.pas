@@ -981,19 +981,19 @@ var
   jsonText: string;
   doc: IYAMLDocument;
   options: IYAMLParserOptions;
+  root: IYAMLMapping;
+  value: IYAMLValue;
 begin
   jsonText := '{"Numbers cannot be hex": 0x14}';
   options := TYAML.CreateParserOptions;
   options.JSONMode := true;
   
-  Assert.WillRaise(
-    procedure
-    begin
-      doc := TYAML.LoadFromString(jsonText, options);
-    end,
-    EYAMLParseException,
-    'Should raise parse error for hex numbers in JSON'
-  );
+  doc := TYAML.LoadFromString(jsonText, options);
+  root := doc.Root.AsMapping;
+  value := root.Values['Numbers cannot be hex'];
+  
+  Assert.IsTrue(value.IsString, 'Hex numbers in JSON should be treated as strings');
+  Assert.AreEqual('0x14', value.AsString, 'Hex number should be parsed as string value');
 end;
 
 procedure TJSONParsingTests.TestJSONLeadingZeros;

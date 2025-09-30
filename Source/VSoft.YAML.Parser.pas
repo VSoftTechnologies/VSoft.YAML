@@ -177,8 +177,11 @@ begin
     // In JSON mode, only 'true' and 'false' are valid boolean literals
     else if SameText(trimmedValue, 'true') or SameText(trimmedValue, 'false') then
       result := TYAMLValueType.vtBoolean
+     // In JSON mode, reject hex/octal/binary number formats
+    else if (Length(trimmedValue) > 2) and (trimmedValue[1] = '0') and CharInSet(trimmedValue[2], ['x','X','o','O','b','B']) then
+        result := TYAMLValueType.vtString
     else if TryStrToInt64(trimmedValue, intVal) then
-      result := TYAMLValueType.vtInteger
+        result := TYAMLValueType.vtInteger
     else if TryStrToFloat(trimmedValue, floatVal, YAMLFormatSettings) then
       result := TYAMLValueType.vtFloat
     // In JSON mode, default unrecognized values to string (will be validated later)
@@ -496,8 +499,7 @@ begin
     // In JSON mode, check for invalid mapping syntax inside arrays
     if FJSONMode then
     begin
-      if (FCurrentToken.TokenKind in [TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString]) and 
-         (FLexer.PeekToken.TokenKind = TYAMLTokenKind.Colon) then
+      if (FCurrentToken.TokenKind in [TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString]) and (FLexer.PeekToken.TokenKind = TYAMLTokenKind.Colon) then
       begin
         RaiseParseError('Invalid syntax: object key-value pairs are not allowed in JSON arrays');
       end;
@@ -741,8 +743,7 @@ begin
           // This is clearly an empty value
           value := TYAMLValue.Create(result, TYAMLValueType.vtNull, '', '');
         end
-        else if ((FCurrentToken.TokenKind in [TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString]) and
-            (FLexer.PeekToken.TokenKind = TYAMLTokenKind.Colon) and (FCurrentToken.IndentLevel <= keyIndentLevel)) then
+        else if ((FCurrentToken.TokenKind in [TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString]) and (FLexer.PeekToken.TokenKind = TYAMLTokenKind.Colon) and (FCurrentToken.IndentLevel <= keyIndentLevel)) then
         begin
           // This is clearly an empty value
           value := TYAMLValue.Create(result, TYAMLValueType.vtNull, '', '');

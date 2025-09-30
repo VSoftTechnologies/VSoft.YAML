@@ -147,7 +147,6 @@
         <DCCReference Include="VSoft.YAML.Tests.Directives.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.TagInfo.pas"/>
         <DCCReference Include="..\Source\VSoft.YAML.IO.pas"/>
-        <DCCReference Include="..\Source\VSoft.YAML.StreamReader.pas"/>
         <DCCReference Include="..\Source\VSoft.YAML.TagInfo.pas"/>
         <DCCReference Include="..\Source\VSoft.YAML.StreamWriter.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.JSON.pas"/>
