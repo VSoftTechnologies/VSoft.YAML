@@ -179,9 +179,19 @@ end;
 
 
 procedure TYAMLLexer.SkipWhitespace;
+var
+  ch : Char;
 begin
-  while TCharClassHelper.IsWhitespace(FReader.Current) and not IsAtEnd do
+  // Optimized: check character first, then IsAtEnd only if needed
+  while True do
+  begin
+    ch := FReader.Current;
+    if not TCharClassHelper.IsWhitespace(ch) then
+      Break;
+    if IsAtEnd then
+      Break;
     FReader.Read;
+  end;
 end;
 
 function TYAMLLexer.SkipWhitespaceAndCalculateIndent : integer;
@@ -1434,13 +1444,14 @@ begin
           baseIndent := lineIndent;
       end;
 
-      // Read the rest of the line
-      currentLine := '';
+      // Read the rest of the line using FHexBuilder (reuse existing builder)
+      FHexBuilder.Clear;
       while (FReader.Current <> #10) and (FReader.Current <> #13) and not IsAtEnd do
       begin
-        currentLine := currentLine + FReader.Current;
+        FHexBuilder.Append(FReader.Current);
         FReader.Read;
       end;
+      currentLine := FHexBuilder.ToString;
 
       // Add line with proper indentation preserved
       if lineIndent >= baseIndent then
@@ -1500,7 +1511,7 @@ begin
   finally
     lines.Free;
   end;
-  
+
   result := FStringBuilder.ToString;
 end;
 
@@ -1566,14 +1577,14 @@ begin
         // Empty line - end current paragraph if in one
         if inParagraph then
         begin
-          // Join paragraph lines with spaces
-          line := '';
+          // Join paragraph lines with spaces using FHexBuilder
+          FHexBuilder.Clear;
           for i := 0 to paragraphLines.Count - 1 do
           begin
-            if i > 0 then line := line + ' ';
-            line := line + paragraphLines[i];
+            if i > 0 then FHexBuilder.Append(' ');
+            FHexBuilder.Append(paragraphLines[i]);
           end;
-          lines.Add(line);
+          lines.Add(FHexBuilder.ToString);
           paragraphLines.Clear;
           inParagraph := False;
         end;
@@ -1606,13 +1617,14 @@ begin
           baseIndent := lineIndent;
       end;
 
-      // Read the rest of the line
-      currentLine := '';
+      // Read the rest of the line using FHexBuilder
+      FHexBuilder.Clear;
       while (FReader.Current <> #10) and (FReader.Current <> #13) and not IsAtEnd do
       begin
-        currentLine := currentLine + FReader.Current;
+        FHexBuilder.Append(FReader.Current);
         FReader.Read;
       end;
+      currentLine := FHexBuilder.ToString;
 
       // Handle indented lines (preserve more indentation as literal)
       if lineIndent > baseIndent then
@@ -1620,13 +1632,14 @@ begin
         // End current paragraph if in one
         if inParagraph then
         begin
-          line := '';
+          // Join paragraph lines with spaces using FHexBuilder
+          FHexBuilder.Clear;
           for i := 0 to paragraphLines.Count - 1 do
           begin
-            if i > 0 then line := line + ' ';
-            line := line + Trim(paragraphLines[i]);
+            if i > 0 then FHexBuilder.Append(' ');
+            FHexBuilder.Append(Trim(paragraphLines[i]));
           end;
-          lines.Add(line);
+          lines.Add(FHexBuilder.ToString);
           paragraphLines.Clear;
           inParagraph := False;
         end;
@@ -1652,13 +1665,14 @@ begin
     // Handle final paragraph
     if inParagraph then
     begin
-      line := '';
+      // Join paragraph lines with spaces using FHexBuilder
+      FHexBuilder.Clear;
       for i := 0 to paragraphLines.Count - 1 do
       begin
-        if i > 0 then line := line + ' ';
-        line := line + Trim(paragraphLines[i]);
+        if i > 0 then FHexBuilder.Append(' ');
+        FHexBuilder.Append(Trim(paragraphLines[i]));
       end;
-      lines.Add(line);
+      lines.Add(FHexBuilder.ToString);
     end;
 
     // Apply chomping rules and build result
