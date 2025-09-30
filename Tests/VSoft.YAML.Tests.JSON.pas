@@ -976,21 +976,19 @@ end;
 procedure TJSONParsingTests.TestJSONHexNumber;
 var
   jsonText: string;
-  doc: IYAMLDocument;
   options: IYAMLParserOptions;
-  root: IYAMLMapping;
-  value: IYAMLValue;
 begin
   jsonText := '{"Numbers cannot be hex": 0x14}';
   options := TYAML.CreateParserOptions;
   options.JSONMode := true;
-  
-  doc := TYAML.LoadFromString(jsonText, options);
-  root := doc.Root.AsMapping;
-  value := root.Values['Numbers cannot be hex'];
-  
-  Assert.IsTrue(value.IsString, 'Hex numbers in JSON should be treated as strings');
-  Assert.AreEqual('0x14', value.AsString, 'Hex number should be parsed as string value');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'Hex numbers should not be allowed in JSON mode');
 end;
 
 procedure TJSONParsingTests.TestJSONLeadingZeros;

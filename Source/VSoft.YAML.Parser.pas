@@ -58,6 +58,9 @@ type
     // Helper methods
     function IsTimestampPattern(const value : string) : boolean;
     function IsScalarValue(const value : string; jsonMode : boolean = false) : TYAMLValueType;
+    function IsScalarValueJSON(const trimmedValue : string; len : Integer) : TYAMLValueType;
+    function IsScalarValueYAML(const trimmedValue : string; len : Integer) : TYAMLValueType;
+    function FastIsNumber(const value : string; out isFloat : Boolean) : Boolean;
     procedure SkipNewlines;
     procedure RegisterAnchor(const anchorName : string; const value : IYAMLValue);
     function ResolveAlias(const aliasName : string) : IYAMLValue;
@@ -161,17 +164,102 @@ begin
     end;
 end;
 
+
+function TYAMLParser.FastIsNumber(const value: string; out isFloat: Boolean): Boolean;
+var
+  i, len: Integer;
+  ch: Char;
+begin
+  isFloat := False;
+  len := Length(value);
+  if len = 0 then
+  begin
+    result := False;
+    Exit;
+  end;
+
+  i := 1;
+
+  // Stage 1: Optional leading sign
+  ch := value[i];
+  if (ch = '+') or (ch = '-') then
+  begin
+    Inc(i);
+    if i > len then
+    begin
+      result := False; // A sign by itself is not a number
+      Exit;
+    end;
+  end;
+
+  // Stage 2: Integer part
+  if not TCharClassHelper.IsDigit(value[i]) then
+  begin
+    result := False;
+    Exit;
+  end;
+
+  // Consume the integer part's digits
+  while (i <= len) and TCharClassHelper.IsDigit(value[i]) do
+    Inc(i);
+
+  // Stage 3: Optional fractional part
+  if (i <= len) and (value[i] = '.') then
+  begin
+    isFloat := True;
+    Inc(i);
+
+    // JSON requires at least one digit after the decimal point.
+    if (i > len) or not TCharClassHelper.IsDigit(value[i]) then
+    begin
+      result := False;
+      Exit;
+    end;
+
+    // Consume the fractional part's digits
+    while (i <= len) and TCharClassHelper.IsDigit(value[i]) do
+      Inc(i);
+  end;
+
+  // Stage 4: Optional exponent part
+  if (i <= len) and ((value[i] = 'e') or (value[i] = 'E')) then
+  begin
+    isFloat := True;
+    Inc(i);
+
+    // Check for an optional sign for the exponent
+    if i <= len then
+    begin
+      ch := value[i];
+      if (ch = '+') or (ch = '-') then
+        Inc(i);
+    end;
+
+    // The exponent must have at least one digit.
+    if (i > len) or not TCharClassHelper.IsDigit(value[i]) then
+    begin
+      result := False;
+      Exit;
+    end;
+
+    // Consume the exponent's digits
+    while (i <= len) and TCharClassHelper.IsDigit(value[i]) do
+    begin
+      Inc(i);
+    end;
+  end;
+
+  // Stage 5: Final check. To be a valid number, we must have consumed the entire string.
+  result := (i > len);
+end;
+
 function TYAMLParser.IsScalarValue(const value : string; jsonMode : boolean) : TYAMLValueType;
 var
-  intVal : Int64;
-  floatVal : Double;
   trimmedValue : string;
   len : integer;
-  firstChar : Char;
-  secondChar : Char;
 begin
-
   len := Length(value);
+
   // Fast path: empty string
   if len = 0 then
   begin
@@ -183,14 +271,14 @@ begin
   end;
 
   // Fast path: check if trimming is needed
-  if (len = 0) or ((value[1] <= ' ') or (value[len] <= ' ')) then
+  if (value[1] <= ' ') or (value[len] <= ' ') then
     trimmedValue := Trim(value)
   else
     trimmedValue := value;
 
   len := Length(trimmedValue);
 
-  // Fast path: empty string
+  // Fast path: empty string after trim
   if len = 0 then
   begin
     if jsonMode then
@@ -200,31 +288,43 @@ begin
     Exit;
   end;
 
+  // Delegate to specialized functions
+  if jsonMode then
+    result := IsScalarValueJSON(trimmedValue, len)
+  else
+    result := IsScalarValueYAML(trimmedValue, len);
+end;
+
+function TYAMLParser.IsScalarValueJSON(const trimmedValue : string; len : Integer) : TYAMLValueType;
+var
+  firstChar : Char;
+  secondChar : Char;
+  isFloat : Boolean;
+begin
   firstChar := trimmedValue[1];
 
-  if jsonMode then
-  begin
-    // Fast path: check first character for common cases
-    case firstChar of
-      'n': // null
-        if (len = 4) and (trimmedValue[2] = 'u') and (trimmedValue[3] = 'l') and (trimmedValue[4] = 'l') then
-        begin
-          result := TYAMLValueType.vtNull;
-          Exit;
-        end;
-      't': // true
-        if (len = 4) and (trimmedValue[2] = 'r') and (trimmedValue[3] = 'u') and (trimmedValue[4] = 'e') then
-        begin
-          result := TYAMLValueType.vtBoolean;
-          Exit;
-        end;
-      'f': // false
-        if (len = 5) and (trimmedValue[2] = 'a') and (trimmedValue[3] = 'l') and (trimmedValue[4] = 's') and (trimmedValue[5] = 'e') then
-        begin
-          result := TYAMLValueType.vtBoolean;
-          Exit;
-        end;
-      '0': // Check for hex/octal/binary
+  // Fast path: check first character for common cases
+  case firstChar of
+    'n': // null
+      if (len = 4) and (trimmedValue[2] = 'u') and (trimmedValue[3] = 'l') and (trimmedValue[4] = 'l') then
+      begin
+        result := TYAMLValueType.vtNull;
+        Exit;
+      end;
+    't': // true
+      if (len = 4) and (trimmedValue[2] = 'r') and (trimmedValue[3] = 'u') and (trimmedValue[4] = 'e') then
+      begin
+        result := TYAMLValueType.vtBoolean;
+        Exit;
+      end;
+    'f': // false
+      if (len = 5) and (trimmedValue[2] = 'a') and (trimmedValue[3] = 'l') and (trimmedValue[4] = 's') and (trimmedValue[5] = 'e') then
+      begin
+        result := TYAMLValueType.vtBoolean;
+        Exit;
+      end;
+    '0': // Check for hex/octal/binary (not valid in JSON, treat as string)
+      begin
         if (len > 2) then
         begin
           secondChar := trimmedValue[2];
@@ -234,21 +334,50 @@ begin
             Exit;
           end;
         end;
-    end;
+        // Valid JSON number starting with 0 - use fast checker
+        if FastIsNumber(trimmedValue, isFloat) then
+        begin
+          if isFloat then
+            result := TYAMLValueType.vtFloat
+          else
+            result := TYAMLValueType.vtInteger;
+          Exit;
+        end;
+        result := TYAMLValueType.vtString;
+        Exit;
+      end;
+    '1'..'9', '-', '+': // Likely a number - use fast checker
+      begin
+        if FastIsNumber(trimmedValue, isFloat) then
+        begin
+          if isFloat then
+            result := TYAMLValueType.vtFloat
+          else
+            result := TYAMLValueType.vtInteger;
+          Exit;
+        end;
+        // Not a valid number, treat as string
+        result := TYAMLValueType.vtString;
+        Exit;
+      end;
+  end;
 
-    // Try number parsing
-    if TryStrToInt64(trimmedValue, intVal) then
-      result := TYAMLValueType.vtInteger
-    else if TryStrToFloat(trimmedValue, floatVal, YAMLFormatSettings) then
-      result := TYAMLValueType.vtFloat
-    else
-      result := TYAMLValueType.vtString;
-  end
-  else
-  begin
-    // YAML mode - fast path checks
-    case firstChar of
-      '~': // null
+  // Fallback for non-numeric strings
+  result := TYAMLValueType.vtString;
+end;
+
+function TYAMLParser.IsScalarValueYAML(const trimmedValue : string; len : Integer) : TYAMLValueType;
+var
+  firstChar : Char;
+  secondChar : Char;
+  intVal : Int64;
+  floatVal : Double;
+begin
+  firstChar := trimmedValue[1];
+
+  // YAML mode - fast path checks
+  case firstChar of
+    '~': // null
         if len = 1 then
         begin
           result := TYAMLValueType.vtNull;
@@ -373,39 +502,38 @@ begin
             Exit;
           end;
         end;
-    end;
+  end;
 
-    // Check for timestamp pattern (expensive, do after literals)
-    if IsTimestampPattern(trimmedValue) then
-    begin
-      result := TYAMLValueType.vtTimestamp;
-      Exit;
-    end;
+  // Check for timestamp pattern (expensive, do after literals)
+  if IsTimestampPattern(trimmedValue) then
+  begin
+    result := TYAMLValueType.vtTimestamp;
+    Exit;
+  end;
 
-    // Try integer parsing first
-    if TryStrToInt64(trimmedValue, intVal) then
+  // Try integer parsing first
+  if TryStrToInt64(trimmedValue, intVal) then
+  begin
+    result := TYAMLValueType.vtInteger;
+    Exit;
+  end;
+
+  // Check for hex, octal, and binary number formats
+  if (len > 2) and (firstChar = '0') then
+  begin
+    secondChar := trimmedValue[2];
+    if CharInSet(secondChar, ['x','X','o','O','b','B']) then
     begin
       result := TYAMLValueType.vtInteger;
       Exit;
     end;
-
-    // Check for hex, octal, and binary number formats
-    if (len > 2) and (firstChar = '0') then
-    begin
-      secondChar := trimmedValue[2];
-      if CharInSet(secondChar, ['x','X','o','O','b','B']) then
-      begin
-        result := TYAMLValueType.vtInteger;
-        Exit;
-      end;
-    end;
-
-    // Try float parsing
-    if TryStrToFloat(trimmedValue, floatVal, YAMLFormatSettings) then
-      result := TYAMLValueType.vtFloat
-    else
-      result := TYAMLValueType.vtString;
   end;
+
+  // Try float parsing
+  if TryStrToFloat(trimmedValue, floatVal, YAMLFormatSettings) then
+    result := TYAMLValueType.vtFloat
+  else
+    result := TYAMLValueType.vtString;
 end;
 
 
@@ -425,10 +553,10 @@ begin
 
   // Quick validation: YYYY-MM-DD pattern
   // Characters 1-4 must be digits (year)
-  if not (((value[1] >= '0') and (value[1] <= '9')) and
-          ((value[2] >= '0') and (value[2] <= '9')) and
-          ((value[3] >= '0') and (value[3] <= '9')) and
-          ((value[4] >= '0') and (value[4] <= '9'))) then
+  if not (TCharClassHelper.IsDigit(value[1]) and
+          TCharClassHelper.IsDigit(value[2]) and
+          TCharClassHelper.IsDigit(value[3]) and
+          TCharClassHelper.IsDigit(value[4])) then
     Exit;
 
   // Character 5 must be '-'
@@ -436,8 +564,8 @@ begin
     Exit;
 
   // Characters 6-7 must be digits (month)
-  if not (((value[6] >= '0') and (value[6] <= '9')) and
-          ((value[7] >= '0') and (value[7] <= '9'))) then
+  if not (TCharClassHelper.IsDigit(value[6]) and
+          TCharClassHelper.IsDigit(value[7])) then
     Exit;
 
   // Character 8 must be '-'
@@ -445,8 +573,8 @@ begin
     Exit;
 
   // Characters 9-10 must be digits (day)
-  if not (((value[9] >= '0') and (value[9] <= '9')) and
-          ((value[10] >= '0') and (value[10] <= '9'))) then
+  if not (TCharClassHelper.IsDigit(value[9]) and
+          TCharClassHelper.IsDigit(value[10])) then
     Exit;
 
   // Parse and validate date components
@@ -490,8 +618,8 @@ begin
   // Validate time format: HH:MM or HH:MM:SS
   // Characters timeStart and timeStart+1 must be digits (hour)
   if (timeStart + 1 > timeEnd) or
-     not (((value[timeStart] >= '0') and (value[timeStart] <= '9')) and
-          ((value[timeStart + 1] >= '0') and (value[timeStart + 1] <= '9'))) then
+     not (TCharClassHelper.IsDigit(value[timeStart]) and
+          TCharClassHelper.IsDigit(value[timeStart + 1])) then
     Exit;
 
   // Character timeStart+2 must be ':'
@@ -500,8 +628,8 @@ begin
 
   // Characters timeStart+3 and timeStart+4 must be digits (minute)
   if (timeStart + 4 > timeEnd) or
-     not (((value[timeStart + 3] >= '0') and (value[timeStart + 3] <= '9')) and
-          ((value[timeStart + 4] >= '0') and (value[timeStart + 4] <= '9'))) then
+     not (TCharClassHelper.IsDigit(value[timeStart + 3]) and
+          TCharClassHelper.IsDigit(value[timeStart + 4])) then
     Exit;
 
   // Parse hour and minute
@@ -526,8 +654,8 @@ begin
       Exit;
 
     // Characters timeStart+6 and timeStart+7 must be digits (second)
-    if not (((value[timeStart + 6] >= '0') and (value[timeStart + 6] <= '9')) and
-            ((value[timeStart + 7] >= '0') and (value[timeStart + 7] <= '9'))) then
+    if not (TCharClassHelper.IsDigit(value[timeStart + 6]) and
+            TCharClassHelper.IsDigit(value[timeStart + 7])) then
       Exit;
 
     // Parse seconds
@@ -596,6 +724,13 @@ begin
         // Additional JSON mode validation for invalid literals
         if FJSONMode and (valueType = TYAMLValueType.vtString) then
         begin
+          // Check for hex/octal/binary numbers (not valid in JSON)
+          if (Length(value) > 2) and (value[1] = '0') and
+             CharInSet(value[2], ['x','X','o','O','b','B']) then
+          begin
+            RaiseParseError('Invalid number format in JSON: "' + value + '". JSON does not support hex, octal, or binary number literals.');
+          end;
+
           // Check for YAML-style boolean/null values that are invalid in JSON
           if SameText(value, 'yes') or SameText(value, 'no') or SameText(value, 'on') or SameText(value, 'off') or
              SameText(value, 'truth') or SameText(value, 'false') or SameText(value, 'True') or SameText(value, 'False') or

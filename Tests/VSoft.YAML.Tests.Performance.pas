@@ -49,6 +49,9 @@ type
 
     [Test]
     procedure TestYAMLWriterWithCommentsPerformance;
+
+    [Test]
+    procedure TestLoadTestJSONFile;
   end;
 
 implementation
@@ -724,6 +727,102 @@ begin
 
   // Assert reasonable performance
   Assert.IsTrue(elapsedMs < 10000, 'Write with comments should complete in less than 10 seconds');
+end;
+
+procedure TPerformanceTests.TestLoadTestJSONFile;
+var
+  jsonFile: string;
+  doc: IYAMLDocument;
+  options: IYAMLParserOptions;
+  stopwatch: TStopwatch;
+  elapsedTicks: Int64;
+  elapsedMs: Double;
+  elapsedMsString: Double;
+  fileSize: Int64;
+  jsonString: string;
+  loadTime: Double;
+  i: Integer;
+  iterations: Integer;
+  totalTime: Double;
+  avgTime: Double;
+begin
+  jsonFile := TPath.Combine(FTestFilesPath, 'load_test.json');
+
+  if not FileExists(jsonFile) then
+  begin
+    Assert.Fail('Test file not found: ' + jsonFile);
+    Exit;
+  end;
+
+  fileSize := TFile.GetSize(jsonFile);
+
+  // Create options for JSON mode
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  // Test 1: Parse from file (streaming) - single run
+  stopwatch := TStopwatch.StartNew;
+  doc := TYAML.LoadFromFile(jsonFile, options);
+  stopwatch.Stop;
+  elapsedTicks := stopwatch.ElapsedTicks;
+  elapsedMs := (elapsedTicks * 1000.0) / TStopwatch.Frequency;
+
+  // Verify we parsed something
+  Assert.IsNotNull(doc, 'Document should not be null');
+  Assert.IsNotNull(doc.Root, 'Document root should not be null');
+  Assert.AreEqual(TYAMLValueType.vtMapping, doc.Root.ValueType, 'Root should be a mapping');
+
+  // Test 2: Load into string first, then parse - single run
+  stopwatch := TStopwatch.StartNew;
+  jsonString := TFile.ReadAllText(jsonFile);
+  loadTime := (stopwatch.ElapsedTicks * 1000.0) / TStopwatch.Frequency;
+
+  doc := TYAML.LoadFromString(jsonString, options);
+  stopwatch.Stop;
+  elapsedTicks := stopwatch.ElapsedTicks;
+  elapsedMsString := (elapsedTicks * 1000.0) / TStopwatch.Frequency;
+
+  // Test 3: Multiple iterations from string to get average
+  iterations := 10;
+  stopwatch := TStopwatch.StartNew;
+  for i := 1 to iterations do
+  begin
+    doc := TYAML.LoadFromString(jsonString, options);
+  end;
+  stopwatch.Stop;
+  totalTime := (stopwatch.ElapsedTicks * 1000.0) / TStopwatch.Frequency;
+  avgTime := totalTime / iterations;
+
+  // Output performance metrics
+  WriteLn('');
+  WriteLn('=== Load Test JSON File Parsing Performance ===');
+  WriteLn('File size: ' + IntToStr(fileSize div 1024) + ' KB');
+  WriteLn('');
+  WriteLn('Streaming (LoadFromFile):');
+  WriteLn('  Parse time: ' + FormatFloat('0.00', elapsedMs) + ' ms');
+  if elapsedMs > 0 then
+    WriteLn('  Throughput: ' + FormatFloat('0.00', (fileSize / 1024.0) / (elapsedMs / 1000.0)) + ' KB/s');
+  WriteLn('');
+  WriteLn('String-based (LoadFromString):');
+  WriteLn('  File load time: ' + FormatFloat('0.00', loadTime) + ' ms');
+  WriteLn('  Parse time: ' + FormatFloat('0.00', elapsedMsString - loadTime) + ' ms');
+  WriteLn('  Total time: ' + FormatFloat('0.00', elapsedMsString) + ' ms');
+  if elapsedMsString > 0 then
+    WriteLn('  Throughput: ' + FormatFloat('0.00', (fileSize / 1024.0) / (elapsedMsString / 1000.0)) + ' KB/s');
+  WriteLn('');
+  WriteLn('Average over ' + IntToStr(iterations) + ' iterations:');
+  WriteLn('  Average parse time: ' + FormatFloat('0.00', avgTime) + ' ms');
+  WriteLn('  Average throughput: ' + FormatFloat('0.00', (fileSize / 1024.0) / (avgTime / 1000.0)) + ' KB/s');
+  WriteLn('');
+  WriteLn('Summary:');
+  WriteLn('  Original performance: ~110ms');
+  WriteLn('  Current performance: ' + FormatFloat('0.00', avgTime) + ' ms');
+  WriteLn('  Improvement: ' + FormatFloat('0.0', ((110.0 - avgTime) / 110.0) * 100) + '%');
+  WriteLn('  To match 15-30ms parsers: need ' + FormatFloat('0.1', avgTime / 22.5) + 'x faster');
+  WriteLn('');
+
+  // Assert reasonable performance
+  Assert.IsTrue(elapsedMs < 15000, 'Parse should complete in less than 15 seconds');
 end;
 
 initialization
