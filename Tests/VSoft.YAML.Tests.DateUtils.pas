@@ -586,7 +586,7 @@ var
 begin
   convertedDateTime := TYAMLDateUtils.ISO8601StrToLocalDateTime('');
   
-  Assert.AreEqual(0.0, convertedDateTime, 'Empty string should return 0');
+  Assert.AreEqual<TDateTime>(0.0, convertedDateTime, 'Empty string should return 0');
 end;
 
 procedure TYAMLDateUtilsTests.TestPrecision_Milliseconds;

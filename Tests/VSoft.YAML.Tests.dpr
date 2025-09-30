@@ -6,6 +6,7 @@ program VSoft.YAML.Tests;
 {$STRONGLINKTYPES ON}
 uses
   System.SysUtils,
+  System.Diagnostics,
   {$IFDEF TESTINSIGHT}
   TestInsight.DUnitX,
   {$ELSE}
@@ -39,7 +40,8 @@ uses
   VSoft.YAML.Tests.JSON.Writer in 'VSoft.YAML.Tests.JSON.Writer.pas',
   VSoft.YAML.Tests.CharUtils in 'VSoft.YAML.Tests.CharUtils.pas',
   VSoft.YAML.Tests.SequenceProperties in 'VSoft.YAML.Tests.SequenceProperties.pas',
-  VSoft.YAML.Tests.DateUtils in 'VSoft.YAML.Tests.DateUtils.pas';
+  VSoft.YAML.Tests.DateUtils in 'VSoft.YAML.Tests.DateUtils.pas',
+  VSoft.YAML.Tests.Performance in 'VSoft.YAML.Tests.Performance.pas';
 
 { keep comment here to protect the following conditional from being removed by the IDE when adding a unit }
 {$IFNDEF TESTINSIGHT}
@@ -48,6 +50,7 @@ var
   results: IRunResults;
   logger: ITestLogger;
   nunitLogger : ITestLogger;
+  stopwatch : TStopwatch;
 {$ENDIF}
 begin
 {$IFDEF TESTINSIGHT}
@@ -63,7 +66,7 @@ begin
     //When true, Assertions must be made during tests;
     runner.FailsOnNoAsserts := False;
 
-   // TDUnitX.Options.ExitBehavior := TDUnitXExitBehavior.Pause;
+    TDUnitX.Options.ExitBehavior := TDUnitXExitBehavior.Pause;
 
     //tell the runner how we will log things
     //Log to the console window if desired
@@ -82,9 +85,13 @@ begin
     end;
 
     //Run tests
+    stopwatch := TStopwatch.StartNew;
     results := runner.Execute;
+    stopwatch.Stop;
     if not results.AllPassed then
       System.ExitCode := EXIT_ERRORS;
+
+    System.Writeln(Format('Tests completed in : %dms', [stopwatch.ElapsedMilliseconds]));
 
     {$IFNDEF CI}
     //We don't want this happening when running under CI.

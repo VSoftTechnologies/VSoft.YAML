@@ -166,198 +166,375 @@ var
   intVal : Int64;
   floatVal : Double;
   trimmedValue : string;
+  len : integer;
+  firstChar : Char;
+  secondChar : Char;
 begin
-  trimmedValue := Trim(value);
+
+  len := Length(value);
+  // Fast path: empty string
+  if len = 0 then
+  begin
+    if jsonMode then
+      result := TYAMLValueType.vtString
+    else
+      result := TYAMLValueType.vtNull;
+    Exit;
+  end;
+
+  // Fast path: check if trimming is needed
+  if (len = 0) or ((value[1] <= ' ') or (value[len] <= ' ')) then
+    trimmedValue := Trim(value)
+  else
+    trimmedValue := value;
+
+  len := Length(trimmedValue);
+
+  // Fast path: empty string
+  if len = 0 then
+  begin
+    if jsonMode then
+      result := TYAMLValueType.vtString
+    else
+      result := TYAMLValueType.vtNull;
+    Exit;
+  end;
+
+  firstChar := trimmedValue[1];
 
   if jsonMode then
   begin
-    // In JSON mode, only 'null' is valid null literal
-    if SameText(trimmedValue, 'null') then
-      result := TYAMLValueType.vtNull
-    // In JSON mode, only 'true' and 'false' are valid boolean literals
-    else if SameText(trimmedValue, 'true') or SameText(trimmedValue, 'false') then
-      result := TYAMLValueType.vtBoolean
-     // In JSON mode, reject hex/octal/binary number formats
-    else if (Length(trimmedValue) > 2) and (trimmedValue[1] = '0') and CharInSet(trimmedValue[2], ['x','X','o','O','b','B']) then
-        result := TYAMLValueType.vtString
-    else if TryStrToInt64(trimmedValue, intVal) then
-        result := TYAMLValueType.vtInteger
+    // Fast path: check first character for common cases
+    case firstChar of
+      'n': // null
+        if (len = 4) and (trimmedValue[2] = 'u') and (trimmedValue[3] = 'l') and (trimmedValue[4] = 'l') then
+        begin
+          result := TYAMLValueType.vtNull;
+          Exit;
+        end;
+      't': // true
+        if (len = 4) and (trimmedValue[2] = 'r') and (trimmedValue[3] = 'u') and (trimmedValue[4] = 'e') then
+        begin
+          result := TYAMLValueType.vtBoolean;
+          Exit;
+        end;
+      'f': // false
+        if (len = 5) and (trimmedValue[2] = 'a') and (trimmedValue[3] = 'l') and (trimmedValue[4] = 's') and (trimmedValue[5] = 'e') then
+        begin
+          result := TYAMLValueType.vtBoolean;
+          Exit;
+        end;
+      '0': // Check for hex/octal/binary
+        if (len > 2) then
+        begin
+          secondChar := trimmedValue[2];
+          if CharInSet(secondChar, ['x','X','o','O','b','B']) then
+          begin
+            result := TYAMLValueType.vtString;
+            Exit;
+          end;
+        end;
+    end;
+
+    // Try number parsing
+    if TryStrToInt64(trimmedValue, intVal) then
+      result := TYAMLValueType.vtInteger
     else if TryStrToFloat(trimmedValue, floatVal, YAMLFormatSettings) then
       result := TYAMLValueType.vtFloat
-    // In JSON mode, default unrecognized values to string (will be validated later)
     else
       result := TYAMLValueType.vtString;
   end
   else
   begin
-    // YAML mode - more permissive
-    if SameText(trimmedValue, 'null') or SameText(trimmedValue, '~') or (trimmedValue = '') then
-      result := TYAMLValueType.vtNull
-    else if SameText(trimmedValue, 'true') or SameText(trimmedValue, 'false') or
-            SameText(trimmedValue, 'yes') or SameText(trimmedValue, 'no') or
-            SameText(trimmedValue, 'on') or SameText(trimmedValue, 'off') then
-      result := TYAMLValueType.vtBoolean
-    else if IsTimestampPattern(trimmedValue) then
-      result := TYAMLValueType.vtTimestamp
-    else if TryStrToInt64(trimmedValue, intVal) then
-      result := TYAMLValueType.vtInteger
-    // Check for hex, octal, and binary number formats
-    else if (Length(trimmedValue) > 2) and (trimmedValue[1] = '0') then
+    // YAML mode - fast path checks
+    case firstChar of
+      '~': // null
+        if len = 1 then
+        begin
+          result := TYAMLValueType.vtNull;
+          Exit;
+        end;
+      'n': // null, no
+        if (len = 4) and (trimmedValue[2] = 'u') and (trimmedValue[3] = 'l') and (trimmedValue[4] = 'l') then
+        begin
+          result := TYAMLValueType.vtNull;
+          Exit;
+        end
+        else if (len = 2) and ((trimmedValue[2] = 'o') or (trimmedValue[2] = 'O')) then
+        begin
+          result := TYAMLValueType.vtBoolean;
+          Exit;
+        end;
+      'N': // Null, NO, NaN, NEL variants
+        if (len = 4) then
+        begin
+          if (trimmedValue[2] = 'u') and (trimmedValue[3] = 'l') and (trimmedValue[4] = 'l') then
+          begin
+            result := TYAMLValueType.vtNull;
+            Exit;
+          end;
+        end
+        else if (len = 2) and (trimmedValue[2] = 'O') then
+        begin
+          result := TYAMLValueType.vtBoolean;
+          Exit;
+        end;
+      't': // true
+        if (len = 4) and (trimmedValue[2] = 'r') and (trimmedValue[3] = 'u') and (trimmedValue[4] = 'e') then
+        begin
+          result := TYAMLValueType.vtBoolean;
+          Exit;
+        end;
+      'T': // True
+        if (len = 4) and (trimmedValue[2] = 'r') and (trimmedValue[3] = 'u') and (trimmedValue[4] = 'e') then
+        begin
+          result := TYAMLValueType.vtBoolean;
+          Exit;
+        end;
+      'f': // false
+        if (len = 5) and (trimmedValue[2] = 'a') and (trimmedValue[3] = 'l') and (trimmedValue[4] = 's') and (trimmedValue[5] = 'e') then
+        begin
+          result := TYAMLValueType.vtBoolean;
+          Exit;
+        end;
+      'F': // False
+        if (len = 5) and (trimmedValue[2] = 'a') and (trimmedValue[3] = 'l') and (trimmedValue[4] = 's') and (trimmedValue[5] = 'e') then
+        begin
+          result := TYAMLValueType.vtBoolean;
+          Exit;
+        end;
+      'y': // yes
+        if (len = 3) and (trimmedValue[2] = 'e') and (trimmedValue[3] = 's') then
+        begin
+          result := TYAMLValueType.vtBoolean;
+          Exit;
+        end;
+      'Y': // Yes, YES
+        if (len = 3) and ((trimmedValue[2] = 'e') or (trimmedValue[2] = 'E')) and ((trimmedValue[3] = 's') or (trimmedValue[3] = 'S')) then
+        begin
+          result := TYAMLValueType.vtBoolean;
+          Exit;
+        end;
+      'o': // on, off
+        if (len = 2) then
+        begin
+          if (trimmedValue[2] = 'n') then
+          begin
+            result := TYAMLValueType.vtBoolean;
+            Exit;
+          end;
+        end
+        else if (len = 3) and (trimmedValue[2] = 'f') and (trimmedValue[3] = 'f') then
+        begin
+          result := TYAMLValueType.vtBoolean;
+          Exit;
+        end;
+      'O': // On, ON, Off, OFF
+        if (len = 2) then
+        begin
+          if (trimmedValue[2] = 'n') or (trimmedValue[2] = 'N') then
+          begin
+            result := TYAMLValueType.vtBoolean;
+            Exit;
+          end;
+        end
+        else if (len = 3) and ((trimmedValue[2] = 'f') or (trimmedValue[2] = 'F')) and ((trimmedValue[3] = 'f') or (trimmedValue[3] = 'F')) then
+        begin
+          result := TYAMLValueType.vtBoolean;
+          Exit;
+        end;
+      '.': // .nan, .inf variants
+        if (len = 4) then
+        begin
+          secondChar := trimmedValue[2];
+          if ((secondChar = 'n') or (secondChar = 'N')) and
+             ((trimmedValue[3] = 'a') or (trimmedValue[3] = 'A')) and
+             ((trimmedValue[4] = 'n') or (trimmedValue[4] = 'N')) then
+          begin
+            result := TYAMLValueType.vtFloat;
+            Exit;
+          end
+          else if ((secondChar = 'i') or (secondChar = 'I')) and
+                  ((trimmedValue[3] = 'n') or (trimmedValue[3] = 'N')) and
+                  ((trimmedValue[4] = 'f') or (trimmedValue[4] = 'F')) then
+          begin
+            result := TYAMLValueType.vtFloat;
+            Exit;
+          end;
+        end;
+      '+', '-': // +.inf, -.inf variants
+        if (len = 5) and (trimmedValue[2] = '.') then
+        begin
+          if ((trimmedValue[3] = 'i') or (trimmedValue[3] = 'I')) and
+             ((trimmedValue[4] = 'n') or (trimmedValue[4] = 'N')) and
+             ((trimmedValue[5] = 'f') or (trimmedValue[5] = 'F')) then
+          begin
+            result := TYAMLValueType.vtFloat;
+            Exit;
+          end;
+        end;
+    end;
+
+    // Check for timestamp pattern (expensive, do after literals)
+    if IsTimestampPattern(trimmedValue) then
     begin
-      if ((trimmedValue[2] = 'x') or (trimmedValue[2] = 'X')) and (Length(trimmedValue) > 2) then
+      result := TYAMLValueType.vtTimestamp;
+      Exit;
+    end;
+
+    // Try integer parsing first
+    if TryStrToInt64(trimmedValue, intVal) then
+    begin
+      result := TYAMLValueType.vtInteger;
+      Exit;
+    end;
+
+    // Check for hex, octal, and binary number formats
+    if (len > 2) and (firstChar = '0') then
+    begin
+      secondChar := trimmedValue[2];
+      if CharInSet(secondChar, ['x','X','o','O','b','B']) then
       begin
-        // Hexadecimal format (0x or 0X)
         result := TYAMLValueType.vtInteger;
-      end
-      else if ((trimmedValue[2] = 'o') or (trimmedValue[2] = 'O')) and (Length(trimmedValue) > 2) then
-      begin
-        // Octal format (0o or 0O)
-        result := TYAMLValueType.vtInteger;
-      end
-      else if ((trimmedValue[2] = 'b') or (trimmedValue[2] = 'B')) and (Length(trimmedValue) > 2) then
-      begin
-        // Binary format (0b or 0B)
-        result := TYAMLValueType.vtInteger;
-      end
-      else if TryStrToFloat(trimmedValue, floatVal, YAMLFormatSettings) then
-        result := TYAMLValueType.vtFloat
-      else
-        result := TYAMLValueType.vtString;
-    end
-    else if TryStrToFloat(trimmedValue, floatVal, YAMLFormatSettings) then
+        Exit;
+      end;
+    end;
+
+    // Try float parsing
+    if TryStrToFloat(trimmedValue, floatVal, YAMLFormatSettings) then
       result := TYAMLValueType.vtFloat
-    // Check for special YAML float values
-    else if SameText(trimmedValue, '.nan') or SameText(trimmedValue, '.NaN') or SameText(trimmedValue, '.NAN') or
-            SameText(trimmedValue, '.inf') or SameText(trimmedValue, '.Inf') or SameText(trimmedValue, '.INF') or
-            SameText(trimmedValue, '+.inf') or SameText(trimmedValue, '+.Inf') or SameText(trimmedValue, '+.INF') or
-            SameText(trimmedValue, '-.inf') or SameText(trimmedValue, '-.Inf') or SameText(trimmedValue, '-.INF') then
-      result := TYAMLValueType.vtFloat
-    // Default to string
     else
       result := TYAMLValueType.vtString;
   end;
 end;
 
 
-//This is horrible code - refactor
 function TYAMLParser.IsTimestampPattern(const value : string) : boolean;
 var
-  trimmedValue : string;
+  len : integer;
   year, month, day, hour, min, sec : integer;
-  datePart, timePart : string;
-  spacePos, tPos, colonPos1, colonPos2, dashPos1, dashPos2 : integer;
+  timeStart : integer;
+  timeEnd : integer;
 begin
   result := False;
-  trimmedValue := Trim(value);
+  len := Length(value);
 
-  // Must be at least 8 characters for shortest date format (YYYY-MM-DD = 10, but allow some flexibility)
-  if Length(trimmedValue) < 8 then
+  // Must be at least 10 characters for YYYY-MM-DD
+  if len < 10 then
     Exit;
-    
-  // Quick early exit: timestamps must start with a digit (year)
-  if not ((trimmedValue[1] >= '0') and (trimmedValue[1] <= '9')) then
+
+  // Quick validation: YYYY-MM-DD pattern
+  // Characters 1-4 must be digits (year)
+  if not (((value[1] >= '0') and (value[1] <= '9')) and
+          ((value[2] >= '0') and (value[2] <= '9')) and
+          ((value[3] >= '0') and (value[3] <= '9')) and
+          ((value[4] >= '0') and (value[4] <= '9'))) then
     Exit;
-    
-  // Quick early exit: second character should also be a digit for 4-digit year
-  if not ((trimmedValue[2] >= '0') and (trimmedValue[2] <= '9')) then
+
+  // Character 5 must be '-'
+  if value[5] <> '-' then
     Exit;
-    
-  // Quick early exit: check for basic YYYY- pattern (most common case)
-  if (Length(trimmedValue) >= 5) and (trimmedValue[5] <> '-') then
+
+  // Characters 6-7 must be digits (month)
+  if not (((value[6] >= '0') and (value[6] <= '9')) and
+          ((value[7] >= '0') and (value[7] <= '9'))) then
     Exit;
-    
-  // Quick early exit: third and fourth characters should be digits for 4-digit year  
-  if (Length(trimmedValue) >= 4) then
+
+  // Character 8 must be '-'
+  if value[8] <> '-' then
+    Exit;
+
+  // Characters 9-10 must be digits (day)
+  if not (((value[9] >= '0') and (value[9] <= '9')) and
+          ((value[10] >= '0') and (value[10] <= '9'))) then
+    Exit;
+
+  // Parse and validate date components
+  year := (Ord(value[1]) - Ord('0')) * 1000 + (Ord(value[2]) - Ord('0')) * 100 +
+          (Ord(value[3]) - Ord('0')) * 10 + (Ord(value[4]) - Ord('0'));
+  month := (Ord(value[6]) - Ord('0')) * 10 + (Ord(value[7]) - Ord('0'));
+  day := (Ord(value[9]) - Ord('0')) * 10 + (Ord(value[10]) - Ord('0'));
+
+  // Basic range validation
+  if not ((year >= 100) and (year <= 2400) and
+          (month >= 1) and (month <= 12) and
+          (day >= 1) and (day <= 31)) then
+    Exit;
+
+  // If exactly 10 characters, valid date-only timestamp
+  if len = 10 then
   begin
-    if not (((trimmedValue[3] >= '0') and (trimmedValue[3] <= '9')) and
-            ((trimmedValue[4] >= '0') and (trimmedValue[4] <= '9'))) then
-      Exit;
+    result := True;
+    Exit;
   end;
 
-  // Check for ISO 8601 date patterns : YYYY-MM-DD or YYYY-MM-DDTHH :MM :SS
-  // Also support space-separated : YYYY-MM-DD HH :MM :SS
+  // Check for time separator (T or space)
+  if (len < 11) or not ((value[11] = 'T') or (value[11] = ' ')) then
+    Exit;
 
-  // Find date/time separator (T or space)
-  tPos := Pos('T', trimmedValue);
-  spacePos := Pos(' ', trimmedValue);
+  timeStart := 12;
+  timeEnd := len;
 
-  if tPos > 0 then
-    datePart := Copy(trimmedValue, 1, tPos - 1)
-  else if spacePos > 0 then
-    datePart := Copy(trimmedValue, 1, spacePos - 1)
-  else
-    datePart := trimmedValue; // Date only
+  // Strip timezone suffix: Z, +HH:MM, -HH:MM
+  if value[len] = 'Z' then
+    Dec(timeEnd)
+  else if (len >= 16) and CharInSet(value[len - 5], ['+', '-']) and (value[len - 2] = ':') then
+    timeEnd := len - 6
+  else if (len >= 13) and CharInSet(value[len - 2], ['+', '-']) then
+    timeEnd := len - 3;
 
-  // Check date part format : YYYY-MM-DD
-  if Length(datePart) = 10 then
+  // Need at least HH:MM (5 chars)
+  if (timeEnd - timeStart + 1) < 5 then
+    Exit;
+
+  // Validate time format: HH:MM or HH:MM:SS
+  // Characters timeStart and timeStart+1 must be digits (hour)
+  if (timeStart + 1 > timeEnd) or
+     not (((value[timeStart] >= '0') and (value[timeStart] <= '9')) and
+          ((value[timeStart + 1] >= '0') and (value[timeStart + 1] <= '9'))) then
+    Exit;
+
+  // Character timeStart+2 must be ':'
+  if (timeStart + 2 > timeEnd) or (value[timeStart + 2] <> ':') then
+    Exit;
+
+  // Characters timeStart+3 and timeStart+4 must be digits (minute)
+  if (timeStart + 4 > timeEnd) or
+     not (((value[timeStart + 3] >= '0') and (value[timeStart + 3] <= '9')) and
+          ((value[timeStart + 4] >= '0') and (value[timeStart + 4] <= '9'))) then
+    Exit;
+
+  // Parse hour and minute
+  hour := (Ord(value[timeStart]) - Ord('0')) * 10 + (Ord(value[timeStart + 1]) - Ord('0'));
+  min := (Ord(value[timeStart + 3]) - Ord('0')) * 10 + (Ord(value[timeStart + 4]) - Ord('0'));
+
+  if not ((hour >= 0) and (hour <= 23) and (min >= 0) and (min <= 59)) then
+    Exit;
+
+  // If we have just HH:MM, we're done
+  if (timeEnd - timeStart + 1) = 5 then
   begin
-    dashPos1 := Pos('-', datePart);
-    if dashPos1 = 5 then
-    begin
-      dashPos2 := Pos('-', Copy(datePart, 6, Length(datePart)));
-      if dashPos2 = 3 then // Second dash at position 8 in original string
-      begin
-        // Try to parse date components
-        if TryStrToInt(Copy(datePart, 1, 4), year) and
-           TryStrToInt(Copy(datePart, 6, 2), month) and
-           TryStrToInt(Copy(datePart, 9, 2), day) then
-        begin
-          // Basic range validation
-          if (year >= 100) and (year <= 2400) and
-             (month >= 1) and (month <= 12) and
-             (day >= 1) and (day <= 31) then
-          begin
-            // If it's date only, we're done
-            if (tPos = 0) and (spacePos = 0) then
-              exit(true);
+    result := True;
+    Exit;
+  end;
 
-            // Check time part if present
-            if tPos > 0 then
-              timePart := Copy(trimmedValue, tPos + 1, Length(trimmedValue))
-            else if spacePos > 0 then
-              timePart := Copy(trimmedValue, spacePos + 1, Length(trimmedValue));
-              
-            // Remove timezone suffix for parsing (Z, +HH:MM, -HH:MM)
-            if (Length(timePart) > 0) and (timePart[Length(timePart)] = 'Z') then
-              timePart := Copy(timePart, 1, Length(timePart) - 1)
-            else if (Length(timePart) >= 6) and CharInSet(timePart[Length(timePart) - 5], ['+', '-']) then
-              timePart := Copy(timePart, 1, Length(timePart) - 6)
-            else if (Length(timePart) >= 3) and CharInSet(timePart[Length(timePart) - 2], ['+', '-']) then
-              timePart := Copy(timePart, 1, Length(timePart) - 3);
+  // Check for seconds if present
+  if (timeEnd - timeStart + 1) >= 8 then
+  begin
+    // Character timeStart+5 must be ':'
+    if value[timeStart + 5] <> ':' then
+      Exit;
 
-            // Basic time format check : HH :MM or HH :MM :SS
-            if Length(timePart) >= 5 then
-            begin
-              colonPos1 := Pos(':', timePart);
-              if colonPos1 = 3 then
-              begin
-                if TryStrToInt(Copy(timePart, 1, 2), hour) and TryStrToInt(Copy(timePart, 4, 2), min) then
-                begin
-                  if (hour >= 0) and (hour <= 23) and (min >= 0) and (min <= 59) then
-                  begin
-                    // Check for seconds
-                    if Length(timePart) >= 8 then
-                    begin
-                      colonPos2 := Pos(':', Copy(timePart, 4, Length(timePart)));
-                      if colonPos2 = 3 then // Second colon at position 6
-                      begin
-                        if TryStrToInt(Copy(timePart, 7, 2), sec) then
-                        begin
-                          if (sec >= 0) and (sec <= 59) then
-                            result := True;
-                        end;
-                      end;
-                    end
-                    else
-                      result := True; // HH :MM format is valid
-                  end;
-                end;
-              end;
-            end;
-          end;
-        end;
-      end;
-    end;
+    // Characters timeStart+6 and timeStart+7 must be digits (second)
+    if not (((value[timeStart + 6] >= '0') and (value[timeStart + 6] <= '9')) and
+            ((value[timeStart + 7] >= '0') and (value[timeStart + 7] <= '9'))) then
+      Exit;
+
+    // Parse seconds
+    sec := (Ord(value[timeStart + 6]) - Ord('0')) * 10 + (Ord(value[timeStart + 7]) - Ord('0'));
+
+    if (sec >= 0) and (sec <= 59) then
+      result := True;
   end;
 end;
 
@@ -365,7 +542,8 @@ function TYAMLParser.ParseScalar(const parent : IYAMLValue; const tag : string) 
 var
   value : string;
   valueType : TYAMLValueType;
-  parts : TStringList;
+  firstPart : string;
+  partCount : integer;
   i : integer;
   specialCharCount : integer;
 begin
@@ -389,39 +567,28 @@ begin
       // This handles cases like "123 Main St" which gets tokenized as separate values
       if FCurrentToken.TokenKind = TYAMLTokenKind.Value then
       begin
-        parts := TStringList.Create;
-        try
-          parts.Add(value);
+        firstPart := value;
+        partCount := 1;
+        NextToken;
+
+        // Collect consecutive value tokens on the same line with same indent
+        while (FCurrentToken.TokenKind = TYAMLTokenKind.Value) do
+        begin
+          value := value + ' ' + FCurrentToken.value;
+          Inc(partCount);
           NextToken;
+        end;
 
-          // Collect consecutive value tokens on the same line with same indent
-          while (FCurrentToken.TokenKind = TYAMLTokenKind.Value) do
-          begin
-            parts.Add(FCurrentToken.value);
-            NextToken;
-          end;
-
-          // Join all parts with spaces
-          value := '';
-          for i := 0 to parts.Count - 1 do
-          begin
-            if i > 0 then value := value + ' ';
-            value := value + Parts[i];
-          end;
-          
-          // Validate: if we're at document root and have multiple parts that look like key-value,
-          // but no colon, this might be malformed YAML
-          if (parent = nil) and (parts.Count > 1) then
-          begin
-            // Check if this looks like a key followed by value(s) without colon
-            // This is a heuristic - if the first part looks like an identifier and
-            // there are additional parts, it might be missing a colon
-            if (Length(Parts[0]) > 0) and
-               (CharInSet(Parts[0][1], ['a'..'z', 'A'..'Z', '_'])) then
-              RaiseParseError('Missing colon after key "' + Parts[0] + '"');
-          end;
-        finally
-          parts.Free;
+        // Validate: if we're at document root and have multiple parts that look like key-value,
+        // but no colon, this might be malformed YAML
+        if (parent = nil) and (partCount > 1) then
+        begin
+          // Check if this looks like a key followed by value(s) without colon
+          // This is a heuristic - if the first part looks like an identifier and
+          // there are additional parts, it might be missing a colon
+          if (Length(firstPart) > 0) and
+             (CharInSet(firstPart[1], ['a'..'z', 'A'..'Z', '_'])) then
+            RaiseParseError('Missing colon after key "' + firstPart + '"');
         end;
 
         valueType := IsScalarValue(value, FJSONMode);
@@ -444,7 +611,7 @@ begin
           // @ is valid in unquoted values provided it is not the first character
           if (Length(value) > 0) and (value[1] = '@') then
             RaiseParseError('Invalid characters in unquoted string: "' + value + '"');
-            
+
           // Check for other problematic character patterns
           // Look for dense concentrations of special characters that suggest invalid input
           specialCharCount := 0;
@@ -453,7 +620,7 @@ begin
             if CharInSet(value[i], ['#', '$', '%', '^', '&', '*', '(', ')', '<', '>', '|', '\']) then
               Inc(specialCharCount);
           end;
-          
+
           // If more than 40% of characters are special symbols, it's likely invalid YAML
           if (Length(value) > 2) and (specialCharCount * 100 div Length(value) > 40) then
             RaiseParseError('Invalid characters in unquoted string: "' + value + '"');
