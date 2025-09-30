@@ -1,0 +1,13 @@
+# Simple test for block scalars
+documents:
+  - id: 1
+    type: literal
+    content: |
+      Line 1
+      Line 2
+      Line 3
+  - id: 2
+    type: folded
+    content: >
+      This is folded
+      into one line

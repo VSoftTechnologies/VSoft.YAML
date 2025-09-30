@@ -1,0 +1,6 @@
+documents:
+  - id: 0
+    type: literal
+    content: |
+      Line 1
+      Line 2

@@ -34,6 +34,21 @@ type
 
     [Test]
     procedure TestJSONTestFile;
+
+    [Test]
+    procedure TestBlockScalarsParsing;
+
+    [Test]
+    procedure TestQuotedStringsParsing;
+
+    [Test]
+    procedure TestYAMLWriterPerformance;
+
+    [Test]
+    procedure TestJSONWriterPerformance;
+
+    [Test]
+    procedure TestYAMLWriterWithCommentsPerformance;
   end;
 
 implementation
@@ -378,6 +393,337 @@ begin
 
   // Assert reasonable performance
   Assert.IsTrue(elapsedMs < 10000, 'Parse should complete in less than 10 seconds');
+end;
+
+procedure TPerformanceTests.TestBlockScalarsParsing;
+var
+  yamlFile: string;
+  doc: IYAMLDocument;
+  stopwatch: TStopwatch;
+  elapsedTicks: Int64;
+  elapsedMs: Double;
+  fileSize: Int64;
+  documents: IYAMLSequence;
+  docCount: Integer;
+begin
+  yamlFile := TPath.Combine(FTestFilesPath, 'benchmark_block_scalars.yaml');
+
+  if not FileExists(yamlFile) then
+  begin
+    Assert.Fail('Benchmark file not found: ' + yamlFile);
+    Exit;
+  end;
+
+  fileSize := TFile.GetSize(yamlFile);
+
+  // Parse the YAML file with block scalars
+  stopwatch := TStopwatch.StartNew;
+  try
+    doc := TYAML.LoadFromFile(yamlFile);
+  except
+    on E: Exception do
+    begin
+      Assert.Fail('Parse failed with: ' + E.ClassName + ': ' + E.Message);
+      Exit;
+    end;
+  end;
+  stopwatch.Stop;
+  elapsedTicks := stopwatch.ElapsedTicks;
+  elapsedMs := (elapsedTicks * 1000.0) / TStopwatch.Frequency;
+
+  // Verify we parsed something
+  Assert.IsNotNull(doc, 'Document should not be null');
+  Assert.IsNotNull(doc.Root, 'Document root should not be null');
+
+  // Verify the structure
+  if doc.Root.IsMapping then
+  begin
+    if doc.Root.AsMapping.ContainsKey('documents') then
+    begin
+      documents := doc.Root.AsMapping.Values['documents'].AsSequence;
+      docCount := documents.Count;
+      Assert.IsTrue(docCount > 0, 'Should have parsed documents');
+
+      // Verify first document has block scalar content
+      if docCount > 0 then
+      begin
+        Assert.IsTrue(documents[0].IsMapping, 'First document should be a mapping');
+        Assert.IsTrue(documents[0].AsMapping.ContainsKey('content'), 'Should have content field');
+      end;
+    end;
+  end;
+
+  // Output performance metrics
+  WriteLn('');
+  WriteLn('=== Block Scalars Parsing Performance ===');
+  WriteLn('File size: ' + IntToStr(fileSize div 1024) + ' KB');
+  WriteLn('Parse time: ' + FormatFloat('0.00', elapsedMs) + ' ms');
+  if elapsedMs > 0 then
+    WriteLn('Throughput: ' + FormatFloat('0.00', (fileSize / 1024.0) / (elapsedMs / 1000.0)) + ' KB/s')
+  else
+    WriteLn('Throughput: Very fast (< 0.01 ms)');
+  WriteLn('');
+
+  // Assert reasonable performance
+  Assert.IsTrue(elapsedMs < 10000, 'Parse should complete in less than 10 seconds');
+end;
+
+procedure TPerformanceTests.TestQuotedStringsParsing;
+var
+  yamlFile: string;
+  doc: IYAMLDocument;
+  stopwatch: TStopwatch;
+  elapsedTicks: Int64;
+  elapsedMs: Double;
+  fileSize: Int64;
+  strings: IYAMLSequence;
+  stringCount: Integer;
+begin
+  yamlFile := TPath.Combine(FTestFilesPath, 'benchmark_quoted_strings.yaml');
+
+  if not FileExists(yamlFile) then
+  begin
+    Assert.Fail('Benchmark file not found: ' + yamlFile);
+    Exit;
+  end;
+
+  fileSize := TFile.GetSize(yamlFile);
+
+  // Parse the YAML file with quoted strings
+  stopwatch := TStopwatch.StartNew;
+  doc := TYAML.LoadFromFile(yamlFile);
+  stopwatch.Stop;
+  elapsedTicks := stopwatch.ElapsedTicks;
+  elapsedMs := (elapsedTicks * 1000.0) / TStopwatch.Frequency;
+
+  // Verify we parsed something
+  Assert.IsNotNull(doc, 'Document should not be null');
+  Assert.IsNotNull(doc.Root, 'Document root should not be null');
+
+  // Verify the structure
+  if doc.Root.IsMapping then
+  begin
+    if doc.Root.AsMapping.ContainsKey('strings') then
+    begin
+      strings := doc.Root.AsMapping.Values['strings'].AsSequence;
+      stringCount := strings.Count;
+      Assert.IsTrue(stringCount > 0, 'Should have parsed strings');
+
+      // Verify first string entry
+      if stringCount > 0 then
+      begin
+        Assert.IsTrue(strings[0].IsMapping, 'First string entry should be a mapping');
+      end;
+    end;
+  end;
+
+  // Output performance metrics
+  WriteLn('');
+  WriteLn('=== Quoted Strings Parsing Performance ===');
+  WriteLn('File size: ' + IntToStr(fileSize div 1024) + ' KB');
+  WriteLn('Parse time: ' + FormatFloat('0.00', elapsedMs) + ' ms');
+  if elapsedMs > 0 then
+    WriteLn('Throughput: ' + FormatFloat('0.00', (fileSize / 1024.0) / (elapsedMs / 1000.0)) + ' KB/s')
+  else
+    WriteLn('Throughput: Very fast (< 0.01 ms)');
+  WriteLn('');
+
+  // Assert reasonable performance
+  Assert.IsTrue(elapsedMs < 10000, 'Parse should complete in less than 10 seconds');
+end;
+
+procedure TPerformanceTests.TestYAMLWriterPerformance;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  sequence: IYAMLSequence;
+  item: IYAMLMapping;
+  i: Integer;
+  outputYaml: string;
+  stopwatch: TStopwatch;
+  elapsedTicks: Int64;
+  elapsedMs: Double;
+  outputSize: Integer;
+begin
+  // Create a large YAML document with nested structures
+  doc := TYAML.CreateMapping;
+  root := doc.AsMapping;
+  root.AddOrSetValue('title', 'Writer Performance Test');
+  root.AddOrSetValue('version', '1.0.0');
+  root.AddOrSetValue('timestamp', '2024-01-15T10:30:00Z');
+
+  // Add a large sequence with many items
+  sequence := root.AddOrSetSequence('items');
+  for i := 0 to 999 do
+  begin
+    item := sequence.AddMapping;
+    item.AddOrSetValue('id', i);
+    item.AddOrSetValue('name', 'Item ' + IntToStr(i));
+    item.AddOrSetValue('description', 'This is a description for item number ' + IntToStr(i) + ' with some additional text');
+    item.AddOrSetValue('active', i mod 2 = 0);
+    item.AddOrSetValue('priority', i mod 10);
+    item.AddOrSetValue('tags', 'tag1,tag2,tag3');
+  end;
+
+  // Measure write performance
+  stopwatch := TStopwatch.StartNew;
+  outputYaml := TYAML.WriteToString(doc);
+  stopwatch.Stop;
+  elapsedTicks := stopwatch.ElapsedTicks;
+  elapsedMs := (elapsedTicks * 1000.0) / TStopwatch.Frequency;
+
+  outputSize := Length(outputYaml);
+
+  // Verify output
+  Assert.IsTrue(outputSize > 0, 'Output should not be empty');
+  Assert.IsTrue(Pos('title:', outputYaml) > 0, 'Output should contain title');
+  Assert.IsTrue(Pos('items:', outputYaml) > 0, 'Output should contain items');
+
+  // Output performance metrics
+  WriteLn('');
+  WriteLn('=== YAML Writer Performance ===');
+  WriteLn('Items written: 1000');
+  WriteLn('Output size: ' + IntToStr(outputSize div 1024) + ' KB');
+  WriteLn('Write time: ' + FormatFloat('0.00', elapsedMs) + ' ms');
+  if elapsedMs > 0 then
+    WriteLn('Throughput: ' + FormatFloat('0.00', (outputSize / 1024.0) / (elapsedMs / 1000.0)) + ' KB/s')
+  else
+    WriteLn('Throughput: Very fast (< 0.01 ms)');
+  WriteLn('');
+
+  // Assert reasonable performance
+  Assert.IsTrue(elapsedMs < 5000, 'Write should complete in less than 5 seconds');
+end;
+
+procedure TPerformanceTests.TestJSONWriterPerformance;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  sequence: IYAMLSequence;
+  item: IYAMLMapping;
+  i: Integer;
+  outputJson: string;
+  stopwatch: TStopwatch;
+  elapsedTicks: Int64;
+  elapsedMs: Double;
+  outputSize: Integer;
+begin
+  // Create a large document similar to YAML test
+  doc := TYAML.CreateMapping;
+  root := doc.AsMapping;
+  root.AddOrSetValue('title', 'JSON Writer Performance Test');
+  root.AddOrSetValue('version', '1.0.0');
+  root.AddOrSetValue('timestamp', '2024-01-15T10:30:00Z');
+
+  // Add a large sequence with many items
+  sequence := root.AddOrSetSequence('items');
+  for i := 0 to 999 do
+  begin
+    item := sequence.AddMapping;
+    item.AddOrSetValue('id', i);
+    item.AddOrSetValue('name', 'Item ' + IntToStr(i));
+    item.AddOrSetValue('description', 'This is a description for item number ' + IntToStr(i) + ' with some additional text');
+    item.AddOrSetValue('active', i mod 2 = 0);
+    item.AddOrSetValue('priority', i mod 10);
+    item.AddOrSetValue('tags', 'tag1,tag2,tag3');
+  end;
+
+  // Enable pretty print
+  doc.Options.PrettyPrint := True;
+  doc.Options.IndentSize := 2;
+
+  // Measure write performance
+  stopwatch := TStopwatch.StartNew;
+  outputJson := TYAML.WriteToJSONString(doc);
+  stopwatch.Stop;
+  elapsedTicks := stopwatch.ElapsedTicks;
+  elapsedMs := (elapsedTicks * 1000.0) / TStopwatch.Frequency;
+
+  outputSize := Length(outputJson);
+
+  // Verify output
+  Assert.IsTrue(outputSize > 0, 'Output should not be empty');
+  Assert.IsTrue(Pos('"title":', outputJson) > 0, 'Output should contain title');
+  Assert.IsTrue(Pos('"items":', outputJson) > 0, 'Output should contain items');
+
+  // Output performance metrics
+  WriteLn('');
+  WriteLn('=== JSON Writer Performance ===');
+  WriteLn('Items written: 1000');
+  WriteLn('Output size: ' + IntToStr(outputSize div 1024) + ' KB');
+  WriteLn('Write time: ' + FormatFloat('0.00', elapsedMs) + ' ms');
+  if elapsedMs > 0 then
+    WriteLn('Throughput: ' + FormatFloat('0.00', (outputSize / 1024.0) / (elapsedMs / 1000.0)) + ' KB/s')
+  else
+    WriteLn('Throughput: Very fast (< 0.01 ms)');
+  WriteLn('');
+
+  // Assert reasonable performance
+  Assert.IsTrue(elapsedMs < 5000, 'Write should complete in less than 5 seconds');
+end;
+
+procedure TPerformanceTests.TestYAMLWriterWithCommentsPerformance;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  sequence: IYAMLSequence;
+  item: IYAMLMapping;
+  i: Integer;
+  outputYaml: string;
+  stopwatch: TStopwatch;
+  elapsedTicks: Int64;
+  elapsedMs: Double;
+  outputSize: Integer;
+begin
+  // Create a large YAML document with comments on every value
+  doc := TYAML.CreateMapping;
+  root := doc.AsMapping;
+  root.AddOrSetValue('title', 'Writer Performance Test With Comments').Comment := 'Document title';
+  root.AddOrSetValue('version', '1.0.0').Comment := 'Version number';
+  root.AddOrSetValue('timestamp', '2024-01-15T10:30:00Z').Comment := 'Creation timestamp';
+
+  // Add a large sequence with many items, each with comments
+  sequence := root.AddOrSetSequence('items');
+  for i := 0 to 999 do
+  begin
+    item := sequence.AddMapping;
+    item.AddOrSetValue('id', i).Comment := 'Unique identifier ' + IntToStr(i);
+    item.AddOrSetValue('name', 'Item ' + IntToStr(i)).Comment := 'Item name';
+    item.AddOrSetValue('description', 'This is a description for item number ' + IntToStr(i) + ' with some additional text').Comment := 'Detailed description';
+    item.AddOrSetValue('active', i mod 2 = 0).Comment := 'Active status flag';
+    item.AddOrSetValue('priority', i mod 10).Comment := 'Priority level 0-9';
+    item.AddOrSetValue('tags', 'tag1,tag2,tag3').Comment := 'Comma-separated tags';
+  end;
+
+  // Measure write performance
+  stopwatch := TStopwatch.StartNew;
+  outputYaml := TYAML.WriteToString(doc);
+  stopwatch.Stop;
+  elapsedTicks := stopwatch.ElapsedTicks;
+  elapsedMs := (elapsedTicks * 1000.0) / TStopwatch.Frequency;
+
+  outputSize := Length(outputYaml);
+
+  // Verify output
+  Assert.IsTrue(outputSize > 0, 'Output should not be empty');
+  Assert.IsTrue(Pos('title:', outputYaml) > 0, 'Output should contain title');
+  Assert.IsTrue(Pos('items:', outputYaml) > 0, 'Output should contain items');
+  Assert.IsTrue(Pos('# Document title', outputYaml) > 0, 'Output should contain comments');
+
+  // Output performance metrics
+  WriteLn('');
+  WriteLn('=== YAML Writer With Comments Performance ===');
+  WriteLn('Items written: 1000 (with 6 comments each = 6000 comments total)');
+  WriteLn('Output size: ' + IntToStr(outputSize div 1024) + ' KB');
+  WriteLn('Write time: ' + FormatFloat('0.00', elapsedMs) + ' ms');
+  if elapsedMs > 0 then
+    WriteLn('Throughput: ' + FormatFloat('0.00', (outputSize / 1024.0) / (elapsedMs / 1000.0)) + ' KB/s')
+  else
+    WriteLn('Throughput: Very fast (< 0.01 ms)');
+  WriteLn('');
+
+  // Assert reasonable performance
+  Assert.IsTrue(elapsedMs < 10000, 'Write with comments should complete in less than 10 seconds');
 end;
 
 initialization

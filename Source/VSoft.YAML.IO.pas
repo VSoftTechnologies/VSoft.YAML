@@ -35,6 +35,8 @@ type
     procedure Save;
     /// <summary> Restores the previously saved state, raises exception if none</summary>
     procedure Restore;
+    /// <summary> Discards the saved state without restoring</summary>
+    procedure DiscardSave;
 
     /// <summary> 1 based current position </summary>
     property Position : integer read GetPosition;
@@ -99,6 +101,7 @@ type
     function Peek(n : integer) : Char;overload;
     procedure Save;
     procedure Restore;
+    procedure DiscardSave;
   public
     constructor Create(const theString : string);
   end;
@@ -176,6 +179,7 @@ type
     function Peek(n : integer) : Char;overload;
     procedure Save;
     procedure Restore;
+    procedure DiscardSave;
   public
     constructor Create(const stream: TStream); overload;
     destructor Destroy; override;
@@ -342,6 +346,11 @@ begin
   FSavedIsAtEnd := FIsAtEnd;
 end;
 
+procedure TStringInputReader.DiscardSave;
+begin
+  FSavedPosition := -1;
+end;
+
 { TStreamInputReader }
 
 constructor TStreamInputReader.Create(const stream: TStream);
@@ -493,19 +502,24 @@ begin
   // Detect nested saves - should never happen
   if FSavedStreamPos <> -1 then
     raise Exception.Create('Nested save detected - not supported');
-    
+
   FSavedStreamPos := FStream.Position;
   FSavedBufferStart := FBufferedData.FStart;
   FSavedNoDataInStream := FNoDataInStream;
   FSavedSkipPreamble := FSkipPreamble;
   FSavedDetectBOM := FDetectBOM;
-    
+
   FSavedPosition := FPosition;
   FSavedLine := FLine;
   FSavedColumn := FColumn;
   FSavedCurrentChar := FCurrentChar;
   FSavedPreviousChar := FPreviousChar;
   FSavedAtEnd := FAtEnd;
+end;
+
+procedure TStreamInputReader.DiscardSave;
+begin
+  FSavedStreamPos := -1;
 end;
 
 procedure TStreamInputReader.InitializeReader;

@@ -24,8 +24,10 @@ type
     FStream: TStream;
     FEncoding: TEncoding;
     FNewLine: string;
+    FNewLineBytes: TBytes;
     FAutoFlush: Boolean;
     FOwnsStream: Boolean;
+    procedure SetNewLine(const Value: string);
   protected
     FBufferIndex: Integer;
     FBuffer: TBytes;
@@ -43,7 +45,7 @@ type
     procedure WriteLine; override;
     procedure WriteLine(const Value: string); override;
     property AutoFlush: Boolean read FAutoFlush write FAutoFlush;
-    property NewLine: string read FNewLine write FNewLine;
+    property NewLine: string read FNewLine write SetNewLine;
     property Encoding: TEncoding read FEncoding;
     property BaseStream: TStream read FStream;
   end;
@@ -80,6 +82,7 @@ begin
   SetLength(FBuffer, 8192);
   FBufferIndex := 0;
   FNewLine := sLineBreak;
+  FNewLineBytes := FEncoding.GetBytes(FNewLine);
   FAutoFlush := False;
 end;
 
@@ -95,6 +98,7 @@ begin
     SetLength(FBuffer, 128);
   FBufferIndex := 0;
   FNewLine := sLineBreak;
+  FNewLineBytes := FEncoding.GetBytes(FNewLine);
   FAutoFlush := False;
   if WriteBOM and (Stream.Position = 0) then
     WriteBytes(FEncoding.GetPreamble);
@@ -175,15 +179,22 @@ begin
 end;
 
 
+procedure TYAMLStreamWriter.SetNewLine(const Value: string);
+begin
+  FNewLine := Value;
+  FNewLineBytes := FEncoding.GetBytes(FNewLine);
+end;
+
 procedure TYAMLStreamWriter.WriteLine;
 begin
-  WriteBytes(FEncoding.GetBytes(FNewLine));
+  WriteBytes(FNewLineBytes);
 end;
 
 
 procedure TYAMLStreamWriter.WriteLine(const Value: string);
 begin
-  WriteBytes(FEncoding.GetBytes(Value + FNewLine));
+  WriteBytes(FEncoding.GetBytes(Value));
+  WriteBytes(FNewLineBytes);
 end;
 
 

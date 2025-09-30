@@ -1420,8 +1420,19 @@ begin
       begin
         // Empty line - add to collection
         lines.Add('');
-        if (FReader.Current = #10) or (FReader.Current = #13) then
+        // Skip newline (handle both CRLF and LF)
+        if (FReader.Current = #13) then
+        begin
           FReader.Read;
+          if (FReader.Current = #10) then
+            FReader.Read;
+        end
+        else if (FReader.Current = #10) then
+        begin
+          FReader.Read;
+        end;
+        // Discard save point since we're not restoring
+        FReader.DiscardSave;
         continue;
       end;
 
@@ -1459,13 +1470,20 @@ begin
       else
         lines.Add(currentLine);
 
-      // Skip newline
+      // Skip newline (handle both CRLF and LF)
       if (FReader.Current = #13) then
       begin
         FReader.Read;
         if (FReader.Current = #10) then
           FReader.Read;
+      end
+      else if (FReader.Current = #10) then
+      begin
+        FReader.Read;
       end;
+
+      // Discard save point since we consumed the line and don't need to restore
+      FReader.DiscardSave;
     end;
 
     // Apply chomping rules and build result
@@ -1523,7 +1541,6 @@ var
   lineIndent : integer;
   lines : TStringList;
   i : integer;
-  line : string;
   currentLine : string;
   inParagraph : boolean;
   paragraphLines : TStringList;
@@ -1589,8 +1606,19 @@ begin
           inParagraph := False;
         end;
         // For folded scalars, empty lines separate paragraphs
-        if (FReader.Current = #10) or (FReader.Current = #13) then
+        // Skip newline (handle both CRLF and LF)
+        if (FReader.Current = #13) then
+        begin
           FReader.Read;
+          if (FReader.Current = #10) then
+            FReader.Read;
+        end
+        else if (FReader.Current = #10) then
+        begin
+          FReader.Read;
+        end;
+        // Discard save point since we're not restoring
+        FReader.DiscardSave;
         continue;
       end;
 
@@ -1653,13 +1681,20 @@ begin
         inParagraph := True;
       end;
 
-      // Skip newline
+      // Skip newline (handle both CRLF and LF)
       if (FReader.Current = #13) then
       begin
         FReader.Read;
         if (FReader.Current = #10) then
           FReader.Read;
+      end
+      else if (FReader.Current = #10) then
+      begin
+        FReader.Read;
       end;
+
+      // Discard save point since we consumed the line and don't need to restore
+      FReader.DiscardSave;
     end;
 
     // Handle final paragraph
@@ -1722,7 +1757,7 @@ begin
   result := FStringBuilder.ToString;
 end;
 
-initialization
+procedure InitEscapeTables;
 var
   i: Integer;
 begin
@@ -1751,12 +1786,12 @@ begin
   EscapeTable[Ord('_')] := #$00A0; // Non-breaking space
   EscapeTable[Ord('L')] := #$2028; // Line separator
   EscapeTable[Ord('P')] := #$2029; // Paragraph separator
-  
+
   // Complex escapes that need special handling
   EscapeTable[Ord('u')] := #1;    // Unicode 16-bit
   EscapeTable[Ord('U')] := #1;    // Unicode 32-bit
   EscapeTable[Ord('x')] := #1;    // Hex 8-bit
-  
+
   // JSON valid escapes (subset of YAML)
   JSONValidEscapes[Ord('b')] := True;   // Backspace
   JSONValidEscapes[Ord('f')] := True;   // Form feed
@@ -1768,5 +1803,8 @@ begin
   JSONValidEscapes[Ord('/')] := True;   // Forward slash (optional)
   JSONValidEscapes[Ord('u')] := True;   // Unicode 16-bit only
 end;
+
+initialization
+  InitEscapeTables;
 
 end.
