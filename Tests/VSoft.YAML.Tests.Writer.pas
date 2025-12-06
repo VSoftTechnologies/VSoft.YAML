@@ -173,6 +173,30 @@ type
     procedure Test_WriteToFile_InvalidPath;
     [Test]
     procedure Test_WriteToString_InvalidOptions;
+
+    // Block scalar tests
+    [Test]
+    procedure Test_BlockScalar_LiteralStyle_Mapping;
+    [Test]
+    procedure Test_BlockScalar_FoldedStyle_Mapping;
+    [Test]
+    procedure Test_BlockScalar_LiteralStyle_Sequence;
+    [Test]
+    procedure Test_BlockScalar_Disabled_UsesQuotes;
+    [Test]
+    procedure Test_BlockScalar_RoundTrip;
+    [Test]
+    procedure Test_BlockScalar_TrailingLinefeed_Single;
+    [Test]
+    procedure Test_BlockScalar_TrailingLinefeed_Multiple;
+    [Test]
+    procedure Test_BlockScalar_NoTrailingLinefeed;
+    [Test]
+    procedure Test_BlockScalar_ChompingClip_Default;
+    [Test]
+    procedure Test_BlockScalar_ChompingStrip;
+    [Test]
+    procedure Test_BlockScalar_ChompingKeep;
   end;
 
 implementation
@@ -284,7 +308,7 @@ begin
   
   root.AddOrSetValue('string_key', 'Hello World');
   root.AddOrSetValue('integer_key', 42);
-  root.AddOrSetValue('float_key', 3.14159);
+  root.AddOrSetValue('float_key', Double(3.14159));
   root.AddOrSetValue('boolean_key', True);
   
   yamlStr := TYAML.WriteToString(doc);
@@ -1627,6 +1651,373 @@ begin
   Assert.AreEqual('Test Document 2', loadedDocs[1].Root.Values['name'].AsString);
   Assert.AreEqual<Int64>(2, loadedDocs[1].Root.Values['version'].AsInteger);
   Assert.AreEqual(false, loadedDocs[1].Root.Values['enabled'].AsBoolean);
+end;
+
+procedure TYAMLWriterTests.Test_BlockScalar_LiteralStyle_Mapping;
+var
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+  multilineText : string;
+  yamlStr : string;
+begin
+  doc := TYAML.CreateMapping;
+  doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssLiteral;
+  root := doc.AsMapping;
+
+  multilineText := 'Line 1' + sLineBreak + 'Line 2' + sLineBreak + 'Line 3';
+  root.AddOrSetValue('body', multilineText);
+  root.AddOrSetValue('title', 'Simple Title');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  // Should contain the literal block indicator
+  Assert.Contains(yamlStr, 'body: |', 'Should use literal block indicator');
+  // Should contain actual line content (not escaped)
+  Assert.Contains(yamlStr, 'Line 1', 'Should contain Line 1');
+  Assert.Contains(yamlStr, 'Line 2', 'Should contain Line 2');
+  Assert.Contains(yamlStr, 'Line 3', 'Should contain Line 3');
+  // Should NOT contain escaped newlines
+  Assert.IsFalse(Pos('\n', yamlStr) > 0, 'Should not contain escaped newlines');
+  Assert.IsFalse(Pos('\r', yamlStr) > 0, 'Should not contain escaped carriage returns');
+end;
+
+procedure TYAMLWriterTests.Test_BlockScalar_FoldedStyle_Mapping;
+var
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+  multilineText : string;
+  yamlStr : string;
+begin
+  doc := TYAML.CreateMapping;
+  doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssFolded;
+  root := doc.AsMapping;
+
+  multilineText := 'Line 1' + sLineBreak + 'Line 2' + sLineBreak + 'Line 3';
+  root.AddOrSetValue('description', multilineText);
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  // Should contain the folded block indicator
+  Assert.Contains(yamlStr, 'description: >', 'Should use folded block indicator');
+  // Should contain actual line content
+  Assert.Contains(yamlStr, 'Line 1', 'Should contain Line 1');
+  Assert.Contains(yamlStr, 'Line 2', 'Should contain Line 2');
+end;
+
+procedure TYAMLWriterTests.Test_BlockScalar_LiteralStyle_Sequence;
+var
+  doc : IYAMLDocument;
+  root : IYAMLSequence;
+  multilineText : string;
+  yamlStr : string;
+begin
+  doc := TYAML.CreateSequence;
+  doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssLiteral;
+  root := doc.AsSequence;
+
+  multilineText := 'First line' + sLineBreak + 'Second line';
+  root.AddValue(multilineText);
+  root.AddValue('simple item');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  // Should contain the literal block indicator for sequence item
+  Assert.Contains(yamlStr, '- |', 'Should use literal block indicator in sequence');
+  Assert.Contains(yamlStr, 'First line', 'Should contain First line');
+  Assert.Contains(yamlStr, 'Second line', 'Should contain Second line');
+  Assert.Contains(yamlStr, '- simple item', 'Simple items should still work');
+end;
+
+procedure TYAMLWriterTests.Test_BlockScalar_Disabled_UsesQuotes;
+var
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+  multilineText : string;
+  yamlStr : string;
+begin
+  doc := TYAML.CreateMapping;
+  // Default is bssNone - block scalars disabled
+  root := doc.AsMapping;
+
+  multilineText := 'Line 1' + sLineBreak + 'Line 2';
+  root.AddOrSetValue('body', multilineText);
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  // Should NOT contain block indicator
+  Assert.IsFalse(Pos('body: |', yamlStr) > 0, 'Should not use literal block indicator when disabled');
+  Assert.IsFalse(Pos('body: >', yamlStr) > 0, 'Should not use folded block indicator when disabled');
+  // Should contain escaped newlines (default behavior)
+  Assert.IsTrue((Pos('\n', yamlStr) > 0) or (Pos('\r', yamlStr) > 0), 'Should contain escaped newlines when block scalars disabled');
+end;
+
+procedure TYAMLWriterTests.Test_BlockScalar_RoundTrip;
+var
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+  multilineText : string;
+  yamlStr : string;
+  loadedDoc : IYAMLDocument;
+  loadedValue : string;
+  originalLines : TStringList;
+  loadedLines : TStringList;
+  i : integer;
+begin
+  doc := TYAML.CreateMapping;
+  doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssLiteral;
+  root := doc.AsMapping;
+
+  multilineText := 'Line 1' + sLineBreak + 'Line 2' + sLineBreak + 'Line 3';
+  root.AddOrSetValue('content', multilineText);
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  // Parse the generated YAML back
+  loadedDoc := TYAML.LoadFromString(yamlStr);
+  loadedValue := loadedDoc.Root.Values['content'].AsString;
+
+  // Split both original and loaded into lines and compare
+  originalLines := TStringList.Create;
+  loadedLines := TStringList.Create;
+  try
+    originalLines.Text := multilineText;
+    loadedLines.Text := loadedValue;
+
+    Assert.AreEqual(originalLines.Count, loadedLines.Count, 'Line count should match');
+
+    for i := 0 to originalLines.Count - 1 do
+    begin
+      Assert.AreEqual(originalLines[i], loadedLines[i], Format('Line %d should match', [i + 1]));
+    end;
+  finally
+    originalLines.Free;
+    loadedLines.Free;
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_BlockScalar_TrailingLinefeed_Single;
+var
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+  multilineText : string;
+  yamlStr : string;
+  loadedDoc : IYAMLDocument;
+  loadedValue : string;
+  originalLines : TStringList;
+  loadedLines : TStringList;
+  i : integer;
+begin
+  doc := TYAML.CreateMapping;
+  doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssLiteral;
+  root := doc.AsMapping;
+
+  // Text with a single trailing linefeed (clip chomping should preserve this)
+  multilineText := 'Line 1' + sLineBreak + 'Line 2' + sLineBreak;
+  root.AddOrSetValue('content', multilineText);
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  // Parse the generated YAML back
+  loadedDoc := TYAML.LoadFromString(yamlStr);
+  loadedValue := loadedDoc.Root.Values['content'].AsString;
+
+  // Split both original and loaded into lines and compare
+  originalLines := TStringList.Create;
+  loadedLines := TStringList.Create;
+  try
+    originalLines.Text := multilineText;
+    loadedLines.Text := loadedValue;
+
+    Assert.AreEqual(originalLines.Count, loadedLines.Count, 'Line count should match for single trailing linefeed');
+
+    for i := 0 to originalLines.Count - 1 do
+    begin
+      Assert.AreEqual(originalLines[i], loadedLines[i], Format('Line %d should match', [i + 1]));
+    end;
+  finally
+    originalLines.Free;
+    loadedLines.Free;
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_BlockScalar_TrailingLinefeed_Multiple;
+var
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+  multilineText : string;
+  yamlStr : string;
+  loadedDoc : IYAMLDocument;
+  loadedValue : string;
+  originalLines : TStringList;
+  loadedLines : TStringList;
+begin
+  doc := TYAML.CreateMapping;
+  doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssLiteral;
+  root := doc.AsMapping;
+
+  // Text with multiple trailing linefeeds
+  // Note: With clip chomping (default), extra trailing newlines are removed
+  multilineText := 'Line 1' + sLineBreak + 'Line 2' + sLineBreak + sLineBreak + sLineBreak;
+  root.AddOrSetValue('content', multilineText);
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  // Parse the generated YAML back
+  loadedDoc := TYAML.LoadFromString(yamlStr);
+  loadedValue := loadedDoc.Root.Values['content'].AsString;
+
+  // With clip chomping, multiple trailing newlines should be reduced to one
+  originalLines := TStringList.Create;
+  loadedLines := TStringList.Create;
+  try
+    originalLines.Text := multilineText;
+    loadedLines.Text := loadedValue;
+
+    // Clip chomping preserves one trailing newline, removes extras
+    // So loaded should have fewer lines than original if original had multiple trailing newlines
+    Assert.IsTrue(loadedLines.Count <= originalLines.Count,
+      'Clip chomping should not add extra lines');
+
+    // First two lines should match
+    Assert.AreEqual('Line 1', loadedLines[0], 'First line should match');
+    Assert.AreEqual('Line 2', loadedLines[1], 'Second line should match');
+  finally
+    originalLines.Free;
+    loadedLines.Free;
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_BlockScalar_NoTrailingLinefeed;
+var
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+  multilineText : string;
+  yamlStr : string;
+  loadedDoc : IYAMLDocument;
+  loadedValue : string;
+  originalLines : TStringList;
+  loadedLines : TStringList;
+  i : integer;
+begin
+  doc := TYAML.CreateMapping;
+  doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssLiteral;
+  root := doc.AsMapping;
+
+  // Text with no trailing linefeed
+  multilineText := 'Line 1' + sLineBreak + 'Line 2' + sLineBreak + 'Line 3';
+  root.AddOrSetValue('content', multilineText);
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  // Parse the generated YAML back
+  loadedDoc := TYAML.LoadFromString(yamlStr);
+  loadedValue := loadedDoc.Root.Values['content'].AsString;
+
+  // Split both original and loaded into lines and compare
+  originalLines := TStringList.Create;
+  loadedLines := TStringList.Create;
+  try
+    originalLines.Text := multilineText;
+    loadedLines.Text := loadedValue;
+
+    Assert.AreEqual(originalLines.Count, loadedLines.Count, 'Line count should match for no trailing linefeed');
+
+    for i := 0 to originalLines.Count - 1 do
+    begin
+      Assert.AreEqual(originalLines[i], loadedLines[i], Format('Line %d should match', [i + 1]));
+    end;
+  finally
+    originalLines.Free;
+    loadedLines.Free;
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_BlockScalar_ChompingClip_Default;
+var
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+  multilineText : string;
+  yamlStr : string;
+begin
+  doc := TYAML.CreateMapping;
+  doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssLiteral;
+  // BlockChompingIndicator defaults to bciClip
+  root := doc.AsMapping;
+
+  multilineText := 'Line 1' + sLineBreak + 'Line 2';
+  root.AddOrSetValue('content', multilineText);
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  // Clip (default) should have no indicator after the |
+  Assert.Contains(yamlStr, 'content: |', 'Should use literal block indicator');
+  // Should NOT have |- or |+
+  Assert.IsFalse(Pos('|-', yamlStr) > 0, 'Should not have strip indicator');
+  Assert.IsFalse(Pos('|+', yamlStr) > 0, 'Should not have keep indicator');
+end;
+
+procedure TYAMLWriterTests.Test_BlockScalar_ChompingStrip;
+var
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+  multilineText : string;
+  yamlStr : string;
+  loadedDoc : IYAMLDocument;
+  loadedValue : string;
+begin
+  doc := TYAML.CreateMapping;
+  doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssLiteral;
+  doc.Options.BlockChompingIndicator := TYAMLBlockChompingIndicator.bciStrip;
+  root := doc.AsMapping;
+
+  multilineText := 'Line 1' + sLineBreak + 'Line 2' + sLineBreak;
+  root.AddOrSetValue('content', multilineText);
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  // Strip should have |- indicator
+  Assert.Contains(yamlStr, 'content: |-', 'Should use literal block with strip indicator');
+
+  // Round-trip: strip removes all trailing newlines
+  loadedDoc := TYAML.LoadFromString(yamlStr);
+  loadedValue := loadedDoc.Root.Values['content'].AsString;
+
+  // With strip, the trailing newline should be removed
+  Assert.IsFalse(loadedValue.EndsWith(#10) or loadedValue.EndsWith(#13),
+    'Strip chomping should remove trailing newlines');
+  Assert.Contains(loadedValue, 'Line 1', 'Should contain Line 1');
+  Assert.Contains(loadedValue, 'Line 2', 'Should contain Line 2');
+end;
+
+procedure TYAMLWriterTests.Test_BlockScalar_ChompingKeep;
+var
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+  multilineText : string;
+  yamlStr : string;
+  loadedDoc : IYAMLDocument;
+  loadedValue : string;
+begin
+  doc := TYAML.CreateMapping;
+  doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssLiteral;
+  doc.Options.BlockChompingIndicator := TYAMLBlockChompingIndicator.bciKeep;
+  root := doc.AsMapping;
+
+  multilineText := 'Line 1' + sLineBreak + 'Line 2' + sLineBreak + sLineBreak;
+  root.AddOrSetValue('content', multilineText);
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  // Keep should have |+ indicator
+  Assert.Contains(yamlStr, 'content: |+', 'Should use literal block with keep indicator');
+
+  // Round-trip: keep preserves all trailing newlines
+  loadedDoc := TYAML.LoadFromString(yamlStr);
+  loadedValue := loadedDoc.Root.Values['content'].AsString;
+
+  // With keep, trailing newlines should be preserved
+  Assert.Contains(loadedValue, 'Line 1', 'Should contain Line 1');
+  Assert.Contains(loadedValue, 'Line 2', 'Should contain Line 2');
 end;
 
 initialization

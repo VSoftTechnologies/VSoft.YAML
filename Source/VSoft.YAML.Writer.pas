@@ -31,6 +31,12 @@ type
     function FormatKey(const key : string) : string;
     function FormatScalar(const value : IYAMLValue) : string;
     function GetFormattedTag(const value : IYAMLValue) : string;
+    function ContainsLineBreaks(const value : string) : boolean;
+    function ShouldUseBlockScalar(const value : IYAMLValue) : boolean;
+    function GetChompingIndicator : string;
+    procedure WriteBlockScalar(const value : string; const key : string; const tag : string);
+    procedure WriteSequenceBlockScalar(const value : string);
+    procedure WriteSequenceMappingBlockScalar(const value : string; const key : string; const prefix : string);
 
     // Core writing methods
     procedure WriteValue(const value : IYAMLValue);
@@ -333,6 +339,189 @@ begin
   end;
 end;
 
+function TYAMLWriterImpl.ContainsLineBreaks(const value : string) : boolean;
+var
+  i : integer;
+begin
+  result := False;
+  for i := 1 to Length(value) do
+  begin
+    if (value[i] = #10) or (value[i] = #13) then
+    begin
+      result := True;
+      Exit;
+    end;
+  end;
+end;
+
+function TYAMLWriterImpl.ShouldUseBlockScalar(const value : IYAMLValue) : boolean;
+var
+  str : string;
+begin
+  result := False;
+
+  // Only for strings
+  if value.ValueType <> TYAMLValueType.vtString then
+    Exit;
+
+  // Only if block scalar style is enabled
+  if FOptions.BlockScalarStyle = TYAMLBlockScalarStyle.bssNone then
+    Exit;
+
+  str := value.AsString;
+
+  // Empty strings should not use block scalars
+  if str = '' then
+    Exit;
+
+  // Check if string contains line breaks
+  result := ContainsLineBreaks(str);
+end;
+
+function TYAMLWriterImpl.GetChompingIndicator : string;
+begin
+  case FOptions.BlockChompingIndicator of
+    TYAMLBlockChompingIndicator.bciStrip : result := '-';
+    TYAMLBlockChompingIndicator.bciKeep : result := '+';
+  else
+    result := ''; // bciClip - no indicator needed (default)
+  end;
+end;
+
+procedure TYAMLWriterImpl.WriteBlockScalar(const value : string; const key : string; const tag : string);
+var
+  lines : TStringList;
+  i : integer;
+  indicator : Char;
+  lineContent : string;
+begin
+  // Determine block indicator based on style
+  if FOptions.BlockScalarStyle = TYAMLBlockScalarStyle.bssFolded then
+    indicator := '>'
+  else
+    indicator := '|';
+
+  // Write the key and block indicator with chomping
+  FStringBuilder.Reset;
+  FStringBuilder.Append(GetIndent);
+  FStringBuilder.Append(key);
+  FStringBuilder.Append(': ');
+  FStringBuilder.Append(tag);
+  FStringBuilder.Append(indicator);
+  FStringBuilder.Append(GetChompingIndicator);
+  AddLine(FStringBuilder.ToString);
+
+  // Split the value into lines and write each with proper indentation
+  lines := TStringList.Create;
+  try
+    // Handle both CRLF and LF line endings
+    lines.Text := value;
+
+    IncIndent;
+    for i := 0 to lines.Count - 1 do
+    begin
+      lineContent := lines[i];
+      FStringBuilder.Reset;
+      FStringBuilder.Append(GetIndent);
+      FStringBuilder.Append(lineContent);
+      AddLine(FStringBuilder.ToString);
+    end;
+    DecIndent;
+  finally
+    lines.Free;
+  end;
+end;
+
+procedure TYAMLWriterImpl.WriteSequenceBlockScalar(const value : string);
+var
+  lines : TStringList;
+  i : integer;
+  indicator : Char;
+  lineContent : string;
+begin
+  // Determine block indicator based on style
+  if FOptions.BlockScalarStyle = TYAMLBlockScalarStyle.bssFolded then
+    indicator := '>'
+  else
+    indicator := '|';
+
+  // Write the dash and block indicator with chomping
+  FStringBuilder.Reset;
+  FStringBuilder.Append(GetIndent);
+  FStringBuilder.Append('- ');
+  FStringBuilder.Append(indicator);
+  FStringBuilder.Append(GetChompingIndicator);
+  AddLine(FStringBuilder.ToString);
+
+  // Split the value into lines and write each with proper indentation
+  lines := TStringList.Create;
+  try
+    // Handle both CRLF and LF line endings
+    lines.Text := value;
+
+    IncIndent;
+    for i := 0 to lines.Count - 1 do
+    begin
+      lineContent := lines[i];
+      FStringBuilder.Reset;
+      FStringBuilder.Append(GetIndent);
+      FStringBuilder.Append(lineContent);
+      AddLine(FStringBuilder.ToString);
+    end;
+    DecIndent;
+  finally
+    lines.Free;
+  end;
+end;
+
+procedure TYAMLWriterImpl.WriteSequenceMappingBlockScalar(const value : string; const key : string; const prefix : string);
+var
+  lines : TStringList;
+  i : integer;
+  indicator : Char;
+  lineContent : string;
+begin
+  // Determine block indicator based on style
+  if FOptions.BlockScalarStyle = TYAMLBlockScalarStyle.bssFolded then
+    indicator := '>'
+  else
+    indicator := '|';
+
+  // Write the prefix (e.g., '- ' or '  '), key and block indicator with chomping
+  FStringBuilder.Reset;
+  FStringBuilder.Append(GetIndent);
+  FStringBuilder.Append(prefix);
+  FStringBuilder.Append(key);
+  FStringBuilder.Append(': ');
+  FStringBuilder.Append(indicator);
+  FStringBuilder.Append(GetChompingIndicator);
+  AddLine(FStringBuilder.ToString);
+
+  // Split the value into lines and write each with proper indentation
+  lines := TStringList.Create;
+  try
+    // Handle both CRLF and LF line endings
+    lines.Text := value;
+
+    IncIndent;
+    if prefix = '  ' then
+      IncIndent; // Extra indent for non-first keys in sequence mapping
+    for i := 0 to lines.Count - 1 do
+    begin
+      lineContent := lines[i];
+      FStringBuilder.Reset;
+      FStringBuilder.Append(GetIndent);
+      FStringBuilder.Append(lineContent);
+      AddLine(FStringBuilder.ToString);
+    end;
+    if prefix = '  ' then
+      DecIndent;
+    DecIndent;
+  finally
+    lines.Free;
+  end;
+end;
+
 function TYAMLWriterImpl.ShouldUseFlowStyle(const value : IYAMLValue) : boolean;
 var
   seq : IYAMLSequence;
@@ -535,19 +724,27 @@ begin
 
     else
       begin
-        valueStr := FormatScalar(value);
-        FStringBuilder.Reset;
-        FStringBuilder.Append(GetIndent);
-        FStringBuilder.Append(key);
-        FStringBuilder.Append(': ');
-        FStringBuilder.Append(tag);
-        FStringBuilder.Append(valueStr);
-        if value.Comment <> '' then
+        // Check if we should use block scalar style for multiline strings
+        if ShouldUseBlockScalar(value) then
         begin
-          FStringBuilder.Append(' # ');
-          FStringBuilder.Append(value.Comment);
+          WriteBlockScalar(value.AsString, key, tag);
+        end
+        else
+        begin
+          valueStr := FormatScalar(value);
+          FStringBuilder.Reset;
+          FStringBuilder.Append(GetIndent);
+          FStringBuilder.Append(key);
+          FStringBuilder.Append(': ');
+          FStringBuilder.Append(tag);
+          FStringBuilder.Append(valueStr);
+          if value.Comment <> '' then
+          begin
+            FStringBuilder.Append(' # ');
+            FStringBuilder.Append(value.Comment);
+          end;
+          AddLine(FStringBuilder.ToString);
         end;
-        AddLine(FStringBuilder.ToString);
       end;
     end;
   end;
@@ -595,17 +792,25 @@ begin
       TYAMLValueType.vtMapping : WriteSequenceMapping(item.AsMapping);
     else
       begin
-        itemStr := FormatScalar(item);
-        FStringBuilder.Reset;
-        FStringBuilder.Append(GetIndent);
-        FStringBuilder.Append('- ');
-        FStringBuilder.Append(itemStr);
-        if item.Comment <> '' then
+        // Check if we should use block scalar style for multiline strings
+        if ShouldUseBlockScalar(item) then
         begin
-          FStringBuilder.Append(' # ');
-          FStringBuilder.Append(item.Comment);
+          WriteSequenceBlockScalar(item.AsString);
+        end
+        else
+        begin
+          itemStr := FormatScalar(item);
+          FStringBuilder.Reset;
+          FStringBuilder.Append(GetIndent);
+          FStringBuilder.Append('- ');
+          FStringBuilder.Append(itemStr);
+          if item.Comment <> '' then
+          begin
+            FStringBuilder.Append(' # ');
+            FStringBuilder.Append(item.Comment);
+          end;
+          AddLine(FStringBuilder.ToString);
         end;
-        AddLine(FStringBuilder.ToString);
       end;
     end;
   end;
@@ -985,19 +1190,27 @@ begin
         end;
       else
         begin
-          valueStr := FormatScalar(value);
-          FStringBuilder.Reset;
-          FStringBuilder.Append(GetIndent);
-          FStringBuilder.Append('- ');
-          FStringBuilder.Append(key);
-          FStringBuilder.Append(': ');
-          FStringBuilder.Append(valueStr);
-          if value.Comment <> '' then
+          // Check if we should use block scalar style for multiline strings
+          if ShouldUseBlockScalar(value) then
           begin
-            FStringBuilder.Append(' # ');
-            FStringBuilder.Append(value.Comment);
+            WriteSequenceMappingBlockScalar(value.AsString, key, '- ');
+          end
+          else
+          begin
+            valueStr := FormatScalar(value);
+            FStringBuilder.Reset;
+            FStringBuilder.Append(GetIndent);
+            FStringBuilder.Append('- ');
+            FStringBuilder.Append(key);
+            FStringBuilder.Append(': ');
+            FStringBuilder.Append(valueStr);
+            if value.Comment <> '' then
+            begin
+              FStringBuilder.Append(' # ');
+              FStringBuilder.Append(value.Comment);
+            end;
+            AddLine(FStringBuilder.ToString);
           end;
-          AddLine(FStringBuilder.ToString);
         end;
       end;
       firstKey := False;
@@ -1056,19 +1269,27 @@ begin
         end;
       else
         begin
-          valueStr := FormatScalar(value);
-          FStringBuilder.Reset;
-          FStringBuilder.Append(GetIndent);
-          FStringBuilder.Append('  ');
-          FStringBuilder.Append(key);
-          FStringBuilder.Append(': ');
-          FStringBuilder.Append(valueStr);
-          if value.Comment <> '' then
+          // Check if we should use block scalar style for multiline strings
+          if ShouldUseBlockScalar(value) then
           begin
-            FStringBuilder.Append(' # ');
-            FStringBuilder.Append(value.Comment);
+            WriteSequenceMappingBlockScalar(value.AsString, key, '  ');
+          end
+          else
+          begin
+            valueStr := FormatScalar(value);
+            FStringBuilder.Reset;
+            FStringBuilder.Append(GetIndent);
+            FStringBuilder.Append('  ');
+            FStringBuilder.Append(key);
+            FStringBuilder.Append(': ');
+            FStringBuilder.Append(valueStr);
+            if value.Comment <> '' then
+            begin
+              FStringBuilder.Append(' # ');
+              FStringBuilder.Append(value.Comment);
+            end;
+            AddLine(FStringBuilder.ToString);
           end;
-          AddLine(FStringBuilder.ToString);
         end;
       end;
     end;

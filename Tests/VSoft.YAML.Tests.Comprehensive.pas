@@ -1348,7 +1348,7 @@ begin
 
   root.AddOrSetValue('test_bool', True);
   root.AddOrSetValue('test_int', 42);
-  root.AddOrSetValue('test_float', 3.14);
+  root.AddOrSetValue('test_float', Double(3.14));
   root.AddOrSetValue('test_string', 'Hello World');
 
   Assert.IsTrue(root.Items['test_bool'].AsBoolean);

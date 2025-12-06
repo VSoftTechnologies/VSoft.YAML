@@ -62,6 +62,7 @@ type
     function AsBoolean : boolean;
     function AsInteger : Int64;
     function AsFloat : Double;
+    function AsCurrency : Currency;
     function AsString : string;
     function AsSequence : IYAMLSequence;
     function AsMapping : IYAMLMapping;
@@ -123,6 +124,7 @@ type
     function GetLong(index: Integer): Int64;
     function GetULong(index: Integer): UInt64;
     function GetFloat(index: Integer): Double;
+    function GetCurrency(index: Integer): Currency;
     function GetDateTime(index: Integer): TDateTime;
     function GetUtcDateTime(index: Integer): TDateTime;
     function GetBool(index: Integer): Boolean;
@@ -134,6 +136,7 @@ type
     procedure SetLong(index: Integer; const value: Int64);
     procedure SetULong(index: Integer; const value: UInt64);
     procedure SetFloat(index: Integer; const value: double);
+    procedure SetCurrency(index: Integer; const value: Currency);
     procedure SetDateTime(index: Integer; const value: TDateTime);
     procedure SetUtcDateTime(index: Integer; const value: TDateTime);
     procedure SetBool(index: Integer; const value: Boolean);
@@ -160,6 +163,8 @@ type
     function AddValue(const value : Single; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
     function AddValue(const value : Double; const tag : string = '') : IYAMLValue; overload;
     function AddValue(const value : Double; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
+    function AddCurrencyValue(const value : Currency; const tag : string = '') : IYAMLValue; overload;
+    function AddCurrencyValue(const value : Currency; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
     function AddValue(const value : string; const tag : string = '') : IYAMLValue; overload;
     function AddValue(const value : string; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
     function AddValue(const value : TDateTime; isUTC : boolean; const tag : string = '') : IYAMLValue; overload;
@@ -216,6 +221,7 @@ type
 
 
     procedure AddOrSetValue(const key : string; const value : IYAMLValue);overload;
+
     function AddOrSetValue(const key : string; const value : boolean) : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : Int32) : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : UInt32) : IYAMLValue; overload;
@@ -223,6 +229,7 @@ type
     function AddOrSetValue(const key : string; const value : UInt64) : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : Single) : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : Double) : IYAMLValue; overload;
+    function AddOrSetValue(const key : string; const value : Currency) : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : string) : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean) : IYAMLValue; overload;
 
@@ -241,6 +248,8 @@ type
     function AddOrSetValue(const key : string; const value : Single; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : Double; const tag : string) : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : Double; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
+    function AddOrSetCurrencyValue(const key : string; const value : Currency; const tag : string) : IYAMLValue; overload;
+    function AddOrSetCurrencyValue(const key : string; const value : Currency; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : string; const tag : string) : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : string; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean; const tag : string) : IYAMLValue; overload;
@@ -266,6 +275,7 @@ type
     function GetObjectLong(const key: string): Int64;
     function GetObjectULong(const key: string): UInt64;
     function GetObjectFloat(const key: string): Double;
+    function GetObjectCurrency(const key: string): Currency;
     function GetObjectDateTime(const key: string): TDateTime;
     function GetObjectUtcDateTime(const key: string): TDateTime;
     function GetObjectBool(const key: string): Boolean;
@@ -277,6 +287,7 @@ type
     procedure SetObjectLong(const key: string; const Value: Int64);
     procedure SetObjectULong(const key: string; const Value: UInt64);
     procedure SetObjectFloat(const key: string; const Value: Double);
+    procedure SetObjectCurrency(const key: string; const Value: Currency);
     procedure SetObjectDateTime(const key: string; const Value: TDateTime);
     procedure SetObjectUtcDateTime(const key: string; const Value: TDateTime);
     procedure SetObjectBool(const key: string; const Value: Boolean);
@@ -305,6 +316,8 @@ type
     FEmitTagDirectives : boolean;
     FEmitYAMLDirective : boolean;
     FPrettyPrint : boolean;
+    FBlockScalarStyle : TYAMLBlockScalarStyle;
+    FBlockChompingIndicator : TYAMLBlockChompingIndicator;
   protected
     function GetFormat : TYAMLOutputFormat;
     procedure SetFormat(value : TYAMLOutputFormat);
@@ -330,6 +343,10 @@ type
     procedure SetEmitYAMLDirective(value : boolean);
     function GetPrettyPrint : boolean;inline;
     procedure SetPrettyPrint(const value : boolean);
+    function GetBlockScalarStyle : TYAMLBlockScalarStyle;
+    procedure SetBlockScalarStyle(value : TYAMLBlockScalarStyle);
+    function GetBlockChompingIndicator : TYAMLBlockChompingIndicator;
+    procedure SetBlockChompingIndicator(value : TYAMLBlockChompingIndicator);
 
     function Clone : IYAMLEmitOptions;
     constructor CreateClone(const source : IYAMLEmitOptions);
@@ -504,6 +521,27 @@ begin
   if not IsCollection then
     raise Exception.Create('Value is not a collection');
   result := Self as IYAMLCollection;
+end;
+
+function TYAMLValue.AsCurrency: Currency;
+var
+  trimmedValue : string;
+begin
+  if not IsFloat then
+    raise Exception.Create('Value is not a float');
+
+  trimmedValue := Trim(FRawValue);
+
+  // Handle special YAML float values
+  if SameText(trimmedValue, '.nan') or SameText(trimmedValue, '.NaN') or SameText(trimmedValue, '.NAN') then
+    result := 0 //currency doesn't support NaN
+  else if SameText(trimmedValue, '.inf') or SameText(trimmedValue, '.Inf') or SameText(trimmedValue, '.INF') or
+          SameText(trimmedValue, '+.inf') or SameText(trimmedValue, '+.Inf') or SameText(trimmedValue, '+.INF') then
+    result := 0 // or infinity
+  else if SameText(trimmedValue, '-.inf') or SameText(trimmedValue, '-.Inf') or SameText(trimmedValue, '-.INF') then
+    result := 0
+  else
+    result := StrToCurr(trimmedValue, YAMLFormatSettings);
 end;
 
 function TYAMLValue.AsLocalDateTime : TDateTime;
@@ -900,6 +938,18 @@ begin
   AddValue(result);
 end;
 
+function TYAMLSequence.AddCurrencyValue(const value: Currency; const tagInfo: IYAMLTagInfo): IYAMLValue;
+begin
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, CurrToStr(value, YAMLFormatSettings), tagInfo);
+  AddValue(result);
+end;
+
+function TYAMLSequence.AddCurrencyValue(const value: Currency; const tag: string): IYAMLValue;
+begin
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, CurrToStr(value, YAMLFormatSettings), tag);
+  AddValue(result);
+end;
+
 function TYAMLSequence.AddMapping(const tagInfo : IYAMLTagInfo) : IYAMLMapping;
 begin
   result := TYAMLMapping.Create(Self, tagInfo);
@@ -1118,6 +1168,14 @@ begin
   result := FItems.Count;
 end;
 
+function TYAMLSequence.GetCurrency(index: Integer): Currency;
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    result := FItems[index].AsCurrency
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+end;
+
 function TYAMLSequence.GetDateTime(index: Integer): TDateTime;
 begin
   if (index >= 0) and (index < FItems.Count) then
@@ -1229,6 +1287,14 @@ procedure TYAMLSequence.SetBool(index: Integer; const value: Boolean);
 begin
   if (index >= 0) and (index < FItems.Count) then
     FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtBoolean, LowerCase(BoolToStr(value,true)))
+  else
+    raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
+end;
+
+procedure TYAMLSequence.SetCurrency(index: Integer; const value: Currency);
+begin
+  if (index >= 0) and (index < FItems.Count) then
+    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, CurrToStr(value, YAMLFormatSettings))
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -1524,6 +1590,24 @@ begin
 end;
 
 
+function TYAMLMapping.AddOrSetCurrencyValue(const key: string; const value: Currency; const tagInfo: IYAMLTagInfo): IYAMLValue;
+begin
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, CurrToStr(value, YAMLFormatSettings), tagInfo);
+  AddOrSetValue(key, result);
+end;
+
+function TYAMLMapping.AddOrSetCurrencyValue(const key: string; const value: Currency; const tag: string): IYAMLValue;
+begin
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, CurrToStr(value, YAMLFormatSettings), tag);
+  AddOrSetValue(key, result);
+end;
+
+function TYAMLMapping.AddOrSetValue(const key: string; const value: Currency): IYAMLValue;
+begin
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, CurrToStr(value, YAMLFormatSettings));
+  AddOrSetValue(key, result);
+end;
+
 procedure TYAMLMapping.Clear;
 begin
   FKeys.Clear;
@@ -1588,10 +1672,7 @@ end;
 
 function TYAMLMapping.GetKey(Index : integer) : string;
 begin
-  if (index >= 0) and (Index < FKeys.Count) then
-    result := FKeys[index]
-  else
-    raise EArgumentOutOfRangeException.Create('Index out of range');
+  result := FKeys[index]
 end;
 
 function TYAMLMapping.GetNodes(Index : integer) : IYAMLValue;
@@ -1615,6 +1696,16 @@ begin
   if not TryGetValue(key, value ) then
     value := AddOrSetValue(key, false);
   result := value.AsBoolean;
+end;
+
+function TYAMLMapping.GetObjectCurrency(const key: string): Currency;
+var
+  value : IYAMLValue;
+begin
+  if not TryGetValue(key, value ) then
+    value := AddOrSetValue(key, 0);
+  result := value.AsFloat;
+
 end;
 
 function TYAMLMapping.GetObjectDateTime(const key: string): TDateTime;
@@ -1736,6 +1827,11 @@ begin
 end;
 
 procedure TYAMLMapping.SetObjectBool(const key: string; const Value: Boolean);
+begin
+  AddOrSetValue(key,Value);
+end;
+
+procedure TYAMLMapping.SetObjectCurrency(const key: string; const Value: Currency);
 begin
   AddOrSetValue(key,Value);
 end;
@@ -1917,6 +2013,8 @@ begin
   FEmitTagDirectives := false;
   FEmitYAMLDirective := false;
   FPrettyPrint := true;
+  FBlockScalarStyle := TYAMLBlockScalarStyle.bssNone;
+  FBlockChompingIndicator := TYAMLBlockChompingIndicator.bciClip;
 end;
 
 constructor TYAMLEmitOptions.CreateClone(const source: IYAMLEmitOptions);
@@ -1933,6 +2031,8 @@ begin
   FEmitTagDirectives := source.EmitTagDirectives;
   FEmitYAMLDirective := source.EmitYAMLDirective;
   FPrettyPrint := source.PrettyPrint;
+  FBlockScalarStyle := source.BlockScalarStyle;
+  FBlockChompingIndicator := source.BlockChompingIndicator;
 end;
 
 destructor TYAMLEmitOptions.Destroy;
@@ -2069,6 +2169,26 @@ end;
 procedure TYAMLEmitOptions.SetEmitYAMLDirective(value: boolean);
 begin
   FEmitYAMLDirective := value;
+end;
+
+function TYAMLEmitOptions.GetBlockScalarStyle : TYAMLBlockScalarStyle;
+begin
+  result := FBlockScalarStyle;
+end;
+
+procedure TYAMLEmitOptions.SetBlockScalarStyle(value : TYAMLBlockScalarStyle);
+begin
+  FBlockScalarStyle := value;
+end;
+
+function TYAMLEmitOptions.GetBlockChompingIndicator : TYAMLBlockChompingIndicator;
+begin
+  result := FBlockChompingIndicator;
+end;
+
+procedure TYAMLEmitOptions.SetBlockChompingIndicator(value : TYAMLBlockChompingIndicator);
+begin
+  FBlockChompingIndicator := value;
 end;
 
 { TYAMLParserOptions }

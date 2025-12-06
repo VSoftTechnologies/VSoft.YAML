@@ -361,7 +361,7 @@ begin
 
   FStream := stream;
   FEncoding := TEncoding.UTF8;
-  FBufferedData := TBufferedData.Create(4096);
+  FBufferedData := TBufferedData.Create(8192);
   FNoDataInStream := False;
   FOwnsStream := False;
   FDetectBOM := True;

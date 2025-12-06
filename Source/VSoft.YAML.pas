@@ -44,6 +44,19 @@ type
     yofMixed      // Mixed style (flow for simple, block for complex)
   );
 
+  // YAML block scalar style options
+  TYAMLBlockScalarStyle = (
+    bssNone,      // Don't use block scalars (escape newlines in quotes)
+    bssLiteral,   // Use literal style (|) - preserves line breaks exactly
+    bssFolded     // Use folded style (>) - folds line breaks into spaces
+  );
+
+  // YAML block scalar chomping indicator options
+  TYAMLBlockChompingIndicator = (
+    bciClip,      // Default - single trailing newline preserved (no indicator)
+    bciStrip,     // All trailing newlines removed (-)
+    bciKeep       // All trailing newlines preserved (+)
+  );
 
   TYAMLDuplicateKeyBehavior = (
     dkOverwrite,  // the value will overwrite the existing one.
@@ -121,6 +134,7 @@ type
     function AsBoolean : boolean;
     function AsInteger : Int64;
     function AsFloat : Double;
+    function AsCurrency : Currency;
     function AsString : string;
     function AsSequence : IYAMLSequence;
     function AsMapping : IYAMLMapping;
@@ -191,6 +205,7 @@ type
     function GetObjectLong(const key: string): Int64;
     function GetObjectULong(const key: string): UInt64;
     function GetObjectFloat(const key: string): Double;
+    function GetObjectCurrency(const key: string): Currency;
     function GetObjectDateTime(const key: string): TDateTime;
     function GetObjectUtcDateTime(const key: string): TDateTime;
     function GetObjectBool(const key: string): Boolean;
@@ -202,6 +217,7 @@ type
     procedure SetObjectLong(const key: string; const Value: Int64);
     procedure SetObjectULong(const key: string; const Value: UInt64);
     procedure SetObjectFloat(const key: string; const Value: Double);
+    procedure SetObjectCurrency(const key: string; const Value: Currency);
     procedure SetObjectDateTime(const key: string; const Value: TDateTime);
     procedure SetObjectUtcDateTime(const key: string; const Value: TDateTime);
     procedure SetObjectBool(const key: string; const Value: Boolean);
@@ -229,6 +245,10 @@ type
 
     function AddOrSetValue(const key : string; const value : double; const tag : string = '') : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : double; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
+
+    function AddOrSetCurrencyValue(const key : string; const value : Currency; const tag : string = '') : IYAMLValue; overload;
+    function AddOrSetCurrencyValue(const key : string; const value : Currency; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
+
 
     function AddOrSetValue(const key : string; const value : string; const tag : string = '') : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : string; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
@@ -259,6 +279,7 @@ type
     property L[const key: string]: Int64 read GetObjectLong write SetObjectLong;             // returns 0 if property doesn't exist, auto type-cast except for array/object
     property U[const key: string]: UInt64 read GetObjectULong write SetObjectULong;          // returns 0 if property doesn't exist, auto type-cast except for array/object
     property F[const key: string]: Double read GetObjectFloat write SetObjectFloat;          // returns 0 if property doesn't exist, auto type-cast except for array/object
+    property C[const key: string]: Currency read GetObjectCurrency write SetObjectCurrency;          // returns 0 if property doesn't exist, auto type-cast except for array/object
     property D[const key: string]: TDateTime read GetObjectDateTime write SetObjectDateTime; // returns 0 if property doesn't exist, auto type-cast except for array/object
     property DUtc[const key: string]: TDateTime read GetObjectUtcDateTime write SetObjectUtcDateTime; // returns 0 if property doesn't exist, auto type-cast except for array/object
     property B[const key: string]: Boolean read GetObjectBool write SetObjectBool;           // returns false if property doesn't exist, auto type-cast with "<>'true'" and "<>0" except for array/object
@@ -283,6 +304,7 @@ type
     function GetLong(index: Integer): Int64;
     function GetULong(index: Integer): UInt64;
     function GetFloat(index: Integer): Double;
+    function GetCurrency(index: Integer): Currency;
     function GetDateTime(index: Integer): TDateTime;
     function GetUtcDateTime(index: Integer): TDateTime;
     function GetBool(index: Integer): Boolean;
@@ -294,6 +316,7 @@ type
     procedure SetLong(index: Integer; const value: Int64);
     procedure SetULong(index: Integer; const value: UInt64);
     procedure SetFloat(index: Integer; const value: double);
+    procedure SetCurrency(index: Integer; const value: Currency);
     procedure SetDateTime(index: Integer; const value: TDateTime);
     procedure SetUtcDateTime(index: Integer; const value: TDateTime);
     procedure SetBool(index: Integer; const value: Boolean);
@@ -325,6 +348,9 @@ type
     function AddValue(const value : double; const tag : string = '') : IYAMLValue; overload;
     function AddValue(const value : double; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
 
+    function AddCurrencyValue(const value : Currency; const tag : string = '') : IYAMLValue; overload;
+    function AddCurrencyValue(const value : Currency; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
+
     function AddValue(const value : string; const tag : string = '') : IYAMLValue; overload;
     function AddValue(const value : string; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
 
@@ -348,6 +374,7 @@ type
     property L[Index: Integer]: Int64 read GetLong write SetLong;
     property U[Index: Integer]: UInt64 read GetULong write SetULong;
     property F[Index: Integer]: Double read GetFloat write SetFloat;
+    property C[Index: Integer]: Currency read GetCurrency write SetCurrency;
     property D[Index: Integer]: TDateTime read GetDateTime write SetDateTime;
     property DUtc[Index: Integer]: TDateTime read GetUtcDateTime write SetUtcDateTime;
     property B[Index: Integer]: Boolean read GetBool write SetBool;
@@ -392,6 +419,10 @@ type
     procedure SetEmitYAMLDirective(value : boolean);
     function GetPrettyPrint : boolean;
     procedure SetPrettyPrint(const value : boolean);
+    function GetBlockScalarStyle : TYAMLBlockScalarStyle;
+    procedure SetBlockScalarStyle(value : TYAMLBlockScalarStyle);
+    function GetBlockChompingIndicator : TYAMLBlockChompingIndicator;
+    procedure SetBlockChompingIndicator(value : TYAMLBlockChompingIndicator);
 
     function Clone : IYAMLEmitOptions;
 
@@ -414,7 +445,8 @@ type
 
     property EmitTags : boolean read GetEmitTags write SetEmitTags;
     property EmitExplicitNull : boolean read GetEmitExplicitNull write SetEmitExplicitNull;
-
+    property BlockScalarStyle : TYAMLBlockScalarStyle read GetBlockScalarStyle write SetBlockScalarStyle;
+    property BlockChompingIndicator : TYAMLBlockChompingIndicator read GetBlockChompingIndicator write SetBlockChompingIndicator;
 
     //JSON only
     property PrettyPrint : boolean read GetPrettyPrint write SetPrettyPrint;
