@@ -1016,12 +1016,9 @@ begin
         end;
         
         key := FCurrentToken.value;
-        //don't check dupes here, we need to parse fully
-        if result.ContainsKey(key) then
-        begin
-          if FOptions.DuplicateKeyBehavior = TYAMLDuplicateKeyBehavior.dkError then
-            RaiseParseError('duplicated mapping key : "' + key + '"');
-        end;
+        // Only check for duplicates if we're in error mode (skip lookup otherwise)
+        if (FOptions.DuplicateKeyBehavior = TYAMLDuplicateKeyBehavior.dkError) and result.ContainsKey(key) then
+          RaiseParseError('duplicated mapping key : "' + key + '"');
 
         keyIndentLevel := FCurrentToken.IndentLevel; // Store the key's indentation
         
@@ -1129,8 +1126,16 @@ end;
 
 function TYAMLParser.ParseValue(const parent : IYAMLValue; const tag : string) : IYAMLValue;
 begin
-  SkipNewlines;
-//  WriteLn('ParseValue : ' + FCurrentToken.value);
+  // Skip whitespace tokens iteratively (prevents stack overflow on files with many blank lines/comments)
+  while FCurrentToken.TokenKind in [TYAMLTokenKind.NewLine, TYAMLTokenKind.Indent, TYAMLTokenKind.Comment] do
+  begin
+    if FCurrentToken.TokenKind = TYAMLTokenKind.Comment then
+      ProcessComment
+    else
+      NextToken;
+    if FCurrentToken.TokenKind = TYAMLTokenKind.EOF then
+      Break;
+  end;
 
   case FCurrentToken.TokenKind of
     TYAMLTokenKind.EOF :
@@ -1181,22 +1186,7 @@ begin
     TYAMLTokenKind.Folded :
       result := ParseScalar(parent, tag);
 
-    TYAMLTokenKind.NewLine :
-    begin
-      NextToken;
-      result := ParseValue(parent); // Recursively parse after newline
-    end;
-
-    TYAMLTokenKind.Indent :
-    begin
-      NextToken;
-      result := ParseValue(parent); // Parse indented content
-    end;
-    TYAMLTokenKind.Comment :
-    begin
-      ProcessComment;
-      result := ParseValue(parent);
-    end;
+    // Note: NewLine, Indent, Comment tokens are handled iteratively above
 
     TYAMLTokenKind.RBracket :
       RaiseParseError('Unexpected closing bracket "]" - no matching opening bracket');

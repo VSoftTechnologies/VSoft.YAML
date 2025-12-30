@@ -73,7 +73,7 @@ begin
   FPrettyPrint := FOptions.PrettyPrint;
   FWriter := nil;
   FIndentLevel := 0;
-  FStringBuilder := TStringBuilder.Create(1024);
+  FStringBuilder := TStringBuilder.Create(8192);  // Increased capacity for large documents
 end;
 
 destructor TJSONWriterImpl.Destroy;

@@ -100,7 +100,7 @@ begin
   FIndentLevel := 0;
   FCurrentIndent := '';
   FWriter := nil;
-  FStringBuilder := TStringBuilder.Create(4096);
+  FStringBuilder := TStringBuilder.Create(16384);  // Increased capacity for large documents
 end;
 
 destructor TYAMLWriterImpl.Destroy;
@@ -616,7 +616,8 @@ end;
 
 procedure TYAMLWriterImpl.WriteIndent;
 begin
-  FStringBuilder.Append(TYAMLCharUtils.SpaceStr(FIndentLevel * FOptions.IndentSize));
+  // Use cached indent string instead of recalculating each time
+  FStringBuilder.Append(FCurrentIndent);
 end;
 
 procedure TYAMLWriterImpl.WriteValue(const value : IYAMLValue);

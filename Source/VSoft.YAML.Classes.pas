@@ -1436,10 +1436,14 @@ begin
 end;
 
 procedure TYAMLMapping.AddOrSetValue(const key : string; const value : IYAMLValue);
+var
+  oldCount: Integer;
 begin
-  if not FPairs.ContainsKey(key) then
-    FKeys.Add(key);
+  // Use count comparison to detect new key - avoids double lookup
+  oldCount := FPairs.Count;
   FPairs.AddOrSetValue(key, value);
+  if FPairs.Count > oldCount then
+    FKeys.Add(key);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : boolean) : IYAMLValue;
@@ -2230,7 +2234,7 @@ begin
   ValueStr := value.AsString;
 
   // Check for duplicates using string representation
-  if not FValues.IndexOf(ValueStr) >= 0 then
+  if FValues.IndexOf(ValueStr) < 0 then
   begin
     FValues.Add(ValueStr);
     inherited AddValue(value);

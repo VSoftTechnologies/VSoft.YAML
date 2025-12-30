@@ -84,7 +84,7 @@ uses
 
 
 const
-  _stringOfChar  : array[1..16] of string = (
+  _stringOfChar  : array[1..32] of string = (
   ' ',
   '  ',
   '   ',
@@ -93,7 +93,6 @@ const
   '      ',
   '       ',
   '        ',
-
   '         ',
   '          ',
   '           ',
@@ -101,7 +100,23 @@ const
   '             ',
   '              ',
   '               ',
-  '                '
+  '                ',
+  '                 ',
+  '                  ',
+  '                   ',
+  '                    ',
+  '                     ',
+  '                      ',
+  '                       ',
+  '                        ',
+  '                         ',
+  '                          ',
+  '                           ',
+  '                            ',
+  '                             ',
+  '                              ',
+  '                               ',
+  '                                '
 );
 
 
@@ -417,7 +432,7 @@ begin
   if count < 1 then
     exit('');
   case count of
-    1..16: result := _stringOfChar[count];
+    1..32: result := _stringOfChar[count];  // Extended cache for deeply nested documents
   else
     result := TYAMLCharUtils.StringOfChar(' ',count);
   end;
