@@ -74,9 +74,17 @@ type
     [Test]
     procedure Test_DocumentOptions_EmitDocumentMarkers;
     [Test]
+    procedure Test_DocumentOptions_EmitDocumentMarkers_ValueOverload_WriteToString;
+    [Test]
+    procedure Test_DocumentOptions_EmitDocumentMarkers_ValueOverload_WriteToFile;
+    [Test]
     procedure Test_DocumentOptions_WriteTags;
     [Test]
     procedure Test_DocumentOptions_WriteExplicitNull;
+    [Test]
+    procedure Test_DocumentOptions_EmitYAMLDirective;
+    [Test]
+    procedure Test_DocumentOptions_EmitTagDirectives;
 
     // String handling tests
     [Test]
@@ -119,6 +127,24 @@ type
     procedure Test_WriteToFile_ComplexDocument;
     [Test]
     procedure Test_WriteToFile_WithEncoding;
+    [Test]
+    procedure Test_WriteToFile_VerifyBOM;
+    [Test]
+    procedure Test_WriteToFile_MultipleDocuments;
+
+    // Stream writing tests
+    [Test]
+    procedure Test_WriteToStream_DocOverload;
+    [Test]
+    procedure Test_WriteToStream_ValueOverload;
+    [Test]
+    procedure Test_WriteToStream_MultipleDocuments;
+
+    // Comment writing tests
+    [Test]
+    procedure Test_WriteScalar_InlineComment;
+    [Test]
+    procedure Test_WriteCollection_PreComments;
 
     // Round-trip tests
     [Test]
@@ -656,6 +682,63 @@ begin
   
   // Should contain document markers
   Assert.Contains(yamlStr, '---');
+end;
+
+procedure TYAMLWriterTests.Test_DocumentOptions_EmitDocumentMarkers_ValueOverload_WriteToString;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  opts: IYAMLEmitOptions;
+  yamlStr: string;
+begin
+  doc := TYAML.CreateMapping;
+  root := doc.AsMapping;
+  root.AddOrSetValue('key', 'value');
+
+  opts := TYAMLEmitOptions.Create;
+  opts.EmitDocumentMarkers := True;
+
+  yamlStr := TYAML.WriteToString(doc.Root, opts);
+
+  Assert.Contains(yamlStr, '---');
+  Assert.Contains(yamlStr, '...');
+end;
+
+procedure TYAMLWriterTests.Test_DocumentOptions_EmitDocumentMarkers_ValueOverload_WriteToFile;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  opts: IYAMLEmitOptions;
+  fileName: string;
+  fileContent: string;
+  sl: TStringList;
+begin
+  doc := TYAML.CreateMapping;
+  root := doc.AsMapping;
+  root.AddOrSetValue('key', 'value');
+
+  opts := TYAMLEmitOptions.Create;
+  opts.EmitDocumentMarkers := True;
+
+  fileName := TPath.GetTempFileName;
+  try
+    TYAML.WriteToFile(doc.Root, fileName, opts);
+    Assert.IsTrue(FileExists(fileName));
+
+    sl := TStringList.Create;
+    try
+      sl.LoadFromFile(fileName);
+      fileContent := sl.Text;
+    finally
+      sl.Free;
+    end;
+
+    Assert.Contains(fileContent, '---');
+    Assert.Contains(fileContent, '...');
+  finally
+    if FileExists(fileName) then
+      DeleteFile(fileName);
+  end;
 end;
 
 procedure TYAMLWriterTests.Test_DocumentOptions_WriteTags;
@@ -2018,6 +2101,272 @@ begin
   // With keep, trailing newlines should be preserved
   Assert.Contains(loadedValue, 'Line 1', 'Should contain Line 1');
   Assert.Contains(loadedValue, 'Line 2', 'Should contain Line 2');
+end;
+
+procedure TYAMLWriterTests.Test_DocumentOptions_EmitYAMLDirective;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  yamlStr: string;
+begin
+  doc := TYAML.LoadFromString('%YAML 1.2' + sLineBreak + '---' + sLineBreak + 'key: value');
+  root := doc.AsMapping;
+
+  doc.Options.EmitYAMLDirective := True;
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.Contains(yamlStr, '%YAML 1.2', 'Output should contain YAML version directive');
+  Assert.Contains(yamlStr, 'key: value', 'Output should still contain document content');
+end;
+
+procedure TYAMLWriterTests.Test_DocumentOptions_EmitTagDirectives;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  yamlStr: string;
+  yamlText: string;
+begin
+  yamlText :=
+    '%YAML 1.2' + sLineBreak +
+    '%TAG !custom! tag:example.com,2023:' + sLineBreak +
+    '---' + sLineBreak +
+    'key: value';
+
+  doc := TYAML.LoadFromString(yamlText);
+  root := doc.AsMapping;
+
+  doc.Options.EmitTagDirectives := True;
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.Contains(yamlStr, '%TAG', 'Output should contain TAG directive');
+  Assert.Contains(yamlStr, 'key: value', 'Output should still contain document content');
+end;
+
+procedure TYAMLWriterTests.Test_WriteToFile_VerifyBOM;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  fileName: string;
+  fs: TFileStream;
+  bomBytes: array[0..2] of Byte;
+begin
+  doc := TYAML.CreateMapping;
+  root := doc.AsMapping;
+  root.AddOrSetValue('key', 'value');
+
+  doc.Options.Encoding := TEncoding.UTF8;
+  doc.Options.WriteByteOrderMark := True;
+
+  fileName := TPath.GetTempFileName;
+  try
+    TYAML.WriteToFile(doc, fileName);
+
+    fs := TFileStream.Create(fileName, fmOpenRead);
+    try
+      Assert.AreEqual(3, fs.Read(bomBytes, 3), 'Should read 3 BOM bytes');
+      Assert.AreEqual<Byte>($EF, bomBytes[0], 'BOM byte 1 (EF) incorrect');
+      Assert.AreEqual<Byte>($BB, bomBytes[1], 'BOM byte 2 (BB) incorrect');
+      Assert.AreEqual<Byte>($BF, bomBytes[2], 'BOM byte 3 (BF) incorrect');
+    finally
+      fs.Free;
+    end;
+  finally
+    if FileExists(fileName) then
+      DeleteFile(fileName);
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_WriteToFile_MultipleDocuments;
+var
+  docs: TArray<IYAMLDocument>;
+  doc1, doc2: IYAMLDocument;
+  root1, root2: IYAMLMapping;
+  fileName: string;
+  loadedDocs: TArray<IYAMLDocument>;
+begin
+  doc1 := TYAML.CreateMapping;
+  root1 := doc1.AsMapping;
+  root1.AddOrSetValue('title', 'First');
+
+  doc2 := TYAML.CreateMapping;
+  root2 := doc2.AsMapping;
+  root2.AddOrSetValue('title', 'Second');
+
+  SetLength(docs, 2);
+  docs[0] := doc1;
+  docs[1] := doc2;
+
+  fileName := TPath.GetTempFileName;
+  try
+    TYAML.WriteToFile(docs, fileName);
+    Assert.IsTrue(FileExists(fileName));
+
+    loadedDocs := TYAML.LoadAllFromFile(fileName);
+    Assert.AreEqual<Int64>(2, Length(loadedDocs), 'Should load back 2 documents');
+    Assert.AreEqual('First', loadedDocs[0].Root.Values['title'].AsString);
+    Assert.AreEqual('Second', loadedDocs[1].Root.Values['title'].AsString);
+  finally
+    if FileExists(fileName) then
+      DeleteFile(fileName);
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_WriteToStream_DocOverload;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  stream: TMemoryStream;
+  reader: TStreamReader;
+  yamlStr: string;
+begin
+  doc := TYAML.CreateMapping;
+  root := doc.AsMapping;
+  root.AddOrSetValue('name', 'StreamTest');
+  root.AddOrSetValue('value', 99);
+
+  stream := TMemoryStream.Create;
+  try
+    TYAML.WriteToStream(doc, stream);
+
+    stream.Position := 0;
+    reader := TStreamReader.Create(stream, TEncoding.UTF8, True);
+    try
+      yamlStr := reader.ReadToEnd;
+    finally
+      reader.Free;
+    end;
+
+    Assert.Contains(yamlStr, 'name: StreamTest');
+    Assert.Contains(yamlStr, 'value: 99');
+  finally
+    stream.Free;
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_WriteToStream_ValueOverload;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  stream: TMemoryStream;
+  reader: TStreamReader;
+  opts: IYAMLEmitOptions;
+  yamlStr: string;
+begin
+  doc := TYAML.CreateMapping;
+  root := doc.AsMapping;
+  root.AddOrSetValue('key', 'written to stream');
+
+  opts := TYAMLEmitOptions.Create;
+
+  stream := TMemoryStream.Create;
+  try
+    TYAML.WriteToStream(doc.Root, stream, opts);
+
+    stream.Position := 0;
+    reader := TStreamReader.Create(stream, TEncoding.UTF8, True);
+    try
+      yamlStr := reader.ReadToEnd;
+    finally
+      reader.Free;
+    end;
+
+    Assert.Contains(yamlStr, 'key: written to stream');
+  finally
+    stream.Free;
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_WriteToStream_MultipleDocuments;
+var
+  docs: TArray<IYAMLDocument>;
+  doc1, doc2: IYAMLDocument;
+  root1, root2: IYAMLMapping;
+  stream: TMemoryStream;
+  reader: TStreamReader;
+  yamlStr: string;
+begin
+  doc1 := TYAML.CreateMapping;
+  root1 := doc1.AsMapping;
+  root1.AddOrSetValue('title', 'Alpha');
+
+  doc2 := TYAML.CreateMapping;
+  root2 := doc2.AsMapping;
+  root2.AddOrSetValue('title', 'Beta');
+
+  SetLength(docs, 2);
+  docs[0] := doc1;
+  docs[1] := doc2;
+
+  stream := TMemoryStream.Create;
+  try
+    TYAML.WriteToStream(docs, stream);
+
+    stream.Position := 0;
+    reader := TStreamReader.Create(stream, TEncoding.UTF8, True);
+    try
+      yamlStr := reader.ReadToEnd;
+    finally
+      reader.Free;
+    end;
+
+    Assert.Contains(yamlStr, 'title: Alpha');
+    Assert.Contains(yamlStr, 'title: Beta');
+    Assert.Contains(yamlStr, '---', 'Multiple documents should include separators');
+  finally
+    stream.Free;
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_WriteScalar_InlineComment;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  seq: IYAMLSequence;
+  yamlStr: string;
+begin
+  doc := TYAML.CreateMapping;
+  root := doc.AsMapping;
+
+  root.AddOrSetValue('host', 'localhost').Comment := 'database host';
+  root.AddOrSetValue('port', 5432).Comment := 'default port';
+
+  seq := root.AddOrSetSequence('tags');
+  seq.AddValue('prod').Comment := 'production tag';
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.Contains(yamlStr, '# database host', 'Mapping scalar comment missing');
+  Assert.Contains(yamlStr, '# default port', 'Numeric scalar comment missing');
+  Assert.Contains(yamlStr, '# production tag', 'Sequence item comment missing');
+end;
+
+procedure TYAMLWriterTests.Test_WriteCollection_PreComments;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  nested: IYAMLMapping;
+  seq: IYAMLSequence;
+  yamlStr: string;
+begin
+  doc := TYAML.CreateMapping;
+  root := doc.AsMapping;
+
+  nested := root.AddOrSetMapping('database');
+  nested.AddComment('database configuration');
+  nested.AddComment('see docs for details');
+  nested.AddOrSetValue('host', 'localhost');
+
+  seq := root.AddOrSetSequence('servers');
+  seq.AddComment('list of servers');
+  seq.AddValue('web01');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.Contains(yamlStr, '# database configuration', 'First mapping pre-comment missing');
+  Assert.Contains(yamlStr, '# see docs for details', 'Second mapping pre-comment missing');
+  Assert.Contains(yamlStr, '# list of servers', 'Sequence pre-comment missing');
 end;
 
 initialization

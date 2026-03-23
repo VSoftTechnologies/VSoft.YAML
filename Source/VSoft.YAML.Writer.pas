@@ -1371,7 +1371,11 @@ begin
   //force utf16 to avoid round trip encoding conversions
   FWriter := TYAMLStringWriter.Create;
   try
+    if FOptions.EmitDocumentMarkers then
+      FWriter.WriteLine('---');
     WriteValue(value);
+    if FOptions.EmitDocumentMarkers then
+      FWriter.WriteLine('...');
     result := FWriter.ToString;
   finally
     FreeAndNil(FWriter);
@@ -1427,31 +1431,10 @@ end;
 procedure TYAMLWriterImpl.WriteToFile(const doc : IYAMLDocument; const fileName : string);
 var
   fileStream : TFileStream;
-  i : integer;
 begin
   fileStream := TFileStream.Create(fileName, fmCreate);
   try
-    if FOptions.EmitYAMLDirective then
-      FWriter.WriteLine('%YAML ' + doc.Version.ToString);
-
-    if FOptions.EmitTagDirectives then
-    begin
-      //skip the standard tag directives
-      if doc.TagDirectives.Count > 2 then
-      begin
-        for i := 2 to doc.TagDirectives.Count -1 do
-          FWriter.WriteLine('%TAG ' + doc.TagDirectives[i].ToString);
-      end;
-    end;
-
-    if FOptions.EmitDocumentMarkers or FOptions.EmitTagDirectives or FOptions.EmitYAMLDirective then
-      FWriter.WriteLine('---');
-
-    WriteToStream(doc.Root,fileStream);
-
-    if FOptions.EmitDocumentMarkers then
-      FWriter.WriteLine('...') ;
-
+    WriteToStream(doc, fileStream);
   finally
     fileStream.Free;
   end;
@@ -1469,7 +1452,11 @@ begin
     ownsWriter := true;
   end;
   try
+    if ownsWriter and FOptions.EmitDocumentMarkers then
+      FWriter.WriteLine('---');
     WriteValue(value);
+    if ownsWriter and FOptions.EmitDocumentMarkers then
+      FWriter.WriteLine('...');
   finally
     if ownsWriter then
       FreeAndNil(FWriter);

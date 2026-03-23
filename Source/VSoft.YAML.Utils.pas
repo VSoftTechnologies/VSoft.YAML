@@ -509,11 +509,9 @@ begin
   s := Trim(value);
 
   // Initialize values
-//  year := 0; month := 1; day := 1;
   hour := 0; minute := 0; second := 0; millisecond := 0;
   tzOffset := 0;
   hasTimeZone := False;
-//  isNegativeTZ := False;
   // Find timezone indicator (Z, +, or -)
   tzPos := 0;
   for i := Length(s) downto 1 do
