@@ -550,6 +550,8 @@ function TYAMLLexer.ReadUnquotedString(reset : boolean) : string;
 const
   cValueSet =  [#10, #13, '#', '[', ']', '{', '}', ','];
   cNonValueSet = [':', #10, #13, '#', '[', ']', '{', '}', ','];
+var
+  lastNonWSLen : integer;
 
   function DoCheck : boolean;
   begin
@@ -563,14 +565,20 @@ begin
   if reset then
     FStringBuilder.Reset;
 
+  lastNonWSLen := FStringBuilder.Length;
 
   while not IsAtEnd and DoCheck do
   begin
     FStringBuilder.Append(FReader.Current);
+    if not TCharClassHelper.IsWhiteSpace(FReader.Current) then
+      lastNonWSLen := FStringBuilder.Length;
     FReader.Read;
   end;
 
-  result := Trim(FStringBuilder.ToString);
+  // Truncate trailing whitespace in-place before converting to string,
+  // avoiding the extra string allocation that Trim(ToString) would cause.
+  FStringBuilder.Length := lastNonWSLen;
+  result := FStringBuilder.ToString;
 end;
 
 function TYAMLLexer.ReadNumber : string;
@@ -941,7 +949,7 @@ begin
     end;
   end;
 
-  result := Trim(FStringBuilder.ToString);
+  result := FStringBuilder.ToString;
 end;
 
 function TYAMLLexer.IsSpecialFloat : boolean;
