@@ -527,8 +527,8 @@ function TYAMLValue.AsCurrency: Currency;
 var
   trimmedValue : string;
 begin
-  if not IsFloat then
-    raise Exception.Create('Value is not a float');
+  if not (IsFloat or IsInteger) then
+    raise Exception.Create('Value is not numeric');
 
   trimmedValue := Trim(FRawValue);
 
@@ -540,6 +540,8 @@ begin
     result := 0 // or infinity
   else if SameText(trimmedValue, '-.inf') or SameText(trimmedValue, '-.Inf') or SameText(trimmedValue, '-.INF') then
     result := 0
+  else if IsInteger then
+    result := AsInteger
   else
     result := StrToCurr(trimmedValue, YAMLFormatSettings);
 end;
@@ -644,7 +646,12 @@ begin
     if Length(trimmedValue) >= 13 then
     begin
       if TryStrToUInt64(trimmedValue, uInt64Value) then
-        Exit(Int64(uInt64Value));
+      begin
+        if uInt64Value <= UInt64(High(Int64)) then
+          Exit(Int64(uInt64Value))
+        else
+          raise EConvertError.CreateFmt('Value "%s" is too large for Int64', [trimmedValue]);
+      end;
     end;
     result := StrToInt64(trimmedValue);
   end;
@@ -1253,12 +1260,17 @@ end;
 
 
 function TYAMLSequence.GetULong(index: Integer): UInt64;
+var
+  rawStr : string;
 begin
   if (index >= 0) and (index < FItems.Count) then
-    result := UInt64(FItems[index].AsInteger)
+  begin
+    rawStr := Trim(FItems[index].AsString);
+    if not TryStrToUInt64(rawStr, result) then
+      raise EConvertError.CreateFmt('Cannot convert "%s" to UInt64', [rawStr]);
+  end
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
-
 end;
 
 function TYAMLSequence.GetUtcDateTime(index: Integer): TDateTime;
@@ -1571,7 +1583,6 @@ begin
     result := TYAMLValue.Create(Self, TYAMLValueType.vtNull, value, tagInfo)
   else
     result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tagInfo);
-
   AddOrSetValue(key, result);
 end;
 
@@ -1760,11 +1771,13 @@ end;
 function TYAMLMapping.GetObjectULong(const key: string): UInt64;
 var
   value : IYAMLValue;
+  rawStr : string;
 begin
-  if not TryGetValue(key, value ) then
+  if not TryGetValue(key, value) then
     value := AddOrSetValue(key, 0);
-  result := UInt64(value.AsInteger);
-
+  rawStr := Trim(value.AsString);
+  if not TryStrToUInt64(rawStr, result) then
+    raise EConvertError.CreateFmt('Cannot convert "%s" to UInt64', [rawStr]);
 end;
 
 function TYAMLMapping.GetObjectUtcDateTime(const key: string): TDateTime;
@@ -2023,7 +2036,12 @@ end;
 
 constructor TYAMLEmitOptions.CreateClone(const source: IYAMLEmitOptions);
 begin
-  FEncoding := source.Encoding;
+  inherited Create;
+  // Deep copy non-standard encodings to prevent double-free in destructor
+  if (source.Encoding <> nil) and (not TEncoding.IsStandardEncoding(source.Encoding)) then
+    FEncoding := TEncoding.GetEncoding(source.Encoding.CodePage)
+  else
+    FEncoding := source.Encoding;
   FFormat := source.Format;
   FIndentSize := source.IndentSize;
   FQuoteStrings := source.QuoteStrings;
