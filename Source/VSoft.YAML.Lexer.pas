@@ -1126,10 +1126,13 @@ begin
           // For sequence items, use the actual column position for proper nesting
           // Override the FSequenceItemIndent setting for this token
           result.IndentLevel := FReader.Column - 1; // Column is 1-based, indent is 0-based
-          // For subsequent tokens, subsequent tokens should be at the sequence item level
-          // until we encounter a newline that changes indentation
-          FSequenceItemIndent := result.IndentLevel;
           FReader.Read;
+          // After reading '-', FReader.Column points to the space that follows.
+          // Content on the same line starts after that space, at indent = FReader.Column
+          // (Column is 1-based; content column is FReader.Column+1, indent is FReader.Column).
+          // Using this value prevents the sequence item's inline mapping from treating
+          // sibling root-level keys (at a lower or equal indent to '-') as part of the item.
+          FSequenceItemIndent := FReader.Column;
         end
         else if (peekChar = '-') and (FReader.Peek(2) = '-') then
         begin

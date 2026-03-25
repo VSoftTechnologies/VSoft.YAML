@@ -162,6 +162,8 @@ type
     procedure Test_Collection_NestedEmptyCollections;
     [Test]
     procedure Test_Collection_MixedTypesInSequence;
+    [Test]
+    procedure Test_ZeroIndent_SequenceUnderMappingKey;
 
     // Error recovery tests
     [Test]
@@ -2033,6 +2035,47 @@ begin
   Assert.AreEqual('2021-03-26T09:26:21+11:00', sUpdatedOut);
 
 
+end;
+
+procedure TYAMLEdgeCasesTests.Test_ZeroIndent_SequenceUnderMappingKey;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+  mappingSeq : IYAMLValue;
+  firstItem : IYAMLValue;
+begin
+  // A sequence with zero indentation under a mapping key should be treated
+  // as the value of that key, and subsequent zero-indent keys should be
+  // siblings at the root level - not members of the sequence item.
+  yamlText :=
+    'mapping:' + sLineBreak +
+    '- name: Person1' + sLineBreak +
+    '  age: 20' + sLineBreak +
+    'name: John Doe' + sLineBreak +
+    'age: 30';
+
+  doc := TYAML.LoadFromString(yamlText);
+
+  Assert.IsNotNull(doc.Root, 'Root should not be null');
+
+  // Root-level 'name' and 'age' must be separate from the sequence
+  Assert.AreEqual('John Doe', doc.Root.Values['name'].AsString,
+    'Root name should be John Doe');
+  Assert.AreEqual<Int64>(30, doc.Root.Values['age'].AsInteger,
+    'Root age should be 30');
+
+  // 'mapping' should be a sequence with exactly one item
+  mappingSeq := doc.Root.Values['mapping'];
+  Assert.IsNotNull(mappingSeq, 'mapping value should not be null');
+  Assert.AreEqual(1, mappingSeq.AsSequence.Count,
+    'mapping sequence should have exactly 1 item');
+
+  // The sequence item should have name=Person1 and age=20
+  firstItem := mappingSeq.AsSequence.Items[0];
+  Assert.AreEqual('Person1', firstItem.Values['name'].AsString,
+    'Sequence item name should be Person1');
+  Assert.AreEqual<Int64>(20, firstItem.Values['age'].AsInteger,
+    'Sequence item age should be 20');
 end;
 
 initialization
