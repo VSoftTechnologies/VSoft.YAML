@@ -64,6 +64,7 @@ type
     FIndentStack : TList<Integer>;
     FSequenceItemIndent : integer;
     FInValueContext : boolean; // Track if we're reading a value (after colon) vs key
+    FFlowDepth : integer;     // Nesting depth inside flow collections ([..] / {..})
     FStringBuilder : TStringBuilder;
     FHexBuilder : TStringBuilder;  // For building hex strings in Unicode escapes
 
@@ -138,6 +139,7 @@ begin
 
   FSequenceItemIndent := -1;
   FInValueContext := False;
+  FFlowDepth := 0;
   FHasPeekedToken := False;
 
   // Initialize indent stack with base level 0
@@ -548,17 +550,29 @@ end;
 
 function TYAMLLexer.ReadUnquotedString(reset : boolean) : string;
 const
-  cValueSet =  [#10, #13, '#', '[', ']', '{', '}', ','];
-  cNonValueSet = [':', #10, #13, '#', '[', ']', '{', '}', ','];
+  cValueSet =     [#10, #13, '#', '[', ']', '{', '}'];
+  cNonValueSet =  [':', #10, #13, '#', '[', ']', '{', '}'];
+  cValueSetFlow =    [#10, #13, '#', '[', ']', '{', '}', ','];
+  cNonValueSetFlow = [':', #10, #13, '#', '[', ']', '{', '}', ','];
 var
   lastNonWSLen : integer;
 
   function DoCheck : boolean;
   begin
-    if FInValueContext then
-      result := not CharInSet(FReader.Current, cValueSet)
+    if FFlowDepth > 0 then
+    begin
+      if FInValueContext then
+        result := not CharInSet(FReader.Current, cValueSetFlow)
+      else
+        result := not CharInSet(FReader.Current, cNonValueSetFlow)
+    end
     else
-      result := not CharInSet(FReader.Current, cNonValueSet)
+    begin
+      if FInValueContext then
+        result := not CharInSet(FReader.Current, cValueSet)
+      else
+        result := not CharInSet(FReader.Current, cNonValueSet)
+    end;
   end;
 
 begin
@@ -1219,6 +1233,7 @@ begin
         result.TokenKind := TYAMLTokenKind.LBracket;
         // Reset to key context when entering flow sequence
         FInValueContext := False;
+        Inc(FFlowDepth);
         FReader.Read;
       end;
 
@@ -1227,20 +1242,25 @@ begin
         result.TokenKind := TYAMLTokenKind.RBracket;
         // Reset to key context when exiting flow sequence
         FInValueContext := False;
+        if FFlowDepth > 0 then
+          Dec(FFlowDepth);
         FReader.Read;
       end;
 
     '{':
       begin
         result.TokenKind := TYAMLTokenKind.LBrace;
-        // Reset to key context when exiting flow sequence
+        // Reset to key context when entering flow mapping
         FInValueContext := False;
+        Inc(FFlowDepth);
         FReader.Read;
       end;
 
     '}':
       begin
         result.TokenKind := TYAMLTokenKind.RBrace;
+        if FFlowDepth > 0 then
+          Dec(FFlowDepth);
         FReader.Read;
       end;
 

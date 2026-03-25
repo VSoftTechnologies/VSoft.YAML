@@ -29,6 +29,9 @@ type
     [Test]
     procedure TestUnquotedStringStartingWithNumber;
 
+    [Test]
+    procedure TestCommaInUnquotedString;
+
   end;
 
 
@@ -176,6 +179,24 @@ begin
   Assert.AreEqual('John Doe', doc.Root.Values['name'].AsString, 'name value incorrect');
   Assert.AreEqual('4B599A8C9', doc.Root.Values['SHA'].AsString,
     'SHA value must be the full unquoted string, not split by spaces');
+end;
+
+procedure TBasicYAMLTests.TestCommaInUnquotedString;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+begin
+  // Commas are only special inside flow collections ([..], {..}).
+  // In a block scalar value, a comma must be treated as plain text.
+  yamlText :=
+    'name: John, Doe' + sLineBreak +
+    'age: 30';
+
+  doc := TYAML.LoadFromString(yamlText);
+  Assert.AreEqual('John, Doe', doc.Root.Values['name'].AsString,
+    'Comma in block scalar value must not split the string');
+  Assert.AreEqual<Int64>(30, doc.Root.Values['age'].AsInteger,
+    'age value should still parse correctly');
 end;
 
 initialization
