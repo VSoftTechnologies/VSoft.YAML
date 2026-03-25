@@ -740,6 +740,16 @@ begin
     end;
   end;
   
+  // If the character immediately following the numeric portion is an
+  // alphanumeric or identifier character (e.g. '4B599A8C9'), this token
+  // is not a number - read the rest as an unquoted string.
+  if TCharClassHelper.IsAlphaNumeric(FReader.Current) or
+     TCharClassHelper.IsIdentifierChar(FReader.Current) then
+  begin
+    result := ReadUnquotedString(false);
+    Exit;
+  end;
+
   result := FStringBuilder.ToString;
 end;
 

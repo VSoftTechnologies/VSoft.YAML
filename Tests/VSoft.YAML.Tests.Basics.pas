@@ -26,6 +26,9 @@ type
     [Test]
     procedure TestValuewithPeriod;
 
+    [Test]
+    procedure TestUnquotedStringStartingWithNumber;
+
   end;
 
 
@@ -156,6 +159,23 @@ begin
   actual := doc.Root.AsMapping['path'].AsString;
   Assert.AreEqual(expected, actual);
 
+end;
+
+procedure TBasicYAMLTests.TestUnquotedStringStartingWithNumber;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+begin
+  // Unquoted values that start with a digit but are not valid numbers must
+  // be parsed as strings without splitting or inserting extra spaces.
+  yamlText :=
+    'name: John Doe' + sLineBreak +
+    'SHA: 4B599A8C9';
+
+  doc := TYAML.LoadFromString(yamlText);
+  Assert.AreEqual('John Doe', doc.Root.Values['name'].AsString, 'name value incorrect');
+  Assert.AreEqual('4B599A8C9', doc.Root.Values['SHA'].AsString,
+    'SHA value must be the full unquoted string, not split by spaces');
 end;
 
 initialization
