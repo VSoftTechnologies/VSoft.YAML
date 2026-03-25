@@ -47,6 +47,9 @@ type
     [Test]
     procedure TestCompleteCommentRoundTripIntegration;
 
+    [Test]
+    procedure TestDocumentLevelCommentOnFlatMapping;
+
   end;
 
 implementation
@@ -392,6 +395,36 @@ begin
   Assert.AreEqual('Test App', app.Items['name'].AsString, 'App name value changed in round trip');
   Assert.AreEqual('1.2.3', app.Items['version'].AsString, 'Version value changed in round trip');
   Assert.AreEqual(3, features.Count, 'Features count changed in round trip');
+end;
+
+procedure TYAMLCommentTests.TestDocumentLevelCommentOnFlatMapping;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+  outputText : string;
+begin
+  // A comment at the top of a document that contains only scalar values
+  // (no nested collections) must be preserved on the root mapping.
+  yamlText :=
+    '# comment' + sLineBreak +
+    'name: John Doe' + sLineBreak +
+    'age: 30';
+
+  doc := TYAML.LoadFromString(yamlText);
+  root := doc.Root.AsMapping;
+
+  Assert.IsTrue(root.HasComments,
+    'Root mapping should have the document-level comment');
+  Assert.AreEqual(1, root.Comments.Count,
+    'Root mapping should have exactly 1 comment');
+  Assert.AreEqual('comment', root.Comments[0],
+    'Comment text should be preserved');
+
+  // Also verify the comment survives a write/read round-trip
+  outputText := TYAML.WriteToString(doc);
+  Assert.IsTrue(outputText.Contains('# comment'),
+    'Comment must appear in written output');
 end;
 
 initialization

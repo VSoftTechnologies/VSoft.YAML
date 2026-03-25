@@ -1223,6 +1223,17 @@ begin
 
   // Parse the main document value
   result := ParseValue(nil);
+
+  // Flush any pending comments that were not consumed by a nested collection.
+  // This happens when the document starts with a comment but the root contains
+  // only scalar values (no nested mappings/sequences to inherit the comment).
+  if (FPendingComments.Count > 0) and (result <> nil) and
+     (result.IsMapping or result.IsSequence) then
+  begin
+    FIsDocumentLevel := False;
+    AssignPendingCommentsToCollection(result.AsCollection);
+  end;
+
   // Skip document end marker if present
   if FCurrentToken.TokenKind = TYAMLTokenKind.DocEnd then
     NextToken;
