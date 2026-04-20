@@ -3,7 +3,6 @@
 # DPM package manifest file
 
 min client version: 1.0
-packageKind: git;
 
 metadata:
   id: VSoft.YAML
