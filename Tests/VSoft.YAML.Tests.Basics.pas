@@ -32,6 +32,9 @@ type
     [Test]
     procedure TestCommaInUnquotedString;
 
+    [Test]
+    procedure TestNestedUnquotedStringStartingWithNumber;
+
   end;
 
 
@@ -197,6 +200,24 @@ begin
     'Comma in block scalar value must not split the string');
   Assert.AreEqual<Int64>(30, doc.Root.Values['age'].AsInteger,
     'age value should still parse correctly');
+end;
+
+procedure TBasicYAMLTests.TestNestedUnquotedStringStartingWithNumber;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+begin
+  // Unquoted value inside a nested mapping that starts with digits but is
+  // not a valid number must be parsed as a plain string.
+  yamlText :=
+    'variables:' + sLineBreak +
+    '  packageSource: 11AndAbove';
+
+  doc := TYAML.LoadFromString(yamlText);
+  Assert.IsNotNull(doc.Root, 'LoadFromString returned null');
+  Assert.AreEqual('11AndAbove',
+    doc.Root.Values['variables'].Values['packageSource'].AsString,
+    'packageSource value must be the full unquoted string');
 end;
 
 initialization

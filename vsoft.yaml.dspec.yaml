@@ -7,7 +7,7 @@ packageKind: git;
 
 metadata:
   id: VSoft.YAML
-  version: 1.5.1
+  version: 1.5.2
   description: YAML Parser
   authors: [ Vincent Parrett ]
   projectUrl: https://github.com/VSoftTechnologies/VSoft.YAML
