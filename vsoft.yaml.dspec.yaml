@@ -12,15 +12,15 @@ metadata:
   authors: [ Vincent Parrett ]
   projectUrl: https://github.com/VSoftTechnologies/VSoft.YAML
   repositoryUrl: https://github.com/VSoftTechnologies/VSoft.YAML
-  repositoryCommit: "#HASH#"
-  license: MIT
-  copyright: ""
+  repositoryCommit: #HASH#
+  license: Apache-2.0
+  copyright: Vincent Parrett and Contributors
   tags: [ yaml, parser ]
   readme: README.md
 
 # define variable defaults - can be overriden in targetPlatforms
 variables:
-  packageSource: "Rad Studio $compilernoprefix$"
+  packageSource: Rad Studio $compilernoprefix$
 
 targetPlatforms:
   # use ranges to simplify the file
@@ -42,12 +42,12 @@ targetPlatforms:
   - compilers: [ delphi11, delphi12 ]
     platforms: [ win32, win64, macos64, macosarm64, android, android64, ios64, linux64 ]
     variables:
-      packageSource: "Rad Studio $compilernoprefix$.0"
+      packageSource: Rad Studio $compilernoprefix$.0
 
   - compilers: [ delphi13 ]
     platforms: [ win32, win64, winarm64ec, macos64, macosarm64, android, android64, ios64, linux64 ]
     variables:
-      packageSource: "Rad Studio $compilernoprefix$.0"
+      packageSource: Rad Studio $compilernoprefix$.0
 
 templates:
   - name: default
