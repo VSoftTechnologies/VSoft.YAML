@@ -604,9 +604,17 @@ begin
   FStringBuilder.Reset;
   dotCount := 0;
 
-  // Handle negative numbers
+  // Handle leading sign
   if FReader.Current = '-' then
   begin
+    FStringBuilder.Append(FReader.Current);
+    FReader.Read;
+  end
+  else if FReader.Current = '+' then
+  begin
+    // RFC 8259 §6: a JSON number must not have a leading +.
+    if FJSONMode then
+      raise EYAMLParseException.Create('Numbers cannot have a leading + sign in JSON', FReader.Line, FReader.Column);
     FStringBuilder.Append(FReader.Current);
     FReader.Read;
   end;
@@ -707,7 +715,11 @@ begin
     Inc(dotCount);
     FStringBuilder.Append(FReader.Current);
     FReader.Read;
-    
+
+    // RFC 8259 §6: a fraction is "." followed by one or more digits.
+    if FJSONMode and not TYAMLCharUtils.IsDigit(FReader.Current) then
+      raise EYAMLParseException.Create('Invalid number format in JSON: decimal point must be followed by at least one digit', FReader.Line, FReader.Column);
+
     while TYAMLCharUtils.IsDigit(FReader.Current) and not IsAtEnd do
     begin
       tempChar := FReader.Current;

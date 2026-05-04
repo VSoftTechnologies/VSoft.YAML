@@ -135,6 +135,46 @@ type
     [Test]
     procedure TestJSONLeadingZeros;
 
+    // RFC 8259 compliance tests
+    [Test]
+    procedure TestRFC8259Parse_TopLevelString;
+
+    [Test]
+    procedure TestRFC8259Parse_TopLevelNumber;
+
+    [Test]
+    procedure TestRFC8259Parse_TopLevelTrue;
+
+    [Test]
+    procedure TestRFC8259Parse_TopLevelFalse;
+
+    [Test]
+    procedure TestRFC8259Parse_TopLevelNull;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsLiteralControlCharInString;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsLeadingPlusOnNumber;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsTrailingDotOnNumber;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsBareNaN;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsBareInfinity;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsLineComment;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsBlockComment;
+
+    [Test]
+    procedure TestRFC8259Parse_AcceptsSurrogatePairEscape;
+
   end;
 
 
@@ -1009,6 +1049,228 @@ begin
     EYAMLParseException,
     'Should raise parse error for numbers with leading zeros in JSON'
   );
+end;
+
+// RFC 8259 compliance tests
+
+procedure TJSONParsingTests.TestRFC8259Parse_TopLevelString;
+var
+  doc : IYAMLDocument;
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §2: a JSON text is any JSON value, including bare scalars.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  doc := TYAML.LoadFromString('"hello"', options);
+  Assert.AreEqual(TYAMLValueType.vtString, doc.Root.ValueType);
+  Assert.AreEqual('hello', doc.Root.AsString);
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_TopLevelNumber;
+var
+  doc : IYAMLDocument;
+  options : IYAMLParserOptions;
+begin
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  doc := TYAML.LoadFromString('42', options);
+  Assert.AreEqual(TYAMLValueType.vtInteger, doc.Root.ValueType);
+  Assert.AreEqual<Int64>(42, doc.Root.AsInteger);
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_TopLevelTrue;
+var
+  doc : IYAMLDocument;
+  options : IYAMLParserOptions;
+begin
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  doc := TYAML.LoadFromString('true', options);
+  Assert.AreEqual(TYAMLValueType.vtBoolean, doc.Root.ValueType);
+  Assert.AreEqual(true, doc.Root.AsBoolean);
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_TopLevelFalse;
+var
+  doc : IYAMLDocument;
+  options : IYAMLParserOptions;
+begin
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  doc := TYAML.LoadFromString('false', options);
+  Assert.AreEqual(TYAMLValueType.vtBoolean, doc.Root.ValueType);
+  Assert.AreEqual(false, doc.Root.AsBoolean);
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_TopLevelNull;
+var
+  doc : IYAMLDocument;
+  options : IYAMLParserOptions;
+begin
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  doc := TYAML.LoadFromString('null', options);
+  Assert.IsTrue(doc.Root.IsNull, 'top-level null must produce a null root');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsLiteralControlCharInString;
+var
+  jsonText : string;
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §7: characters U+0000..U+001F MUST NOT appear unescaped in a string.
+  jsonText := '{"x": "a' + #10 + 'b"}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'literal U+000A inside a JSON string must be rejected');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsLeadingPlusOnNumber;
+var
+  jsonText : string;
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §6 number grammar does not allow a leading +.
+  jsonText := '{"x": +5}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'leading + on a JSON number must be rejected');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsTrailingDotOnNumber;
+var
+  jsonText : string;
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §6: a fraction is a "." followed by one or more digits.
+  // "5." is not a valid JSON number.
+  jsonText := '{"x": 5.}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'a trailing dot on a JSON number must be rejected');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsBareNaN;
+var
+  jsonText : string;
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §6: NaN is not a valid JSON token.
+  jsonText := '{"x": NaN}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'bare NaN must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsBareInfinity;
+var
+  jsonText : string;
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §6: Infinity is not a valid JSON token.
+  jsonText := '{"x": Infinity}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'bare Infinity must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsLineComment;
+var
+  jsonText : string;
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 has no syntax for comments.
+  jsonText := '{"x": 1 // c' + sLineBreak + '}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    '// line comments must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsBlockComment;
+var
+  jsonText : string;
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 has no syntax for comments.
+  jsonText := '{"x": /* c */ 1}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    '/* */ block comments must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_AcceptsSurrogatePairEscape;
+var
+  doc : IYAMLDocument;
+  options : IYAMLParserOptions;
+  jsonText : string;
+  expected : string;
+begin
+  // RFC 8259 §7: characters above U+FFFF are encoded as a UTF-16 surrogate pair
+  // in two \u escape sequences. 😀 must combine to U+1F600 (😀).
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  // Build the JSON via piecewise concat so backslash-u is unambiguous in source.
+  jsonText := '{"e": "' + '\u' + 'D83D' + '\u' + 'DE00' + '"}';
+  doc := TYAML.LoadFromString(jsonText, options);
+
+  expected := #$D83D#$DE00;
+  Assert.AreEqual(expected, doc.Root.Values['e'].AsString,
+    'surrogate-pair \u escapes must combine into the supplementary-plane code point');
 end;
 
 initialization

@@ -6,7 +6,7 @@ min client version: 1.0
 
 metadata:
   id: VSoft.YAML
-  version: 1.5.2
+  version: 1.5.3
   description: YAML Parser
   authors: [ Vincent Parrett ]
   projectUrl: https://github.com/VSoftTechnologies/VSoft.YAML

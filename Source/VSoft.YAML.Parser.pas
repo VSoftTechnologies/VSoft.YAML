@@ -720,23 +720,27 @@ begin
 
         valueType := IsScalarValue(value, FJSONMode);
 
-        // Additional JSON mode validation for invalid literals
+        // Additional JSON mode validation for invalid literals.
+        // Reaching this branch in JSON mode means we have an unquoted plain
+        // scalar that didn't classify as a number, boolean, or null - which
+        // RFC 8259 does not allow.
         if FJSONMode and (valueType = TYAMLValueType.vtString) then
         begin
-          // Check for hex/octal/binary numbers (not valid in JSON)
+          // Specific message for hex/octal/binary numbers.
           if (Length(value) > 2) and (value[1] = '0') and
              CharInSet(value[2], ['x','X','o','O','b','B']) then
-          begin
             RaiseParseError('Invalid number format in JSON: "' + value + '". JSON does not support hex, octal, or binary number literals.');
-          end;
 
-          // Check for YAML-style boolean/null values that are invalid in JSON
+          // Specific message for YAML-style boolean/null spellings.
           if SameText(value, 'yes') or SameText(value, 'no') or SameText(value, 'on') or SameText(value, 'off') or
-             SameText(value, 'truth') or SameText(value, 'false') or SameText(value, 'True') or SameText(value, 'False') or
+             SameText(value, 'truth') or SameText(value, 'False') or SameText(value, 'True') or
              SameText(value, '~') or (value = '') then
-          begin
             RaiseParseError('Invalid literal value in JSON: "' + value + '". JSON only supports true, false, null, numbers, and quoted strings.');
-          end;
+
+          // Anything else here is an unquoted plain scalar, which RFC 8259 forbids.
+          // Catches NaN, Infinity, comment fragments (// or /* */), and any other
+          // bare token that isn't a quoted string, number, true, false, or null.
+          RaiseParseError('Invalid unquoted value in JSON: "' + value + '". JSON only supports quoted strings, numbers, true, false, and null.');
         end;
 
         // Additional validation for potentially problematic unquoted strings

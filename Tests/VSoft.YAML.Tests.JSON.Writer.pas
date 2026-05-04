@@ -77,6 +77,49 @@ type
     [Test]
     procedure TestPrettyPrintFormatting;
 
+    // RFC 8259 compliance tests
+    [Test]
+    procedure TestRFC8259_AllControlCharsEscaped;
+
+    [Test]
+    procedure TestRFC8259_BackslashInValue;
+
+    [Test]
+    procedure TestRFC8259_BackslashInKey;
+
+    [Test]
+    procedure TestRFC8259_ForwardSlashNotEscaped;
+
+    [Test]
+    procedure TestRFC8259_SurrogatePairEmoji;
+
+    [Test]
+    procedure TestRFC8259_NonFiniteFloatBecomesNull;
+
+    [Test]
+    procedure TestRFC8259_YamlInfNanRoundTripsToJsonNull;
+
+    [Test]
+    procedure TestRFC8259_TopLevelString;
+
+    [Test]
+    procedure TestRFC8259_TopLevelNumber;
+
+    [Test]
+    procedure TestRFC8259_TopLevelTrue;
+
+    [Test]
+    procedure TestRFC8259_TopLevelFalse;
+
+    [Test]
+    procedure TestRFC8259_TopLevelNull;
+
+    [Test]
+    procedure TestRFC8259_FloatDecimalSeparatorIsDot;
+
+    [Test]
+    procedure TestRFC8259_NoBomByDefault;
+
   end;
 
 
@@ -84,7 +127,9 @@ implementation
 
 uses
   System.SysUtils,
-  System.StrUtils;
+  System.StrUtils,
+  System.Math,
+  System.Classes;
 
 { TJSONWritingTests }
 
@@ -643,6 +688,263 @@ begin
   Assert.Contains(prettyOutput, '"reading"');
   Assert.Contains(prettyOutput, '"coding"');
   Assert.Contains(prettyOutput, '"hiking"');
+end;
+
+// RFC 8259 compliance tests
+
+procedure TJSONWritingTests.TestRFC8259_AllControlCharsEscaped;
+var
+  doc : IYAMLDocument;
+  jsonOutput : string;
+  controlString : string;
+  i : integer;
+  expectedHex : string;
+begin
+  // RFC 8259 §7: characters U+0000..U+001F MUST be escaped, either via the
+  // five short forms (\b \t \n \f \r) or as \u00XX.
+  controlString := '';
+  for i := 0 to 31 do
+    controlString := controlString + Chr(i);
+
+  doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
+  doc.AsMapping.AddOrSetValue('s', controlString);
+
+  jsonOutput := TYAML.WriteToJSONString(doc);
+
+  // Five short escapes per RFC 8259 §7
+  Assert.Contains(jsonOutput, '\b', 'U+0008 should escape as \b');
+  Assert.Contains(jsonOutput, '\t', 'U+0009 should escape as \t');
+  Assert.Contains(jsonOutput, '\n', 'U+000A should escape as \n');
+  Assert.Contains(jsonOutput, '\f', 'U+000C should escape as \f');
+  Assert.Contains(jsonOutput, '\r', 'U+000D should escape as \r');
+
+  // Every other code point in U+0000..U+001F must appear as \u00XX
+  for i := 0 to 31 do
+  begin
+    if (i = 8) or (i = 9) or (i = 10) or (i = 12) or (i = 13) then
+      Continue;
+    expectedHex := '\u' + IntToHex(i, 4);
+    Assert.Contains(jsonOutput, expectedHex,
+      'control char U+' + IntToHex(i, 4) + ' must be \uXXXX-escaped');
+  end;
+end;
+
+procedure TJSONWritingTests.TestRFC8259_BackslashInValue;
+var
+  doc : IYAMLDocument;
+  jsonOutput : string;
+begin
+  // RFC 8259 §7: backslash in strings MUST be escaped as \\
+  doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
+  doc.AsMapping.AddOrSetValue('path', 'a\b');
+
+  jsonOutput := TYAML.WriteToJSONString(doc);
+  Assert.AreEqual('{"path":"a\\b"}', jsonOutput,
+    'literal backslash in value must be escaped as \\');
+end;
+
+procedure TJSONWritingTests.TestRFC8259_BackslashInKey;
+var
+  doc : IYAMLDocument;
+  jsonOutput : string;
+begin
+  // RFC 8259 §7: backslash in object member names MUST be escaped as \\
+  doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
+  doc.AsMapping.AddOrSetValue('a\b', 'v');
+
+  jsonOutput := TYAML.WriteToJSONString(doc);
+  Assert.AreEqual('{"a\\b":"v"}', jsonOutput,
+    'literal backslash in key must be escaped as \\');
+end;
+
+procedure TJSONWritingTests.TestRFC8259_ForwardSlashNotEscaped;
+var
+  doc : IYAMLDocument;
+  jsonOutput : string;
+begin
+  // RFC 8259 §7: forward slash MAY be escaped but does not have to be.
+  // This pins the writer's documented behaviour of leaving / unescaped.
+  doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
+  doc.AsMapping.AddOrSetValue('url', 'http://example.com/a');
+
+  jsonOutput := TYAML.WriteToJSONString(doc);
+  Assert.AreEqual('{"url":"http://example.com/a"}', jsonOutput,
+    'forward slashes should not be escaped');
+end;
+
+procedure TJSONWritingTests.TestRFC8259_SurrogatePairEmoji;
+var
+  doc : IYAMLDocument;
+  jsonOutput : string;
+  emojiString : string;
+  expectedJson : string;
+begin
+  // U+1F600 GRINNING FACE encoded in UTF-16 as surrogate pair D83D DE00.
+  // Per the writer's escape policy in TYAMLCharUtils.EscapeStringForJSON,
+  // surrogate pairs are emitted as two \uXXXX sequences (RFC 8259 §7 form).
+  emojiString := #$D83D#$DE00;
+
+  doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
+  doc.AsMapping.AddOrSetValue('e', emojiString);
+
+  jsonOutput := TYAML.WriteToJSONString(doc);
+  // Build the expected string by piecewise concat so the literal backslash-u
+  // sequences are unambiguous in source and don't get misread as Delphi escapes.
+  expectedJson := '{"e":"' + '\u' + 'D83D' + '\u' + 'DE00' + '"}';
+  Assert.AreEqual(expectedJson, jsonOutput,
+    'supplementary plane char must be emitted as two \uXXXX surrogates');
+end;
+
+procedure TJSONWritingTests.TestRFC8259_NonFiniteFloatBecomesNull;
+var
+  doc : IYAMLDocument;
+  jsonOutput : string;
+  posInf, negInf, nanValue : Double;
+begin
+  // RFC 8259 §6: numbers do not include Infinity or NaN. The writer
+  // substitutes the JSON literal `null` for any non-finite IEEE-754 value.
+  posInf := Infinity;
+  negInf := NegInfinity;
+  nanValue := NaN;
+
+  doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
+  doc.AsMapping.AddOrSetValue('posInf', posInf);
+  doc.AsMapping.AddOrSetValue('negInf', negInf);
+  doc.AsMapping.AddOrSetValue('nan', nanValue);
+
+  jsonOutput := TYAML.WriteToJSONString(doc);
+  Assert.AreEqual('{"posInf":null,"negInf":null,"nan":null}', jsonOutput,
+    'non-finite floats must serialize as the JSON null literal');
+end;
+
+procedure TJSONWritingTests.TestRFC8259_YamlInfNanRoundTripsToJsonNull;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+  jsonOutput : string;
+begin
+  // YAML's .inf / -.inf / .nan map to non-finite floats; per RFC 8259
+  // these must come out as JSON null when the document is serialised to JSON.
+  yamlText :=
+    'a: .inf' + sLineBreak +
+    'b: -.inf' + sLineBreak +
+    'c: .nan';
+
+  doc := TYAML.LoadFromString(yamlText);
+  doc.Options.PrettyPrint := false;
+  jsonOutput := TYAML.WriteToJSONString(doc);
+
+  Assert.AreEqual('{"a":null,"b":null,"c":null}', jsonOutput,
+    'YAML .inf/-.inf/.nan must serialize as JSON null');
+end;
+
+procedure TJSONWritingTests.TestRFC8259_TopLevelString;
+var
+  doc : IYAMLDocument;
+  jsonOutput : string;
+begin
+  // RFC 8259 §2: a JSON text is a serialized JSON value of any type,
+  // including bare scalars at the top level.
+  doc := TYAML.LoadFromString('"hello"');
+  jsonOutput := TYAML.WriteToJSONString(doc);
+  Assert.AreEqual('"hello"', jsonOutput);
+end;
+
+procedure TJSONWritingTests.TestRFC8259_TopLevelNumber;
+var
+  doc : IYAMLDocument;
+  jsonOutput : string;
+begin
+  doc := TYAML.LoadFromString('42');
+  jsonOutput := TYAML.WriteToJSONString(doc);
+  Assert.AreEqual('42', jsonOutput);
+end;
+
+procedure TJSONWritingTests.TestRFC8259_TopLevelTrue;
+var
+  doc : IYAMLDocument;
+  jsonOutput : string;
+begin
+  doc := TYAML.LoadFromString('true');
+  jsonOutput := TYAML.WriteToJSONString(doc);
+  Assert.AreEqual('true', jsonOutput);
+end;
+
+procedure TJSONWritingTests.TestRFC8259_TopLevelFalse;
+var
+  doc : IYAMLDocument;
+  jsonOutput : string;
+begin
+  doc := TYAML.LoadFromString('false');
+  jsonOutput := TYAML.WriteToJSONString(doc);
+  Assert.AreEqual('false', jsonOutput);
+end;
+
+procedure TJSONWritingTests.TestRFC8259_TopLevelNull;
+var
+  doc : IYAMLDocument;
+  jsonOutput : string;
+begin
+  doc := TYAML.LoadFromString('null');
+  jsonOutput := TYAML.WriteToJSONString(doc);
+  Assert.AreEqual('null', jsonOutput);
+end;
+
+procedure TJSONWritingTests.TestRFC8259_FloatDecimalSeparatorIsDot;
+var
+  doc : IYAMLDocument;
+  jsonOutput : string;
+  savedSeparator : Char;
+begin
+  // RFC 8259 §6: the decimal separator MUST be U+002E '.' regardless of
+  // host locale. The writer uses YAMLFormatSettings to enforce this.
+  savedSeparator := FormatSettings.DecimalSeparator;
+  try
+    FormatSettings.DecimalSeparator := ',';
+
+    doc := TYAML.CreateMapping;
+    doc.Options.PrettyPrint := false;
+    doc.AsMapping.AddOrSetValue('pi', 3.14);
+
+    jsonOutput := TYAML.WriteToJSONString(doc);
+    Assert.Contains(jsonOutput, '3.14',
+      'float must use U+002E "." as decimal separator regardless of locale');
+    Assert.IsFalse(Pos('3,14', jsonOutput) > 0,
+      'float must not use the host locale decimal separator');
+  finally
+    FormatSettings.DecimalSeparator := savedSeparator;
+  end;
+end;
+
+procedure TJSONWritingTests.TestRFC8259_NoBomByDefault;
+var
+  doc : IYAMLDocument;
+  stream : TMemoryStream;
+  bytes : array[0..2] of Byte;
+begin
+  // RFC 8259 §8.1: implementations MUST NOT add a UTF-8 BOM to the output.
+  // The writer's WriteByteOrderMark option defaults to false.
+  doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
+  doc.AsMapping.AddOrSetValue('x', 1);
+
+  stream := TMemoryStream.Create;
+  try
+    TYAML.WriteToJSONStream(doc, stream);
+    Assert.IsTrue(stream.Size >= 3, 'stream should contain JSON output');
+    stream.Position := 0;
+    stream.ReadBuffer(bytes[0], 3);
+    Assert.IsFalse((bytes[0] = $EF) and (bytes[1] = $BB) and (bytes[2] = $BF),
+      'output must not begin with a UTF-8 BOM');
+  finally
+    stream.Free;
+  end;
 end;
 
 initialization
