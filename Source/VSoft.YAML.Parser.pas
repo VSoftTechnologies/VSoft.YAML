@@ -1002,6 +1002,11 @@ var
   expectedIndent : integer;
   keyIndentLevel : integer;
 begin
+  // RFC 8259: JSON only permits flow-style objects "{...}". A block-style
+  // "key: value" mapping is YAML-only and must be rejected in JSON mode.
+  if FJSONMode then
+    RaiseParseError('Block-style mapping is not valid in JSON; use flow-style "{...}" objects');
+
   result := TYAMLMapping.Create(parent, tag);
   AssignPendingCommentsToCollection(result);
   expectedIndent := FCurrentToken.IndentLevel;
@@ -1301,6 +1306,10 @@ begin
     while FCurrentToken.TokenKind <> TYAMLTokenKind.EOF do
     begin
       try
+        // RFC 8259 §2: JSON allows only a single top-level value.
+        if FJSONMode and (documentCount > 0) then
+          RaiseParseError('JSON allows only one top-level value; unexpected trailing content');
+
         // Clear anchors between documents and initialize directives
         if documentCount > 0 then
         begin
@@ -1541,6 +1550,21 @@ begin
       root := TYAMLValue.Create(nil, TYAMLValueType.vtNull, '', '')
     else
       root := ParseDocument;
+
+    // RFC 8259 §2: a JSON text contains exactly one top-level value.
+    // Reject any non-trivial trailing content.
+    if FJSONMode then
+    begin
+      while FCurrentToken.TokenKind in [TYAMLTokenKind.NewLine, TYAMLTokenKind.Comment] do
+      begin
+        if FCurrentToken.TokenKind = TYAMLTokenKind.Comment then
+          ProcessComment
+        else
+          NextToken;
+      end;
+      if FCurrentToken.TokenKind <> TYAMLTokenKind.EOF then
+        RaiseParseError('JSON allows only one top-level value; unexpected trailing content');
+    end;
 
     result := TYAMLDocument.Create(root, FYAMLVersion, FTagDirectives);
 

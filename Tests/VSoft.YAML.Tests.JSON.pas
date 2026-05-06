@@ -158,6 +158,9 @@ type
     procedure TestRFC8259Parse_RejectsLeadingPlusOnNumber;
 
     [Test]
+    procedure TestRFC8259Parse_RejectsLeadingPlusOnNumberNoSpace;
+
+    [Test]
     procedure TestRFC8259Parse_RejectsTrailingDotOnNumber;
 
     [Test]
@@ -174,6 +177,90 @@ type
 
     [Test]
     procedure TestRFC8259Parse_AcceptsSurrogatePairEscape;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsAnchor;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsAlias;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsTag;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsLiteralBlockScalar;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsFoldedBlockScalar;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsDocumentStart;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsDocumentEnd;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsDirective;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsSetItem;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsMultipleTopLevelValues;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsBlockMapping;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsBlockSequence;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsUnescapedControlCharsInString;
+
+    [Test]
+    procedure TestRFC8259Parse_AcceptsAllSimpleEscapes;
+
+    [Test]
+    procedure TestRFC8259Parse_AcceptsForwardSlashEscape;
+
+    [Test]
+    procedure TestRFC8259Parse_AcceptsNegativeZero;
+
+    [Test]
+    procedure TestRFC8259Parse_AcceptsExponentForms;
+
+    [Test]
+    procedure TestRFC8259Parse_AcceptsEmptyContainersInStrictMode;
+
+    [Test]
+    procedure TestRFC8259Parse_AcceptsBmpUnicodeInString;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsTooShortUEscape;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsNonHexInUEscape;
+
+    [Test]
+    procedure TestRFC8259Parse_Rejects8DigitUEscape;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsHexEscape;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsInvalidSimpleEscape;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsMissingObjectValue;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsTrailingGarbage;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsBareSign;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsNbspAsWhitespace;
 
   end;
 
@@ -1156,6 +1243,28 @@ begin
     'leading + on a JSON number must be rejected');
 end;
 
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsLeadingPlusOnNumberNoSpace;
+var
+  jsonText : string;
+  options : IYAMLParserOptions;
+  doc : IYAMLDocument;
+begin
+  // RFC 8259 §6 number grammar does not allow a leading +.
+  // Regression: with no space between ":" and "+", the parser previously
+  // hung instead of rejecting the malformed number.
+  jsonText := '{"v":+1}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      doc := TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'leading + on a JSON number must be rejected (no-space variant must not hang)');
+end;
+
 procedure TJSONParsingTests.TestRFC8259Parse_RejectsTrailingDotOnNumber;
 var
   jsonText : string;
@@ -1271,6 +1380,630 @@ begin
   expected := #$D83D#$DE00;
   Assert.AreEqual(expected, doc.Root.Values['e'].AsString,
     'surrogate-pair \u escapes must combine into the supplementary-plane code point');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsAnchor;
+var
+  options : IYAMLParserOptions;
+begin
+  // YAML anchors (&name) are not part of the RFC 8259 grammar.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": &a 1}', options);
+    end,
+    EYAMLParseException,
+    'YAML anchors must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsAlias;
+var
+  options : IYAMLParserOptions;
+begin
+  // YAML aliases (*name) are not part of the RFC 8259 grammar.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": *a}', options);
+    end,
+    EYAMLParseException,
+    'YAML aliases must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsTag;
+var
+  options : IYAMLParserOptions;
+begin
+  // YAML tags (!!str, !int, etc.) are not part of the RFC 8259 grammar.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": !!str "x"}', options);
+    end,
+    EYAMLParseException,
+    '!!str tag must be rejected in JSON mode');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": !int 5}', options);
+    end,
+    EYAMLParseException,
+    '!int tag must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsLiteralBlockScalar;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 only permits double-quoted strings; literal "|" block scalars
+  // are YAML-only.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": |' + sLineBreak + '  abc}', options);
+    end,
+    EYAMLParseException,
+    'literal block scalars must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsFoldedBlockScalar;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 only permits double-quoted strings; folded ">" block scalars
+  // are YAML-only.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": >' + sLineBreak + '  abc}', options);
+    end,
+    EYAMLParseException,
+    'folded block scalars must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsDocumentStart;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §2: JSON has no document markers.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('--- 1', options);
+    end,
+    EYAMLParseException,
+    '--- document start must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsDocumentEnd;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §2: JSON has no document markers.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('1' + sLineBreak + '...', options);
+    end,
+    EYAMLParseException,
+    '... document end must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsDirective;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 has no directives. %YAML / %TAG must be rejected.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('%YAML 1.2' + sLineBreak + '---' + sLineBreak + '1', options);
+    end,
+    EYAMLParseException,
+    'YAML directives must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsSetItem;
+var
+  options : IYAMLParserOptions;
+begin
+  // YAML set/complex-key indicator "?" is not valid in JSON.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('? a', options);
+    end,
+    EYAMLParseException,
+    'set/complex-key "?" must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsMultipleTopLevelValues;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §2: a JSON text contains exactly one top-level value.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('1 2', options);
+    end,
+    EYAMLParseException,
+    'two top-level numbers must be rejected in JSON mode');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{} {}', options);
+    end,
+    EYAMLParseException,
+    'two top-level objects must be rejected in JSON mode');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('"a" "b"', options);
+    end,
+    EYAMLParseException,
+    'two top-level strings must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsBlockMapping;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 only permits flow-style "{...}" objects; block-style mappings
+  // are YAML-only.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('a: 1' + sLineBreak + 'b: 2', options);
+    end,
+    EYAMLParseException,
+    'block-style mapping must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsBlockSequence;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 only permits flow-style "[...]" arrays; block-style sequences
+  // are YAML-only.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('- 1' + sLineBreak + '- 2', options);
+    end,
+    EYAMLParseException,
+    'block-style sequence must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsUnescapedControlCharsInString;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §7: characters U+0000..U+001F MUST NOT appear unescaped in a
+  // JSON string. Cover a representative sample of the C0 range that the
+  // pre-existing test for literal CR/LF did not check.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": "a' + #1 + 'b"}', options);
+    end,
+    EYAMLParseException,
+    'U+0001 must be rejected unescaped in JSON strings');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": "a' + #7 + 'b"}', options);
+    end,
+    EYAMLParseException,
+    'U+0007 (BEL) must be rejected unescaped in JSON strings');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": "a' + #8 + 'b"}', options);
+    end,
+    EYAMLParseException,
+    'U+0008 (BS) must be rejected unescaped in JSON strings');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": "a' + #11 + 'b"}', options);
+    end,
+    EYAMLParseException,
+    'U+000B (VT) must be rejected unescaped in JSON strings');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": "a' + #12 + 'b"}', options);
+    end,
+    EYAMLParseException,
+    'U+000C (FF) must be rejected unescaped in JSON strings');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_AcceptsAllSimpleEscapes;
+var
+  doc : IYAMLDocument;
+  options : IYAMLParserOptions;
+  jsonText : string;
+  expected : string;
+begin
+  // RFC 8259 §7: \" \\ \/ \b \f \n \r \t are the accepted simple escapes.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  jsonText := '{"v": "\b\f\n\r\t\"\\\/"}';
+  doc := TYAML.LoadFromString(jsonText, options);
+
+  expected := #8 + #12 + #10 + #13 + #9 + '"' + '\' + '/';
+  Assert.AreEqual(expected, doc.Root.Values['v'].AsString,
+    'all RFC 8259 simple escapes must decode to their target characters');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_AcceptsForwardSlashEscape;
+var
+  doc : IYAMLDocument;
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §7: forward slash MAY be escaped as \/ but does not have to be.
+  // The escaped form must decode to the same single '/' character.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  doc := TYAML.LoadFromString('{"a": "\/", "b": "/"}', options);
+
+  Assert.AreEqual('/', doc.Root.Values['a'].AsString,
+    'escaped \/ must decode to a forward slash');
+  Assert.AreEqual('/', doc.Root.Values['b'].AsString,
+    'unescaped / must remain a forward slash');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_AcceptsNegativeZero;
+var
+  doc : IYAMLDocument;
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §6: -0 is a valid number per the grammar.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  doc := TYAML.LoadFromString('-0', options);
+  Assert.AreEqual(TYAMLValueType.vtInteger, doc.Root.ValueType,
+    '-0 must classify as an integer');
+  Assert.AreEqual<Int64>(0, doc.Root.AsInteger,
+    '-0 must equal 0');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_AcceptsExponentForms;
+var
+  doc : IYAMLDocument;
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §6: e | E, optional + | - in exponent, with or without fraction.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  doc := TYAML.LoadFromString('{"a":1e0,"b":1E0,"c":1e+5,"d":1E-5,"e":1.5e2,"f":-1.5E-2}', options);
+
+  Assert.AreEqual(1.0, doc.Root.Values['a'].AsFloat, 1e-12, '1e0');
+  Assert.AreEqual(1.0, doc.Root.Values['b'].AsFloat, 1e-12, '1E0');
+  Assert.AreEqual(100000.0, doc.Root.Values['c'].AsFloat, 1e-6, '1e+5');
+  Assert.AreEqual(0.00001, doc.Root.Values['d'].AsFloat, 1e-12, '1E-5');
+  Assert.AreEqual(150.0, doc.Root.Values['e'].AsFloat, 1e-12, '1.5e2');
+  Assert.AreEqual(-0.015, doc.Root.Values['f'].AsFloat, 1e-12, '-1.5E-2');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_AcceptsEmptyContainersInStrictMode;
+var
+  doc : IYAMLDocument;
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §4 / §5: an empty object {} and empty array [] are valid.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  doc := TYAML.LoadFromString('{}', options);
+  Assert.AreEqual(TYAMLValueType.vtMapping, doc.Root.ValueType, '{} must be a mapping');
+  Assert.AreEqual(0, doc.Root.AsMapping.Count, '{} must have zero entries');
+
+  doc := TYAML.LoadFromString('[]', options);
+  Assert.AreEqual(TYAMLValueType.vtSequence, doc.Root.ValueType, '[] must be a sequence');
+  Assert.AreEqual(0, doc.Root.AsSequence.Count, '[] must have zero items');
+
+  doc := TYAML.LoadFromString('[{}, [], {"k":[]}]', options);
+  Assert.AreEqual(TYAMLValueType.vtSequence, doc.Root.ValueType,
+    'a sequence of empty containers must parse');
+  Assert.AreEqual(3, doc.Root.AsSequence.Count, 'three top-level items expected');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_AcceptsBmpUnicodeInString;
+var
+  doc : IYAMLDocument;
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §7: any Unicode code point may appear directly in a string
+  // (above U+001F, except '"' and '\'). Verify that BMP characters survive
+  // the round-trip from source text to AsString.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  doc := TYAML.LoadFromString('{"caf": "café", "ru": "Привет", "jp": "日本語"}', options);
+
+  Assert.AreEqual('café', doc.Root.Values['caf'].AsString, 'Latin-1 supplement preserved');
+  Assert.AreEqual('Привет', doc.Root.Values['ru'].AsString, 'Cyrillic preserved');
+  Assert.AreEqual('日本語', doc.Root.Values['jp'].AsString, 'CJK preserved');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsTooShortUEscape;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §7: \u must be followed by exactly four hex digits.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": "\u012"}', options);
+    end,
+    EYAMLParseException,
+    '\u with only three hex digits must be rejected');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": "\u"}', options);
+    end,
+    EYAMLParseException,
+    '\u with no hex digits must be rejected');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsNonHexInUEscape;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §7: \u digits must be in [0-9 a-f A-F].
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": "\uZZZZ"}', options);
+    end,
+    EYAMLParseException,
+    'non-hex digits in \u escape must be rejected');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": "\u00G0"}', options);
+    end,
+    EYAMLParseException,
+    'partial non-hex in \u escape must be rejected');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_Rejects8DigitUEscape;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 only defines the 4-hex-digit \u form. The 8-digit \U is YAML.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": "\U0001F600"}', options);
+    end,
+    EYAMLParseException,
+    '8-digit \U escape must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsHexEscape;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 has no \xHH escape; that is a YAML extension.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": "\xFF"}', options);
+    end,
+    EYAMLParseException,
+    '\xHH hex escape must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsInvalidSimpleEscape;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §7 enumerates the only legal escape characters.
+  // \v, \a, \0, \e are YAML escapes that JSON does not permit.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": "\v"}', options);
+    end,
+    EYAMLParseException,
+    '\v (vertical tab) must be rejected in JSON mode');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": "\a"}', options);
+    end,
+    EYAMLParseException,
+    '\a (bell) must be rejected in JSON mode');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": "\0"}', options);
+    end,
+    EYAMLParseException,
+    '\0 (null) must be rejected in JSON mode');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": "\e"}', options);
+    end,
+    EYAMLParseException,
+    '\e (escape) must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsMissingObjectValue;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §4: each member is name : value. A bare "name :" is malformed.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"x":}', options);
+    end,
+    EYAMLParseException,
+    'missing value after colon must be rejected');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsTrailingGarbage;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §2: a JSON text contains exactly one value, with only ws after.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('42abc', options);
+    end,
+    EYAMLParseException,
+    'trailing letters after a number must be rejected');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('[1,2]extra', options);
+    end,
+    EYAMLParseException,
+    'trailing text after a closing bracket must be rejected');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k":1}5', options);
+    end,
+    EYAMLParseException,
+    'trailing scalar after a closing brace must be rejected');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsBareSign;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §6: a sign without digits is not a valid number.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('-', options);
+    end,
+    EYAMLParseException,
+    'bare "-" must be rejected as a number');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"k": -}', options);
+    end,
+    EYAMLParseException,
+    '"-" with no digits inside an object must be rejected');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsNbspAsWhitespace;
+var
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §2: insignificant whitespace is exactly U+0020, U+0009,
+  // U+000A, U+000D. NBSP (U+00A0) and form-feed (U+000C) are NOT ws and
+  // cannot appear between a value and EOF (or between tokens at top level).
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(#$00A0 + '1', options);
+    end,
+    EYAMLParseException,
+    'NBSP before a value must be rejected as non-RFC whitespace');
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(#$000C + '1', options);
+    end,
+    EYAMLParseException,
+    'form-feed before a value must be rejected as non-RFC whitespace');
 end;
 
 initialization
