@@ -1427,8 +1427,51 @@ begin
 end;
 
 function TYAMLMapping.AddOrSetValue(const key, value : string) : IYAMLValue;
+    function GetIndentLevel(ANode: IYAMLMapping): Integer;
+    var
+      Parent: IYAMLValue;
+    begin
+      Result := 0;
+      Parent := IYAMLValue(ANode).Parent; // get parent
+      while Parent <> nil do
+      begin
+        Inc(Result);
+        Parent := Parent.Parent;
+      end;
+      // Subtract 1 if you don't want to count Root itself.
+    end;
+
+    function FormatAsYamlBlock(const AText: string; Indent: Integer): string;
+    var
+      Lines: TStringList;
+      i: Integer;
+      IndentStr, ProcessedLine: string;
+    begin
+      // If there are no line breaks in the string, return it as is (or in quotes)
+      if (Pos(#10, AText) = 0) {and (Length(AText) < 80){If you want you can use it} then
+        Exit('"' + AText + '"');
+
+      IndentStr := StringOfChar(' ', Indent * 2); // 2 spaces to level
+      Lines := TStringList.Create;
+      try
+        Lines.Text := AText;
+        // 1. Specify the block start symbol
+        Result := '|' + #10;
+
+        // 2. Add each line with the correct indentation
+        for i := 0 to Lines.Count - 1 do
+        begin
+          // replace tabs
+          ProcessedLine := StringReplace(Lines[i], #9, '  ', [rfReplaceAll]);
+          Result := Result + IndentStr + '  ' + ProcessedLine;
+          if i < Lines.Count - 1 then Result := Result + #10;
+        end;
+      finally
+        Lines.Free;
+      end;
+    end;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtString,value);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtString,FormatAsYamlBlock(value,GetIndentLevel(Self)));
   AddOrSetValue(key, result);
 end;
 
