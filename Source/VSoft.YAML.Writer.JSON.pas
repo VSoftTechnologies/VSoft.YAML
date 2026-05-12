@@ -61,7 +61,6 @@ type
 implementation
 
 uses
-  System.Math,
   VSoft.YAML.Classes, VSoft.YAML.Utils;
 
 { TJSONWriterImpl }
@@ -108,8 +107,6 @@ begin
 end;
 
 function TJSONWriterImpl.FormatScalar(const value : IYAMLValue) : string;
-var
-  floatValue : Double;
 begin
   FStringBuilder.Reset;
   case value.ValueType of
@@ -125,14 +122,7 @@ begin
     TYAMLValueType.vtInteger :
       FStringBuilder.Append(IntToStr(value.AsInteger));
     TYAMLValueType.vtFloat :
-    begin
-      // RFC 8259 has no representation for NaN/Infinity; emit JSON null instead.
-      floatValue := value.AsFloat;
-      if IsNan(floatValue) or IsInfinite(floatValue) then
-        FStringBuilder.Append('null')
-      else
-        FStringBuilder.Append(FloatToStr(floatValue, YAMLFormatSettings));
-    end;
+      FStringBuilder.Append(FloatToStr(value.AsFloat, YAMLFormatSettings));
     TYAMLValueType.vtString :
     begin
       FStringBuilder.Append('"');

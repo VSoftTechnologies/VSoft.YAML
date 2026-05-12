@@ -720,27 +720,23 @@ begin
 
         valueType := IsScalarValue(value, FJSONMode);
 
-        // Additional JSON mode validation for invalid literals.
-        // Reaching this branch in JSON mode means we have an unquoted plain
-        // scalar that didn't classify as a number, boolean, or null - which
-        // RFC 8259 does not allow.
+        // Additional JSON mode validation for invalid literals
         if FJSONMode and (valueType = TYAMLValueType.vtString) then
         begin
-          // Specific message for hex/octal/binary numbers.
+          // Check for hex/octal/binary numbers (not valid in JSON)
           if (Length(value) > 2) and (value[1] = '0') and
              CharInSet(value[2], ['x','X','o','O','b','B']) then
+          begin
             RaiseParseError('Invalid number format in JSON: "' + value + '". JSON does not support hex, octal, or binary number literals.');
+          end;
 
-          // Specific message for YAML-style boolean/null spellings.
+          // Check for YAML-style boolean/null values that are invalid in JSON
           if SameText(value, 'yes') or SameText(value, 'no') or SameText(value, 'on') or SameText(value, 'off') or
-             SameText(value, 'truth') or SameText(value, 'False') or SameText(value, 'True') or
+             SameText(value, 'truth') or SameText(value, 'false') or SameText(value, 'True') or SameText(value, 'False') or
              SameText(value, '~') or (value = '') then
+          begin
             RaiseParseError('Invalid literal value in JSON: "' + value + '". JSON only supports true, false, null, numbers, and quoted strings.');
-
-          // Anything else here is an unquoted plain scalar, which RFC 8259 forbids.
-          // Catches NaN, Infinity, comment fragments (// or /* */), and any other
-          // bare token that isn't a quoted string, number, true, false, or null.
-          RaiseParseError('Invalid unquoted value in JSON: "' + value + '". JSON only supports quoted strings, numbers, true, false, and null.');
+          end;
         end;
 
         // Additional validation for potentially problematic unquoted strings
@@ -1002,11 +998,6 @@ var
   expectedIndent : integer;
   keyIndentLevel : integer;
 begin
-  // RFC 8259: JSON only permits flow-style objects "{...}". A block-style
-  // "key: value" mapping is YAML-only and must be rejected in JSON mode.
-  if FJSONMode then
-    RaiseParseError('Block-style mapping is not valid in JSON; use flow-style "{...}" objects');
-
   result := TYAMLMapping.Create(parent, tag);
   AssignPendingCommentsToCollection(result);
   expectedIndent := FCurrentToken.IndentLevel;
@@ -1306,10 +1297,6 @@ begin
     while FCurrentToken.TokenKind <> TYAMLTokenKind.EOF do
     begin
       try
-        // RFC 8259 §2: JSON allows only a single top-level value.
-        if FJSONMode and (documentCount > 0) then
-          RaiseParseError('JSON allows only one top-level value; unexpected trailing content');
-
         // Clear anchors between documents and initialize directives
         if documentCount > 0 then
         begin
@@ -1550,21 +1537,6 @@ begin
       root := TYAMLValue.Create(nil, TYAMLValueType.vtNull, '', '')
     else
       root := ParseDocument;
-
-    // RFC 8259 §2: a JSON text contains exactly one top-level value.
-    // Reject any non-trivial trailing content.
-    if FJSONMode then
-    begin
-      while FCurrentToken.TokenKind in [TYAMLTokenKind.NewLine, TYAMLTokenKind.Comment] do
-      begin
-        if FCurrentToken.TokenKind = TYAMLTokenKind.Comment then
-          ProcessComment
-        else
-          NextToken;
-      end;
-      if FCurrentToken.TokenKind <> TYAMLTokenKind.EOF then
-        RaiseParseError('JSON allows only one top-level value; unexpected trailing content');
-    end;
 
     result := TYAMLDocument.Create(root, FYAMLVersion, FTagDirectives);
 

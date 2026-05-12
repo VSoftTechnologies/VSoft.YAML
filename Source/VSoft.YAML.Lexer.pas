@@ -84,7 +84,6 @@ type
 
     procedure SkipWhitespace;
     function SkipWhitespaceAndCalculateIndent : integer;
-    procedure RejectInJSONMode(const featureName : string);
     function ReadDirective : string;
     function ReadComment : string;
     function ReadDoubleQuotedString : string;
@@ -210,10 +209,8 @@ begin
     begin
       if FJSONMode then
       begin
-        // RFC 8259 §2: tab is valid whitespace but JSON has no indentation
-        // semantics. Count it as a single unit so the YAML indent machinery
-        // doesn't misclassify a flow value as nested.
-        Inc(count);
+        // In JSON mode, treat tabs as 2 spaces
+        Inc(count, 2);
       end
       else
       begin
@@ -225,14 +222,6 @@ begin
   end;
 
   result := count;
-end;
-
-procedure TYAMLLexer.RejectInJSONMode(const featureName : string);
-begin
-  if FJSONMode then
-    raise EYAMLParseException.Create(
-      featureName + ' is not valid in JSON',
-      FReader.Line, FReader.Column);
 end;
 
 function TYAMLLexer.ReadComment : string;
@@ -448,15 +437,10 @@ begin
     end
     else
     begin
-      // RFC 8259 §7: characters U+0000..U+001F MUST NOT appear unescaped
-      // inside a JSON string. This covers literal CR/LF as well as the rest
-      // of the C0 control range (NUL, BS, HT, VT, FF, etc.).
-      if FJSONMode and (Ord(FReader.Current) < $20) then
+      // In JSON mode, check for literal newlines which are not allowed
+      if FJSONMode and CharInSet(FReader.Current,[#10, #13]) then
       begin
-        if CharInSet(FReader.Current, [#10, #13]) then
-          raise EYAMLParseException.Create('Literal line breaks are not allowed in JSON strings. Use \n for newlines.', FReader.Line, FReader.Column)
-        else
-          raise EYAMLParseException.Create(Format('Unescaped control character U+%.4X is not allowed in JSON strings', [Ord(FReader.Current)]), FReader.Line, FReader.Column);
+        raise EYAMLParseException.Create('Literal line breaks are not allowed in JSON strings. Use \n for newlines.', FReader.Line, FReader.Column);
       end;
       FStringBuilder.Append(FReader.Current);
     end;
@@ -620,17 +604,9 @@ begin
   FStringBuilder.Reset;
   dotCount := 0;
 
-  // Handle leading sign
+  // Handle negative numbers
   if FReader.Current = '-' then
   begin
-    FStringBuilder.Append(FReader.Current);
-    FReader.Read;
-  end
-  else if FReader.Current = '+' then
-  begin
-    // RFC 8259 §6: a JSON number must not have a leading +.
-    if FJSONMode then
-      raise EYAMLParseException.Create('Numbers cannot have a leading + sign in JSON', FReader.Line, FReader.Column);
     FStringBuilder.Append(FReader.Current);
     FReader.Read;
   end;
@@ -731,11 +707,7 @@ begin
     Inc(dotCount);
     FStringBuilder.Append(FReader.Current);
     FReader.Read;
-
-    // RFC 8259 §6: a fraction is "." followed by one or more digits.
-    if FJSONMode and not TYAMLCharUtils.IsDigit(FReader.Current) then
-      raise EYAMLParseException.Create('Invalid number format in JSON: decimal point must be followed by at least one digit', FReader.Line, FReader.Column);
-
+    
     while TYAMLCharUtils.IsDigit(FReader.Current) and not IsAtEnd do
     begin
       tempChar := FReader.Current;
@@ -1102,14 +1074,8 @@ begin
   result.Column := FReader.Column;
   result.IndentLevel := 0;
 
-  // Skip whitespace but track indentation at line start.
-  // RFC 8259 §2: JSON has no indentation semantics; tab and space are simply
-  // insignificant whitespace. Bypass the YAML indent machinery in JSON mode
-  // so mixed tab/space indentation in pretty-printed JSON cannot mis-align
-  // the indent stack and confuse the flow-collection parser.
-  if FJSONMode then
-    SkipWhitespace
-  else if FReader.Column = 1 then
+  // Skip whitespace but track indentation at line start
+  if FReader.Column = 1 then
   begin
     currentIndent := SkipWhitespaceAndCalculateIndent;
     result.IndentLevel := currentIndent;
@@ -1124,7 +1090,7 @@ begin
       // Handle dedent - pop indent levels until we find matching or lower level
       while (FIndentStack.Count > 1) and (currentIndent < CurrentIndentLevel) do
         PopIndentLevel;
-
+      
       // Set the result indent level to the current level after popping
       result.IndentLevel := currentIndent;
     end
@@ -1150,16 +1116,6 @@ begin
     result.TokenKind := TYAMLTokenKind.EOF;
     Exit;
   end;
-
-  // RFC 8259 §2: insignificant whitespace is exactly U+0020, U+0009, U+000A,
-  // U+000D. Any other C0 control character (e.g. form-feed U+000C) appearing
-  // between tokens is not whitespace and would otherwise be silently consumed
-  // by ReadUnquotedString and then stripped by the scalar classifier's Trim.
-  if FJSONMode and (Ord(FReader.Current) < $20) and
-     not CharInSet(FReader.Current, [#10, #13]) then
-    raise EYAMLParseException.Create(
-      Format('U+%.4X is not valid whitespace in JSON', [Ord(FReader.Current)]),
-      FReader.Line, FReader.Column);
 
   startLine := FReader.Line;
   startColumn := FReader.Column;
@@ -1190,8 +1146,6 @@ begin
         peekChar := FReader.Peek();
         if IsWhitespace(peekChar) then
         begin
-          // RFC 8259: block-style sequences are YAML-only.
-          RejectInJSONMode('Block-style sequence "- item"');
           result.TokenKind := TYAMLTokenKind.SequenceItem;
           // For sequence items, use the actual column position for proper nesting
           // Override the FSequenceItemIndent setting for this token
@@ -1206,8 +1160,6 @@ begin
         end
         else if (peekChar = '-') and (FReader.Peek(2) = '-') then
         begin
-          // RFC 8259 §2: JSON has no document markers.
-          RejectInJSONMode('Document start marker "---"');
           result.TokenKind := TYAMLTokenKind.DocStart;
           // No value assignment needed for ttDocStart
           FReader.Read; FReader.Read; FReader.Read;
@@ -1243,8 +1195,6 @@ begin
         peekChar := FReader.Peek();
         if (peekChar = '.') and (FReader.Peek(2) = '.') then
         begin
-          // RFC 8259 §2: JSON has no document markers.
-          RejectInJSONMode('Document end marker "..."');
           result.TokenKind := TYAMLTokenKind.DocEnd;
           // No value assignment needed for ttDocEnd
           FReader.Read; FReader.Read; FReader.Read;
@@ -1339,7 +1289,6 @@ begin
     '%':
       begin
         // YAML directive
-        RejectInJSONMode('Directive');
         result.TokenKind := TYAMLTokenKind.Directive;
         result.Value := ReadDirective;
       end;
@@ -1347,7 +1296,6 @@ begin
     '&':
       begin
         // Anchor definition
-        RejectInJSONMode('Anchor "&name"');
         FReader.Read; // Skip '&'
         result.Value := ReadAnchorOrAlias;
         if result.Value <> '' then
@@ -1359,7 +1307,6 @@ begin
     '*':
       begin
         // Alias reference
-        RejectInJSONMode('Alias "*name"');
         FReader.Read; // Skip '*'
         result.Value := ReadAnchorOrAlias;
         if result.Value <> '' then
@@ -1371,7 +1318,6 @@ begin
     '!':
       begin
         // YAML tag
-        RejectInJSONMode('Tag "!name"');
         tag := ReadTag;
         result.Prefix := tag.Prefix;
         result.Value := tag.Handle;
@@ -1384,7 +1330,6 @@ begin
     '|':
       begin
         // Literal scalar
-        RejectInJSONMode('Literal block scalar "|"');
         result.TokenKind := TYAMLTokenKind.Literal;
         result.Value := ReadLiteralScalar;
       end;
@@ -1392,7 +1337,6 @@ begin
     '>':
       begin
         // Folded scalar
-        RejectInJSONMode('Folded block scalar ">"');
         result.TokenKind := TYAMLTokenKind.Folded;
         result.Value := ReadFoldedScalar;
       end;
@@ -1404,7 +1348,6 @@ begin
         peekChar := FReader.Peek();
         if IsWhitespace(peekChar) or (peekChar = #10) or (peekChar = #13) then
         begin
-          RejectInJSONMode('Set/complex-key indicator "?"');
           result.TokenKind := TYAMLTokenKind.SetItem;
           FReader.Read; // Skip '?'
         end
