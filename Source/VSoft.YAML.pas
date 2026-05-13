@@ -34,7 +34,8 @@ type
     vtMapping,
     vtSet,
     vtTimestamp,
-    vtAlias
+    vtAlias,
+    vtLiteral
   );
 
   // YAML output format options
@@ -129,6 +130,7 @@ type
     function IsAlias : boolean;
     function IsTimeStamp : boolean;
     function IsNumeric : boolean;
+    function IsLiteralBlock : boolean;
 
     // Value conversion methods
     function AsBoolean : boolean;
