@@ -339,7 +339,7 @@ begin
     begin
       if NeedsQuoting(value.AsString) then
       begin
-        if Pos(#10, value.AsString) <> 0  then
+        if Pos(#10, value.AsString) <> 0 and Pos(#10, value.AsString) <> Lenght(value.AsString) then
           result := FormatAsYamlBlock(value.AsString, GetIndentLevel(value))
         else
         begin
@@ -356,7 +356,7 @@ begin
           EscapeForSingleQuotes(value.AsString, FStringBuilder);
           FStringBuilder.Append('''');
         end;
-        result := {'dont know'} FStringBuilder.ToString;
+        result := FStringBuilder.ToString;
         end;
       end
       else

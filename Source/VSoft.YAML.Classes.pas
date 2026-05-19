@@ -896,10 +896,7 @@ begin
     TYAMLValueType.vtInteger,
     TYAMLValueType.vtFloat,
     TYAMLValueType.vtLiteral,
-    TYAMLValueType.vtString :
-    begin
-      result := FRawValue
-    end;
+    TYAMLValueType.vtString : result := FRawValue;
     TYAMLValueType.vtSequence : result := '[Sequence]';
     TYAMLValueType.vtMapping : result := '[Mapping]';
     TYAMLValueType.vtSet : result := '[Set]';
@@ -1438,7 +1435,7 @@ end;
 
 function TYAMLMapping.AddOrSetValue(const key, value : string) : IYAMLValue;
 begin
-  if Pos(#10, value) <> 0 then
+  if Pos(#10, value.AsString) <> 0 and Pos(#10, value.AsString) <> Lenght(value.AsString) then
     result := TYAMLValue.Create(Self, TYAMLValueType.vtLiteral,value)
   else
     result := TYAMLValue.Create(Self, TYAMLValueType.vtString,value);
@@ -1585,7 +1582,7 @@ function TYAMLMapping.AddOrSetValue(const key : string; const value : string; co
 begin
   if value = '' then
     result := TYAMLValue.Create(Self, TYAMLValueType.vtNull, value, tag)
-  else if Pos(#10, value) <> 0 then
+  else if Pos(#10, value.AsString) <> 0 and Pos(#10, value.AsString) <> Lenght(value.AsString) then
     result := TYAMLValue.Create(Self, TYAMLValueType.vtLiteral, value, tag)
   else
     result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tag);
