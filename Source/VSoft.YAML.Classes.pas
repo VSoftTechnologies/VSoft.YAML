@@ -1435,7 +1435,7 @@ end;
 
 function TYAMLMapping.AddOrSetValue(const key, value : string) : IYAMLValue;
 begin
-  if Pos(#10, value.AsString) <> 0 and Pos(#10, value.AsString) <> Lenght(value.AsString) then
+  if (Pos(#10, value) <> 0) and (Pos(#10, value) <> Length(value)) then
     result := TYAMLValue.Create(Self, TYAMLValueType.vtLiteral,value)
   else
     result := TYAMLValue.Create(Self, TYAMLValueType.vtString,value);
@@ -1582,7 +1582,7 @@ function TYAMLMapping.AddOrSetValue(const key : string; const value : string; co
 begin
   if value = '' then
     result := TYAMLValue.Create(Self, TYAMLValueType.vtNull, value, tag)
-  else if Pos(#10, value.AsString) <> 0 and Pos(#10, value.AsString) <> Lenght(value.AsString) then
+  else if (Pos(#10, value) <> 0) and (Pos(#10, value) <> Length(value)) then
     result := TYAMLValue.Create(Self, TYAMLValueType.vtLiteral, value, tag)
   else
     result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tag);

@@ -339,7 +339,7 @@ begin
     begin
       if NeedsQuoting(value.AsString) then
       begin
-        if Pos(#10, value.AsString) <> 0 and Pos(#10, value.AsString) <> Lenght(value.AsString) then
+        if (Pos(#10, value.AsString) <> 0) and (Pos(#10, value.AsString) <> Length(value.AsString)) then
           result := FormatAsYamlBlock(value.AsString, GetIndentLevel(value))
         else
         begin
