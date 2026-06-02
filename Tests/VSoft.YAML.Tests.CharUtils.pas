@@ -146,7 +146,7 @@ begin
   input := '🚀🌟💻';
   output := TYAMLCharUtils.EscapeStringForJSON(input);
   // Should be escaped as surrogate pairs
-  Assert.IsTrue(output.Contains('\u'));
+  Assert.IsTrue((Pos('\u', output) > 0));
   Assert.IsTrue(Length(output) > Length(input)); // Should be longer due to escaping
 end;
 
@@ -258,16 +258,16 @@ begin
   // Emoji that require surrogate pairs (outside BMP)
   input := '🚀🌟💻😀';
   output := TYAMLCharUtils.EscapeStringForJSON(input);
-  containsEscapes := output.Contains('\u');
+  containsEscapes := (Pos('\u', output) > 0);
   Assert.IsTrue(containsEscapes, 'Emoji (outside BMP) should be escaped as surrogate pairs');
   
   // Verify the escape format looks like surrogate pairs
-  Assert.IsTrue(output.Contains('\uD8'), 'Should contain high surrogate escape');
+  Assert.IsTrue((Pos('\uD8', output) > 0), 'Should contain high surrogate escape');
   
   // Mathematical symbols in Supplementary Multilingual Plane
   input := '𝒜𝒷𝒸𝒹'; // Mathematical script letters (U+1D49C etc.)
   output := TYAMLCharUtils.EscapeStringForJSON(input);
-  containsEscapes := output.Contains('\u');
+  containsEscapes := (Pos('\u', output) > 0);
   Assert.IsTrue(containsEscapes, 'Math script letters outside BMP should be escaped');
 end;
 

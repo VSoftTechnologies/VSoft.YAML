@@ -124,6 +124,7 @@ type
         2 : (FilterExpression : TFilterExpression); // For Filter
     end;
   private
+    FInitialized : boolean;
     FOperators : TArray<TOperator>;
     FOperatorCount : integer;
     FMatches : IYAMLSequence;
@@ -168,6 +169,14 @@ type
     /// <param name="AExpression">the JSONPath expression to parse</param>
     /// <exception cref="EYAMLPathError">if AExpression is invalid</exception>
     constructor Create(const expression : string);
+
+    /// <summary>
+    /// Releases the heap allocated objects owned by this processor (a record
+    /// cannot do this in a destructor). Must be called before the record goes out
+    /// of scope. Guards on the initialized flag, so it is safe to call on an
+    /// unused/partially constructed record and safe to call more than once.
+    /// </summary>
+    procedure Cleanup;
 
     /// <summary>
     /// Executes this JSONPath expression on a document.
@@ -275,6 +284,7 @@ constructor TYAMLPathProcessor.Create(const expression : string);
 var
   reader : IInputReader;
 begin
+  FInitialized := False;
   FOperators := nil;
   FOperatorCount := 0;
 
@@ -301,6 +311,29 @@ begin
 
   if (FOperatorCount > 0) and (FOperators[FOperatorCount - 1].OperatorType = TOperatorType.RecursiveDescent) then
     raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_RECURSIVE_DESCENT);
+
+  FInitialized := True;
+end;
+
+procedure TYAMLPathProcessor.Cleanup;
+var
+  i : integer;
+begin
+  if not FInitialized then
+    Exit;
+
+  // Filter operators own a heap allocated TFilterExpression (stored in the record's
+  // variant part) that is not released when the FOperators array is finalized.
+  for i := 0 to FOperatorCount - 1 do
+  begin
+    if (FOperators[i].OperatorType = TOperatorType.Filter) and Assigned(FOperators[i].FilterExpression) then
+    begin
+      FOperators[i].FilterExpression.Free;
+      FOperators[i].FilterExpression := nil;
+    end;
+  end;
+
+  FInitialized := False;
 end;
 
 class function TYAMLPathProcessor.IsQuote(const ch : Char) : boolean;
@@ -324,7 +357,11 @@ begin
   end;
 
   path := TYAMLPathProcessor.Create(AExpression);
-  result := path.InternalMatch(root, False);
+  try
+    result := path.InternalMatch(root, False);
+  finally
+    path.Cleanup;
+  end;
 end;
 
 function TYAMLPathProcessor.InternalMatch(const root : IYAMLValue; const AMatchSingle : boolean) : IYAMLSequence;
@@ -374,7 +411,11 @@ begin
   end;
 
   yamlPath := TYAMLPathProcessor.Create(AExpression);
-  result := yamlPath.QuerySingle(ADoc, AMatch);
+  try
+    result := yamlPath.QuerySingle(ADoc, AMatch);
+  finally
+    yamlPath.Cleanup;
+  end;
 end;
 
 //procedure TYAMLPathProcessor.ParseBracketOperator(const reader : IInputReader);
@@ -1617,39 +1658,46 @@ begin
           if Frac(Operand.NumericValue) = 0 then
             result := TYAMLValue.Create(nil, TYAMLValueType.vtInteger, IntToStr(Trunc(Operand.NumericValue)))
           else
-            result := TYAMLValue.Create(nil, TYAMLValueType.vtFloat, FloatToStr(Operand.NumericValue, YAMLFormatSettings));
+            result := TYAMLValue.Create(nil, TYAMLValueType.vtFloat, YAMLFloatToStr(Operand.NumericValue));
         end
         else
           result := TYAMLValue.Create(nil, TYAMLValueType.vtBoolean, BoolToStr(Operand.BoolValue, True));
       end;
     TFilterOperandType.fotPath:
       begin
-        // Parse and execute the path expression
+        // Parse and execute the path expression. A record local does not zero its
+        // unmanaged fields, so clear the initialized flag up front - that makes
+        // Cleanup a safe no-op if Create below raises before it can run.
+        pathProcessor.FInitialized := False;
         try
-          if StartsText('$', Operand.Path) then
-          begin
-            pathProcessor := TYAMLPathProcessor.Create(Operand.Path);
-            matches := pathProcessor.Query(Context.RootDocument);
-          end
-          else if StartsText('.', Operand.Path) then
-          begin
-            // For paths like .rating, we need to access property of current item
-            pathProcessor := TYAMLPathProcessor.Create('$' + Operand.Path);
-            matches := pathProcessor.Query(Context.CurrentItem);
-          end
-          else
-          begin
-            // For other paths, assume they're relative to current item  
-            pathProcessor := TYAMLPathProcessor.Create('$.' + Operand.Path);
-            matches := pathProcessor.Query(Context.CurrentItem);
-          end;
-          
-          if matches.Count > 0 then
-            result := matches[0]
-          else
+          try
+            if StartsText('$', Operand.Path) then
+            begin
+              pathProcessor := TYAMLPathProcessor.Create(Operand.Path);
+              matches := pathProcessor.Query(Context.RootDocument);
+            end
+            else if StartsText('.', Operand.Path) then
+            begin
+              // For paths like .rating, we need to access property of current item
+              pathProcessor := TYAMLPathProcessor.Create('$' + Operand.Path);
+              matches := pathProcessor.Query(Context.CurrentItem);
+            end
+            else
+            begin
+              // For other paths, assume they're relative to current item
+              pathProcessor := TYAMLPathProcessor.Create('$.' + Operand.Path);
+              matches := pathProcessor.Query(Context.CurrentItem);
+            end;
+
+            if matches.Count > 0 then
+              result := matches[0]
+            else
+              result := TYAMLValue.Create(nil, TYAMLValueType.vtNull);
+          except
             result := TYAMLValue.Create(nil, TYAMLValueType.vtNull);
-        except
-          result := TYAMLValue.Create(nil, TYAMLValueType.vtNull);
+          end;
+        finally
+          pathProcessor.Cleanup;
         end;
       end;
   else

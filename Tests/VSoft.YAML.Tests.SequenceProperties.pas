@@ -670,7 +670,7 @@ begin
   Assert.AreEqual('42', stringFromInt, 'Integer should convert to string correctly');
   
   stringFromFloat := sequence.S[4]; // Float 3.14159 as string
-  Assert.IsTrue(stringFromFloat.Contains('3.14'), 'Float should convert to string containing expected digits');
+  Assert.IsTrue((Pos('3.14', stringFromFloat) > 0), 'Float should convert to string containing expected digits');
 end;
 
 procedure TYAMLSequencePropertiesTests.TestSequenceAfterModification;

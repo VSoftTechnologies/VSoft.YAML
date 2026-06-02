@@ -7,6 +7,7 @@ uses
   VSoft.YAML,
   System.SysUtils,
   System.Classes,
+  System.IOUtils,
   System.DateUtils,
   System.Math;
 
@@ -220,6 +221,13 @@ type
     procedure Test_DateTime_RoundTripConversion;
     [Test]
     procedure Test_DateTime_EdgeCaseTimezones;
+
+    // Regression: the buffered stream reader must not drop the first character of
+    // the stream (this corrupted the first key name on some RTLs, e.g. XE2).
+    [Test]
+    procedure Test_LoadFromStream_FirstKeyNotDropped;
+    [Test]
+    procedure Test_LoadFromFile_FirstKeyNotDropped;
   end;
 
 implementation
@@ -1704,13 +1712,19 @@ var
   doc: IYAMLDocument;
   root: IYAMLMapping;
   yamlStr: string;
+  // XE2 has no Double.PositiveInfinity/NaN record-helper members - use System.Math
+  // constants via typed locals.
+  posInf, negInf, nanVal: Double;
 begin
   doc := TYAML.CreateMapping;
   root := doc.AsMapping;
 
-  root.AddOrSetValue('positive_infinity', Double.PositiveInfinity);
-  root.AddOrSetValue('negative_infinity', Double.NegativeInfinity);
-  root.AddOrSetValue('not_a_number', Double.NaN);
+  posInf := Infinity;
+  negInf := NegInfinity;
+  nanVal := NaN;
+  root.AddOrSetValue('positive_infinity', posInf);
+  root.AddOrSetValue('negative_infinity', negInf);
+  root.AddOrSetValue('not_a_number', nanVal);
   root.AddOrSetValue('zero', 0.0);
   root.AddOrSetValue('negative_zero', -0.0);
 
@@ -2076,6 +2090,66 @@ begin
     'Sequence item name should be Person1');
   Assert.AreEqual<Int64>(20, firstItem.Values['age'].AsInteger,
     'Sequence item age should be 20');
+end;
+
+procedure TYAMLEdgeCasesTests.Test_LoadFromStream_FirstKeyNotDropped;
+const
+  cYaml = 'packageCacheLocation: cache_location_value' + sLineBreak +
+          'author: Vincent' + sLineBreak +
+          'count: 42';
+var
+  stream : TStringStream;
+  root : IYAMLMapping;
+begin
+  // The buffered stream reader previously read its TStringBuilder backing buffer
+  // using a hard coded 1-based offset, which silently dropped the first character
+  // of the stream on RTLs where that buffer is 0-based (e.g. XE2). That corrupted
+  // the first key name ('packageCacheLocation' -> 'ackageCacheLocation'), so this
+  // asserts the first key survives a load via the stream/buffered reader path.
+  stream := TStringStream.Create(cYaml, TEncoding.UTF8);
+  try
+    root := TYAML.LoadFromStream(stream).Root.AsMapping;
+    Assert.IsTrue(root.ContainsKey('packageCacheLocation'),
+      'first key was dropped - the first character of the stream was lost');
+    Assert.AreEqual('cache_location_value', root.Values['packageCacheLocation'].AsString);
+    Assert.AreEqual('Vincent', root.Values['author'].AsString);
+    Assert.AreEqual<Int64>(42, root.Values['count'].AsInteger);
+  finally
+    stream.Free;
+  end;
+end;
+
+procedure TYAMLEdgeCasesTests.Test_LoadFromFile_FirstKeyNotDropped;
+const
+  cYaml = 'packageCacheLocation: cache_location_value' + sLineBreak +
+          'author: Vincent' + sLineBreak +
+          'count: 42';
+var
+  fileName : string;
+  stream : TStringStream;
+  root : IYAMLMapping;
+begin
+  // Same regression as Test_LoadFromStream_FirstKeyNotDropped, but exercising the
+  // real TFileStream / BOM-detection path used when loading a config file from disk.
+  fileName := TPath.GetTempFileName;
+  try
+    stream := TStringStream.Create(cYaml, TEncoding.UTF8);
+    try
+      stream.SaveToFile(fileName); // UTF-8, no BOM - as DPM writes its config
+    finally
+      stream.Free;
+    end;
+
+    root := TYAML.LoadFromFile(fileName).Root.AsMapping;
+    Assert.IsTrue(root.ContainsKey('packageCacheLocation'),
+      'first key was dropped - the first character of the file was lost');
+    Assert.AreEqual('cache_location_value', root.Values['packageCacheLocation'].AsString);
+    Assert.AreEqual('Vincent', root.Values['author'].AsString);
+    Assert.AreEqual<Int64>(42, root.Values['count'].AsInteger);
+  finally
+    if FileExists(fileName) then
+      DeleteFile(fileName);
+  end;
 end;
 
 initialization

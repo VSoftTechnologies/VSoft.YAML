@@ -9,7 +9,9 @@ uses
   Posix.Unistd,
   {$ENDIF}
   System.SysUtils,
+  System.StrUtils,
   System.Classes,
+  System.Math,
   System.DateUtils;
 
 type
@@ -328,13 +330,15 @@ var
   doc: IYAMLDocument;
   root: IYAMLMapping;
   yamlStr: string;
+  floatVal: Double; // XE2 rejects Double(literal) typecasts - use a typed local
 begin
   doc := TYAML.CreateMapping;
   root := doc.AsMapping;
-  
+
+  floatVal := 3.14159;
   root.AddOrSetValue('string_key', 'Hello World');
   root.AddOrSetValue('integer_key', 42);
-  root.AddOrSetValue('float_key', Double(3.14159));
+  root.AddOrSetValue('float_key', floatVal);
   root.AddOrSetValue('boolean_key', True);
   
   yamlStr := TYAML.WriteToString(doc);
@@ -375,18 +379,22 @@ var
   root: IYAMLMapping;
   testDate: TDateTime;
   yamlStr: string;
+  singleVal: Single; // XE2 rejects Single/Double(literal) typecasts - use typed locals
+  doubleVal: Double;
 begin
   doc := TYAML.CreateMapping;
   root := doc.AsMapping;
   testDate := CreateTestDateTime;
-  
+
+  singleVal := 3.14;
+  doubleVal := 3.141592653589793;
   root.AddOrSetValue('string_val', 'Test String');
   root.AddOrSetValue('int32_val', Int32(42));
   root.AddOrSetValue('uint32_val', UInt32(42));
   root.AddOrSetValue('int64_val', Int64(123456789));
   root.AddOrSetValue('uint64_val', UInt64(123456789));
-  root.AddOrSetValue('single_val', Single(3.14));
-  root.AddOrSetValue('double_val', Double(3.141592653589793));
+  root.AddOrSetValue('single_val', singleVal);
+  root.AddOrSetValue('double_val', doubleVal);
   root.AddOrSetValue('bool_val', True);
   root.AddOrSetValue('date_utc', testDate, True);
   root.AddOrSetValue('date_local', testDate, False);
@@ -405,18 +413,22 @@ var
   root: IYAMLSequence;
   testDate: TDateTime;
   yamlStr: string;
+  singleVal: Single; // XE2 rejects Single/Double(literal) typecasts - use typed locals
+  doubleVal: Double;
 begin
   doc := TYAML.CreateSequence;
   root := doc.AsSequence;
   testDate := CreateTestDateTime;
-  
+
+  singleVal := 3.14;
+  doubleVal := 3.141592653589793;
   root.AddValue('Test String');
   root.AddValue(Int32(42));
   root.AddValue(UInt32(42));
   root.AddValue(Int64(123456789));
   root.AddValue(UInt64(123456789));
-  root.AddValue(Single(3.14));
-  root.AddValue(Double(3.141592653589793));
+  root.AddValue(singleVal);
+  root.AddValue(doubleVal);
   root.AddValue(True);
   root.AddValue(testDate, True);
   root.AddValue(testDate, False);
@@ -934,13 +946,19 @@ var
   doc: IYAMLDocument;
   root: IYAMLMapping;
   yamlStr: string;
+  // XE2 has no Double.PositiveInfinity/NaN record-helper members - use System.Math
+  // constants via typed locals.
+  posInf, negInf, nanVal: Double;
 begin
   doc := TYAML.CreateMapping;
   root := doc.AsMapping;
-  
-  root.AddOrSetValue('pos_infinity', Double.PositiveInfinity);
-  root.AddOrSetValue('neg_infinity', Double.NegativeInfinity);
-  root.AddOrSetValue('nan_value', Double.NaN);
+
+  posInf := Infinity;
+  negInf := NegInfinity;
+  nanVal := NaN;
+  root.AddOrSetValue('pos_infinity', posInf);
+  root.AddOrSetValue('neg_infinity', negInf);
+  root.AddOrSetValue('nan_value', nanVal);
   
   yamlStr := TYAML.WriteToString(doc);
   
@@ -1679,7 +1697,7 @@ begin
   p := 1;
   while p <= Length(yamlStr) do
   begin
-    p := Pos('---', yamlStr, p);
+    p := PosEx('---', yamlStr, p);
 
     if p > 0 then
     begin
@@ -2066,7 +2084,7 @@ begin
   loadedValue := loadedDoc.Root.Values['content'].AsString;
 
   // With strip, the trailing newline should be removed
-  Assert.IsFalse(loadedValue.EndsWith(#10) or loadedValue.EndsWith(#13),
+  Assert.IsFalse(EndsStr(#10, loadedValue) or EndsStr(#13, loadedValue),
     'Strip chomping should remove trailing newlines');
   Assert.Contains(loadedValue, 'Line 1', 'Should contain Line 1');
   Assert.Contains(loadedValue, 'Line 2', 'Should contain Line 2');

@@ -133,7 +133,11 @@ begin
     Exit;
 
   try
-    FStream.WriteBuffer(FBuffer, FBufferIndex);
+    // NB: pass FBuffer[0], not FBuffer. On XE2 TStream only has the untyped
+    // WriteBuffer(const Buffer; Count), so passing the TBytes variable writes the
+    // bytes of the array reference itself, not the data. Later RTLs have a TBytes
+    // overload which masked this. FBuffer[0] is portable across all versions.
+    FStream.WriteBuffer(FBuffer[0], FBufferIndex);
   finally
     FBufferIndex := 0;
   end;

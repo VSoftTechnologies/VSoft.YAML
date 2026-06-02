@@ -1342,13 +1342,15 @@ procedure TYAMLComprehensiveTests.Test_Mapping_AddOrSetValue_Types;
 var
   doc: IYAMLDocument;
   root: IYAMLMapping;
+  floatVal: Double; // XE2 rejects Double(literal) typecasts - use a typed local
 begin
   doc := TYAML.CreateMapping;
   root := doc.AsMapping;
 
+  floatVal := 3.14;
   root.AddOrSetValue('test_bool', True);
   root.AddOrSetValue('test_int', 42);
-  root.AddOrSetValue('test_float', Double(3.14));
+  root.AddOrSetValue('test_float', floatVal);
   root.AddOrSetValue('test_string', 'Hello World');
 
   Assert.IsTrue(root.Items['test_bool'].AsBoolean);

@@ -60,6 +60,19 @@ uses
   System.IOUtils,
   System.Classes;
 
+// XE2's System.IOUtils.TFile has no GetSize - read it via a stream instead.
+function GetFileSize(const fileName : string) : Int64;
+var
+  fs : TFileStream;
+begin
+  fs := TFileStream.Create(fileName, fmOpenRead or fmShareDenyNone);
+  try
+    result := fs.Size;
+  finally
+    fs.Free;
+  end;
+end;
+
 { TPerformanceTests }
 
 procedure TPerformanceTests.Setup;
@@ -86,7 +99,7 @@ begin
     Exit;
   end;
 
-  fileSize := TFile.GetSize(yamlFile);
+  fileSize := GetFileSize(yamlFile);
 
   // Parse the YAML file
   stopwatch := TStopwatch.StartNew;
@@ -151,7 +164,7 @@ begin
     Exit;
   end;
 
-  fileSize := TFile.GetSize(jsonFile);
+  fileSize := GetFileSize(jsonFile);
 
   // Create options for JSON mode
   options := TYAML.CreateParserOptions;
@@ -362,7 +375,7 @@ begin
     Exit;
   end;
 
-  fileSize := TFile.GetSize(jsonFile);
+  fileSize := GetFileSize(jsonFile);
 
   // Create options for JSON mode
   options := TYAML.CreateParserOptions;
@@ -417,7 +430,7 @@ begin
     Exit;
   end;
 
-  fileSize := TFile.GetSize(yamlFile);
+  fileSize := GetFileSize(yamlFile);
 
   // Parse the YAML file with block scalars
   stopwatch := TStopwatch.StartNew;
@@ -490,7 +503,7 @@ begin
     Exit;
   end;
 
-  fileSize := TFile.GetSize(yamlFile);
+  fileSize := GetFileSize(yamlFile);
 
   // Parse the YAML file with quoted strings
   stopwatch := TStopwatch.StartNew;
@@ -754,7 +767,7 @@ begin
     Exit;
   end;
 
-  fileSize := TFile.GetSize(jsonFile);
+  fileSize := GetFileSize(jsonFile);
 
   // Create options for JSON mode
   options := TYAML.CreateParserOptions;

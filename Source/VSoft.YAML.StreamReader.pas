@@ -100,30 +100,34 @@ begin
   FStart := 0;
 end;
 
+// NOTE: use the public, 0-based TStringBuilder.Chars[]/Length API rather than reaching
+// into the FData/FLength internals. The internal buffer layout is not stable across
+// Delphi versions (e.g. XE2's FData is 0-based, later RTLs are not), so direct
+// FData[FStart + 1] access silently dropped the first character of the stream on XE2.
 function TYAMLStreamReader.TBufferedData.GetChars(AIndex: Integer): Char;
 begin
-  Result := FData[FStart + 1 + AIndex];
+  Result := inherited Chars[FStart + AIndex];
 end;
 
 function TYAMLStreamReader.TBufferedData.Length: Integer;
 begin
-  Result := FLength - FStart;
+  Result := inherited Length - FStart;
 end;
 
 function TYAMLStreamReader.TBufferedData.PeekChar: Char;
 begin
-  Result := FData[FStart + 1];
+  Result := inherited Chars[FStart];
 end;
 
 function TYAMLStreamReader.TBufferedData.PeekChar(n : integer): Char;
 begin
-  Result := FData[FStart + n];
+  Result := inherited Chars[FStart + n - 1];
 end;
 
 
 function TYAMLStreamReader.TBufferedData.MoveChar: Char;
 begin
-  Result := FData[FStart + 1];
+  Result := inherited Chars[FStart];
   Inc(FStart);
 end;
 

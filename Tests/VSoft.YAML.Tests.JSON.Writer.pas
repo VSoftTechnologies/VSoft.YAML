@@ -664,7 +664,7 @@ begin
 
 
   // Compact should be single line
-  Assert.IsFalse(compactOutput.Contains(sLineBreak), 'Compact output should not contain line breaks');
+  Assert.IsFalse((Pos(sLineBreak, compactOutput) > 0), 'Compact output should not contain line breaks');
 
   // Test pretty printed output
 
@@ -674,8 +674,8 @@ begin
 
 
   // Pretty print should have line breaks and indentation
-  Assert.IsTrue(prettyOutput.Contains(sLineBreak), 'Pretty output should contain line breaks');
-  Assert.IsTrue(prettyOutput.Contains('  '), 'Pretty output should contain indentation');
+  Assert.IsTrue((Pos(sLineBreak, prettyOutput) > 0), 'Pretty output should contain line breaks');
+  Assert.IsTrue((Pos('  ', prettyOutput) > 0), 'Pretty output should contain indentation');
   
   // Check structure - pretty print should have proper formatting
   Assert.Contains(prettyOutput, '{' + sLineBreak + '  "name": "John Doe"');

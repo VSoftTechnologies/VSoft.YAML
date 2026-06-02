@@ -442,6 +442,14 @@ const
     DecimalSeparator: '.';
   );
 
+/// <summary>
+///  Converts a Double to its YAML string representation. Unlike FloatToStr, this
+///  emits the canonical YAML tokens for the non-finite values (.nan / .inf / -.inf)
+///  rather than the RTL specific 'NAN'/'INF' text - the latter is not round-trippable
+///  and StrToFloat on XE2 cannot parse it.
+/// </summary>
+function YAMLFloatToStr(const value : Double) : string;
+
 implementation
 
 uses
@@ -450,6 +458,21 @@ uses
   VSoft.YAML.Utils,
   VSoft.YAML.Writer,
   VSoft.YAML.Path;
+
+function YAMLFloatToStr(const value : Double) : string;
+begin
+  if IsNan(value) then
+    result := '.nan'
+  else if IsInfinite(value) then
+  begin
+    if value < 0 then
+      result := '-.inf'
+    else
+      result := '.inf';
+  end
+  else
+    result := FloatToStr(value, YAMLFormatSettings);
+end;
 
 { TYAMLValue }
 
@@ -1063,25 +1086,25 @@ end;
 
 function TYAMLSequence.AddValue(const value : Single; const tag : string) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, FloatToStr(value, YAMLFormatSettings), tag);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tag);
   AddValue(result);
 end;
 
 function TYAMLSequence.AddValue(const value : Single; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, FloatToStr(value, YAMLFormatSettings), tagInfo);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tagInfo);
   AddValue(result);
 end;
 
 function TYAMLSequence.AddValue(const value : Double; const tag : string) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, FloatToStr(value, YAMLFormatSettings), tag);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tag);
   AddValue(result);
 end;
 
 function TYAMLSequence.AddValue(const value : Double; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, FloatToStr(value, YAMLFormatSettings), tagInfo);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tagInfo);
   AddValue(result);
 end;
 
@@ -1322,7 +1345,7 @@ end;
 procedure TYAMLSequence.SetFloat(index: Integer; const value: double);
 begin
   if (index >= 0) and (index < FItems.Count) then
-    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, FloatToStr(value, YAMLFormatSettings))
+    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value))
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -1416,13 +1439,13 @@ end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Single) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, FloatToStr(value, YAMLFormatSettings));
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value));
   AddOrSetValue(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Double) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, FloatToStr(value, YAMLFormatSettings));
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value));
   AddOrSetValue(key, result);
 end;
 
@@ -1546,25 +1569,25 @@ end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Single; const tag : string) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, FloatToStr(value, YAMLFormatSettings), tag);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tag);
   AddOrSetValue(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Single; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, FloatToStr(value, YAMLFormatSettings), tagInfo);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tagInfo);
   AddOrSetValue(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Double; const tag : string) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, FloatToStr(value, YAMLFormatSettings), tag);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tag);
   AddOrSetValue(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Double; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, FloatToStr(value, YAMLFormatSettings), tagInfo);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tagInfo);
   AddOrSetValue(key, result);
 end;
 
@@ -1817,7 +1840,7 @@ begin
       case Value.ValueType of
         TYAMLValueType.vtString : CopiedValue := TYAMLValue.Create(Self, TYAMLValueType.vtString, Value.AsString, value.Tag);
         TYAMLValueType.vtInteger : CopiedValue := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(Value.AsInteger), value.Tag);
-        TYAMLValueType.vtFloat : CopiedValue := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, FloatToStr(Value.AsFloat, YAMLFormatSettings), value.Tag);
+        TYAMLValueType.vtFloat : CopiedValue := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(Value.AsFloat), value.Tag);
         TYAMLValueType.vtBoolean : CopiedValue := TYAMLValue.Create(Self, TYAMLValueType.vtBoolean, BoolToStr(Value.AsBoolean, True), value.Tag);
         TYAMLValueType.vtNull : CopiedValue := TYAMLValue.Create(Self, TYAMLValueType.vtNull, '', '');
       else

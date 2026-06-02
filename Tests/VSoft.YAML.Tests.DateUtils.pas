@@ -5,6 +5,7 @@ interface
 uses
   DUnitX.TestFramework,
   System.SysUtils,
+  System.StrUtils,
   System.DateUtils,
   VSoft.YAML.Utils;
 
@@ -184,7 +185,7 @@ begin
     Format('UTC round trip failed. Original: %s, ISO8601: %s, Converted: %s', 
     [DateTimeToStr(originalDateTime), iso8601String, DateTimeToStr(convertedDateTime)]));
   
-  Assert.IsTrue(iso8601String.EndsWith('Z'), 
+  Assert.IsTrue(EndsStr('Z', iso8601String), 
     Format('UTC string should end with Z. Got: %s', [iso8601String]));
 end;
 
@@ -202,7 +203,7 @@ begin
     Format('UTC round trip with milliseconds failed. Original: %s, ISO8601: %s, Converted: %s', 
     [DateTimeToStr(originalDateTime), iso8601String, DateTimeToStr(convertedDateTime)]));
     
-  Assert.IsTrue(iso8601String.EndsWith('Z'), 
+  Assert.IsTrue(EndsStr('Z', iso8601String), 
     Format('UTC string should end with Z. Got: %s', [iso8601String]));
 end;
 
@@ -243,7 +244,7 @@ begin
       Format('UTC test case %d failed. Original: %s, ISO8601: %s, Converted: %s', 
       [i, DateTimeToStr(originalDateTime), iso8601String, DateTimeToStr(convertedDateTime)]));
       
-    Assert.IsTrue(iso8601String.EndsWith('Z'), 
+    Assert.IsTrue(EndsStr('Z', iso8601String), 
       Format('UTC string should end with Z. Test case %d, Got: %s', [i, iso8601String]));
   end;
 end;
@@ -715,8 +716,8 @@ begin
   Assert.IsTrue(convertedUTC > 0, 'Final UTC datetime should be valid');
   
   // Verify ISO8601 formats are correct
-  Assert.IsTrue(utcISO8601.EndsWith('Z'), Format('UTC ISO8601 should end with Z: %s', [utcISO8601]));
-  Assert.IsTrue(not localISO8601.EndsWith('Z'), Format('Local ISO8601 should not end with Z: %s', [localISO8601]));
+  Assert.IsTrue(EndsStr('Z', utcISO8601), Format('UTC ISO8601 should end with Z: %s', [utcISO8601]));
+  Assert.IsTrue(not EndsStr('Z', localISO8601), Format('Local ISO8601 should not end with Z: %s', [localISO8601]));
   
   // Check what actually happened in the conversion chain for debugging
   // The behavior depends on the timezone conversion implementation
@@ -821,9 +822,9 @@ begin
       [i, DateTimeToStr(originalDateTime), utcISO8601, DateTimeToStr(convertedDateTime)]));
       
     // Verify ISO8601 formats are correct
-    Assert.IsTrue(not localISO8601.EndsWith('Z'), 
+    Assert.IsTrue(not EndsStr('Z', localISO8601), 
       Format('Local ISO8601 should not end with Z: %s', [localISO8601]));
-    Assert.IsTrue(utcISO8601.EndsWith('Z'), 
+    Assert.IsTrue(EndsStr('Z', utcISO8601), 
       Format('UTC ISO8601 should end with Z: %s', [utcISO8601]));
   end;
 end;
@@ -840,12 +841,12 @@ begin
   // Test LocalDateToISO8601Str
   localISO8601 := TYAMLDateUtils.LocalDateToISO8601Str(testDateTime);
   Assert.IsTrue(localISO8601 <> '', 'LocalDateToISO8601Str should produce non-empty string');
-  Assert.IsTrue(not localISO8601.EndsWith('Z'), 'Local ISO8601 should not end with Z');
+  Assert.IsTrue(not EndsStr('Z', localISO8601), 'Local ISO8601 should not end with Z');
   
   // Test UTCDateToISO8601Str
   utcISO8601 := TYAMLDateUtils.UTCDateToISO8601Str(testDateTime);
   Assert.IsTrue(utcISO8601 <> '', 'UTCDateToISO8601Str should produce non-empty string');
-  Assert.IsTrue(utcISO8601.EndsWith('Z'), 'UTC ISO8601 should end with Z');
+  Assert.IsTrue(EndsStr('Z', utcISO8601), 'UTC ISO8601 should end with Z');
   
   // Test ISO8601StrToLocalDateTime
   parsedLocal := TYAMLDateUtils.ISO8601StrToLocalDateTime(localISO8601);

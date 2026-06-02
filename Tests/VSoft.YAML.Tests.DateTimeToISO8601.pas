@@ -5,6 +5,7 @@ interface
 uses
   DUnitX.TestFramework,
   System.SysUtils,
+  System.StrUtils,
   System.DateUtils,
   System.TimeSpan,
   System.RegularExpressions;
@@ -126,7 +127,7 @@ begin
 
   Assert.AreEqual('2023-12-25T14:30:15.123Z', ISOStr);
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
-  Assert.IsTrue(ISOStr.Contains('.123'));
+  Assert.IsTrue((Pos('.123', ISOStr) > 0));
 end;
 
 procedure TTestDateToISO8601.TestLocalDateTimeFormatting;
@@ -139,12 +140,12 @@ begin
   ISOStr := TYAMLDateUtils.LocalDateToISO8601Str(TestDate);
 
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
-  Assert.IsTrue(ISOStr.StartsWith('2023-12-25T'));
+  Assert.IsTrue(StartsStr('2023-12-25T', ISOStr));
 
   // Should have timezone offset (not Z)
   TimeZoneInfo := ExtractTimeZoneOffset(ISOStr);
   Assert.IsFalse(TimeZoneInfo = 'Z');
-  Assert.IsTrue((TimeZoneInfo.StartsWith('+')) or (TimeZoneInfo.StartsWith('-')));
+  Assert.IsTrue((StartsStr('+', TimeZoneInfo)) or (StartsStr('-', TimeZoneInfo)));
 end;
 
 procedure TTestDateToISO8601.TestEmptyDateTime;
@@ -166,7 +167,7 @@ begin
   TestDate := EncodeDateTime(2023, 12, 25, 0, 0, 0, 0);
   ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
 
-  Assert.IsTrue(ISOStr.Contains('T00:00:00'));
+  Assert.IsTrue((Pos('T00:00:00', ISOStr) > 0));
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
 end;
 
@@ -178,7 +179,7 @@ begin
   TestDate := EncodeDateTime(2023, 12, 25, 12, 0, 0, 0);
   ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
 
-  Assert.IsTrue(ISOStr.Contains('T12:00:00'));
+  Assert.IsTrue((Pos('T12:00:00', ISOStr) > 0));
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
 end;
 
@@ -202,7 +203,7 @@ begin
   TestDate := EncodeDateTime(2024, 2, 29, 12, 0, 0, 0);
   ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
 
-  Assert.IsTrue(ISOStr.StartsWith('2024-02-29'));
+  Assert.IsTrue(StartsStr('2024-02-29', ISOStr));
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
 end;
 
@@ -240,8 +241,8 @@ begin
   UTCStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
   LocalStr := TYAMLDateUtils.LocalDateToISO8601Str(TestDate);
 
-  Assert.IsTrue(UTCStr.EndsWith('Z'));
-  Assert.IsFalse(LocalStr.EndsWith('Z'));
+  Assert.IsTrue(EndsStr('Z', UTCStr));
+  Assert.IsFalse(EndsStr('Z', LocalStr));
   Assert.AreNotEqual(UTCStr, LocalStr);
 end;
 
@@ -273,7 +274,7 @@ begin
   Assert.IsTrue(IsValidISO8601Format(ISOStr));
 
   TimeZoneInfo := ExtractTimeZoneOffset(ISOStr);
-  Assert.IsFalse(TimeZoneInfo.IsEmpty);
+  Assert.IsFalse((TimeZoneInfo = ''));
   Assert.IsFalse(TimeZoneInfo = 'Z');
 end;
 
@@ -319,22 +320,22 @@ begin
   // Test single digit milliseconds (should be padded)
   TestDate := EncodeDateTime(2023, 12, 25, 14, 30, 15, 5);
   ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
-  Assert.IsTrue(ISOStr.Contains('.005'));
+  Assert.IsTrue((Pos('.005', ISOStr) > 0));
 
   // Test double digit milliseconds
   TestDate := EncodeDateTime(2023, 12, 25, 14, 30, 15, 50);
   ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
-  Assert.IsTrue(ISOStr.Contains('.050'));
+  Assert.IsTrue((Pos('.050', ISOStr) > 0));
 
   // Test triple digit milliseconds
   TestDate := EncodeDateTime(2023, 12, 25, 14, 30, 15, 500);
   ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
-  Assert.IsTrue(ISOStr.Contains('.500'));
+  Assert.IsTrue((Pos('.500', ISOStr) > 0));
 
   // Test zero milliseconds (should not appear)
   TestDate := EncodeDateTime(2023, 12, 25, 14, 30, 15, 0);
   ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
-  Assert.IsFalse(ISOStr.Contains('.'));
+  Assert.IsFalse((Pos('.', ISOStr) > 0));
 end;
 
 procedure TTestDateToISO8601.TestDateFormatting;
@@ -345,7 +346,7 @@ begin
   TestDate := EncodeDateTime(2023, 3, 7, 14, 30, 15, 0);
   ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
 
-  Assert.IsTrue(ISOStr.StartsWith('2023-03-07'));
+  Assert.IsTrue(StartsStr('2023-03-07', ISOStr));
 end;
 
 procedure TTestDateToISO8601.TestTimeFormatting;
@@ -356,7 +357,7 @@ begin
   TestDate := EncodeDateTime(2023, 12, 25, 9, 5, 3, 0);
   ISOStr := TYAMLDateUtils.UTCDateToISO8601Str(TestDate);
 
-  Assert.IsTrue(ISOStr.Contains('T09:05:03'));
+  Assert.IsTrue((Pos('T09:05:03', ISOStr) > 0));
 end;
 
 procedure TTestDateToISO8601.TestRoundTripConversion;

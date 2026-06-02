@@ -54,7 +54,7 @@ type
 
 implementation
 
-uses 
+uses
   VSoft.YAML,
   System.SysUtils;
 
@@ -237,11 +237,11 @@ begin
   outputText := TYAML.WriteToString(doc);
 
   // Test that comments are preserved in output
-  Assert.IsTrue(outputText.Contains('# Application name'), 'Same-line comment missing from output');
-  Assert.IsTrue(outputText.Contains('# Version number'), 'Version comment missing from output');
-  Assert.IsTrue(outputText.Contains('# Database settings'), 'Pre-collection comment missing from output');
-  Assert.IsTrue(outputText.Contains('# Database host'), 'Database host comment missing from output');
-  Assert.IsTrue(outputText.Contains('# Database port'), 'Database port comment missing from output');
+  Assert.IsTrue((Pos('# Application name', outputText) > 0), 'Same-line comment missing from output');
+  Assert.IsTrue((Pos('# Version number', outputText) > 0), 'Version comment missing from output');
+  Assert.IsTrue((Pos('# Database settings', outputText) > 0), 'Pre-collection comment missing from output');
+  Assert.IsTrue((Pos('# Database host', outputText) > 0), 'Database host comment missing from output');
+  Assert.IsTrue((Pos('# Database port', outputText) > 0), 'Database port comment missing from output');
 end;
 
 procedure TYAMLCommentTests.TestCommentInFlowStyle;
@@ -277,7 +277,7 @@ begin
   root := doc.Root.AsMapping;
 
   // Test that comment whitespace is handled correctly
-  Assert.AreEqual('Comment with extra spaces', root.Items['test1'].Comment.Trim, 'Extra spaces not trimmed from comment');
+  Assert.AreEqual('Comment with extra spaces', Trim(root.Items['test1'].Comment), 'Extra spaces not trimmed from comment');
   Assert.AreEqual('No space before hash', root.Items['test2'].Comment, 'Comment without space not handled');
   Assert.AreEqual('Normal comment', root.Items['test3'].Comment, 'Normal comment not preserved');
 end;
@@ -298,8 +298,8 @@ begin
 
   // Test that empty or whitespace-only comments are handled
   Assert.AreEqual('', root.Items['test1'].Comment, 'Empty comment should be empty string');
-  Assert.AreEqual('', root.Items['test2'].Comment.Trim, 'Whitespace-only comment should trim to empty');
-  Assert.AreEqual('', root.Items['test3'].Comment.Trim, 'Single space comment should trim to empty');
+  Assert.AreEqual('', Trim(root.Items['test2'].Comment), 'Whitespace-only comment should trim to empty');
+  Assert.AreEqual('', Trim(root.Items['test3'].Comment), 'Single space comment should trim to empty');
 end;
 
 procedure TYAMLCommentTests.TestCommentPreservationInNestedStructures;
@@ -387,9 +387,9 @@ begin
   Assert.AreEqual('List of enabled features', features.Comments[0], 'Features pre-collection comment lost');
   
   // Check that the output contains the expected comment markers
-  Assert.IsTrue(outputText.Contains('# Application name'), 'Output missing same-line comment marker');
-  Assert.IsTrue(outputText.Contains('# Database configuration section'), 'Output missing pre-collection comment');
-  Assert.IsTrue(outputText.Contains('# List of enabled features'), 'Output missing sequence pre-collection comment');
+  Assert.IsTrue((Pos('# Application name', outputText) > 0), 'Output missing same-line comment marker');
+  Assert.IsTrue((Pos('# Database configuration section', outputText) > 0), 'Output missing pre-collection comment');
+  Assert.IsTrue((Pos('# List of enabled features', outputText) > 0), 'Output missing sequence pre-collection comment');
   
   // Verify the structure is preserved
   Assert.AreEqual('Test App', app.Items['name'].AsString, 'App name value changed in round trip');
@@ -423,7 +423,7 @@ begin
 
   // Also verify the comment survives a write/read round-trip
   outputText := TYAML.WriteToString(doc);
-  Assert.IsTrue(outputText.Contains('# comment'),
+  Assert.IsTrue((Pos('# comment', outputText) > 0),
     'Comment must appear in written output');
 end;
 
