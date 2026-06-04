@@ -278,7 +278,11 @@ begin
 
   // Test that comment whitespace is handled correctly
   Assert.AreEqual('Comment with extra spaces', Trim(root.Items['test1'].Comment), 'Extra spaces not trimmed from comment');
-  Assert.AreEqual('No space before hash', root.Items['test2'].Comment, 'Comment without space not handled');
+  // YAML 1.2 (6.6): a '#' only begins a comment when preceded by white space. With no space
+  // before it, the '#' is ordinary scalar content, so test2 is the plain scalar
+  // 'value2#No space before hash' with no comment attached.
+  Assert.AreEqual('', root.Items['test2'].Comment, 'No-space-before-hash must not be treated as a comment');
+  Assert.AreEqual('value2#No space before hash', root.Items['test2'].AsString, 'The # and following text are part of the scalar');
   Assert.AreEqual('Normal comment', root.Items['test3'].Comment, 'Normal comment not preserved');
 end;
 

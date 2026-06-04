@@ -256,6 +256,11 @@ type
     function AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean; const tag : string = '') : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
 
+    // Explicitly add a null value. Unlike AddOrSetValue(key, '') - which cannot distinguish an
+    // empty string from nil for a Delphi string parameter and so stores null - this states the
+    // intent to write a null and reads clearly at the call site.
+    function AddOrSetNull(const key : string; const tag : string = '') : IYAMLValue;
+
     function AddOrSetSequence(const key : string; const tag : string = '') : IYAMLSequence;overload;
     function AddOrSetSequence(const key : string; const tagInfo : IYAMLTagInfo) : IYAMLSequence;overload;
 
@@ -356,6 +361,11 @@ type
 
     function AddValue(const value : TDateTime; isUTC : boolean; const tag : string = '') : IYAMLValue; overload;
     function AddValue(const value : TDateTime; isUTC : boolean; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
+
+    // Explicitly add a null value. Unlike AddValue('') - which cannot distinguish an empty
+    // string from nil for a Delphi string parameter and so stores null - this states the
+    // intent to write a null and reads clearly at the call site.
+    function AddNull(const tag : string = '') : IYAMLValue;
 
     function AddMapping(const tag : string = '') : IYAMLMapping;overload;
     function AddMapping(const tagInfo : IYAMLTagInfo) : IYAMLMapping;overload;

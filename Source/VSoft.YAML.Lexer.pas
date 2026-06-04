@@ -589,6 +589,13 @@ var
       else
         result := not CharInSet(FReader.Current, cNonValueSet)
     end;
+
+    // YAML 1.2 (6.6): a '#' only begins a comment when it is preceded by a white space
+    // character. Mid-token (e.g. 'bg#FF8800' or a URL fragment) it is ordinary scalar
+    // content, so keep reading rather than terminating the scalar here.
+    if (not result) and (FReader.Current = '#') and
+       not TCharClassHelper.IsWhiteSpace(FReader.Previous) then
+      result := True;
   end;
 
 begin
@@ -1179,10 +1186,26 @@ begin
 
     ':':
       begin
-        result.TokenKind := TYAMLTokenKind.Colon;
-        // Switch to value context after colon
-        FInValueContext := True;
-        FReader.Read;
+        peekChar := FReader.Peek();
+        // A ':' is a mapping indicator only when it is followed by white space or the end of
+        // the line/stream. When it is followed by any other character (e.g. ':colon') it is
+        // the first character of a plain scalar - YAML 1.2 ns-plain-first allows a leading
+        // ':' provided it is not followed by white space. We only treat it as a scalar in
+        // block value context, where ReadUnquotedString will consume the leading colon;
+        // flow and key contexts keep the original separator behaviour.
+        if FInValueContext and (FFlowDepth = 0) and
+           not IsWhitespace(peekChar) and not CharInSet(peekChar, [#0, #10, #13]) then
+        begin
+          result.TokenKind := TYAMLTokenKind.Value;
+          result.Value := ReadUnquotedString;
+        end
+        else
+        begin
+          result.TokenKind := TYAMLTokenKind.Colon;
+          // Switch to value context after colon
+          FInValueContext := True;
+          FReader.Read;
+        end;
       end;
 
     '-':

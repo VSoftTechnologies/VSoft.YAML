@@ -170,6 +170,8 @@ type
     function AddValue(const value : TDateTime; isUTC : boolean; const tag : string = '') : IYAMLValue; overload;
     function AddValue(const value : TDateTime; isUTC : boolean; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
 
+    function AddNull(const tag : string = '') : IYAMLValue;
+
     function AddMapping(const tag : string = '') : IYAMLMapping;overload;
     function AddMapping(const tagInfo : IYAMLTagInfo) : IYAMLMapping;overload;
     function AddSequence(const tag : string = '') : IYAMLSequence;overload;
@@ -254,6 +256,8 @@ type
     function AddOrSetValue(const key : string; const value : string; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean; const tag : string) : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
+
+    function AddOrSetNull(const key : string; const tag : string = '') : IYAMLValue;
 
     function AddOrSetSequence(const key : string; const tag : string = '') : IYAMLSequence;overload;
     function AddOrSetSequence(const key : string; const tagInfo : IYAMLTagInfo) : IYAMLSequence;overload;
@@ -1114,6 +1118,12 @@ begin
   AddValue(result);
 end;
 
+function TYAMLSequence.AddNull(const tag : string) : IYAMLValue;
+begin
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtNull, '', tag);
+  AddValue(result);
+end;
+
 function TYAMLSequence.AddValue(const value : string; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tagInfo);
@@ -1452,6 +1462,12 @@ end;
 function TYAMLMapping.AddOrSetValue(const key, value : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtString,value);
+  AddOrSetValue(key, result);
+end;
+
+function TYAMLMapping.AddOrSetNull(const key : string; const tag : string) : IYAMLValue;
+begin
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtNull, '', tag);
   AddOrSetValue(key, result);
 end;
 

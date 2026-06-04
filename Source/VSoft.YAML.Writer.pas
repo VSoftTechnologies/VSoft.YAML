@@ -123,16 +123,21 @@ end;
 function TYAMLWriterImpl.NeedsQuoting(const value : string) : boolean;
 var
   i : integer;
-  hasSpecialChars : boolean;
   intVal : integer;
   floatVal : Double;
+  len : integer;
 begin
   // Always quote if option is set
   if FOptions.QuoteStrings then
     exit(True);
 
   // Empty string needs quoting
-  if value = '' then
+  len := Length(value);
+  if len = 0 then
+    exit(True);
+
+  // Leading or trailing whitespace would be lost from a plain scalar
+  if (value[1] = ' ') or (value[1] = #9) or (value[len] = ' ') or (value[len] = #9) then
     exit(True);
 
   // Check for special YAML values that need quoting
@@ -146,37 +151,44 @@ begin
   if TryStrToInt(value, intVal) or TryStrToFloat(value, floatVal, YAMLFormatSettings) then
     exit(True);
 
-  // Check for special characters
-  hasSpecialChars := False;
+  // Indicator characters are only special at the START of a plain scalar. Mid-string they are
+  // ordinary content (e.g. a URL's '*' or a Windows path), so quoting them is unnecessary.
+  case value[1] of
+    '!', '&', '*', '[', ']', '{', '}', ',', '#',
+    '|', '>', '''', '"', '%', '@', '`':
+      exit(True);
+    '-', '?', ':':
+      // '-', '?' and ':' only start a node when followed by a space (or are the whole value).
+      if (len = 1) or (value[2] = ' ') then
+        exit(True);
+  end;
+
+  // Characters that are special anywhere in the value.
   {$HIGHCHARUNICODE ON}
-  for i := 1 to Length(value) do
+  for i := 1 to len do
   begin
     case value[i] of
-      ':', '[', ']', '{', '}', ',', '"', '''', '|', '>',
-      '#', '&', '*', '!', '%', '@', '`', '\':
-        begin
-          hasSpecialChars := True;
-          Break; // Exit early once special char found
-        end;
+      ':':
+        // ': ' (colon + space) or a trailing colon would terminate the plain scalar / start a map
+        if (i = len) or (value[i + 1] = ' ') then
+          exit(True);
+      '#':
+        // ' #' begins a trailing comment
+        if (i > 1) and (value[i - 1] = ' ') then
+          exit(True);
+      // Flow indicators are only special inside flow collections, but NeedsQuoting has no context
+      // and the writer can emit flow output, so quote these whenever they appear.
+      ',', '[', ']', '{', '}':
+        exit(True);
       #0..#31, #127:
-        begin
-          hasSpecialChars := True;
-          Break; // Exit early once special char found
-        end;
+        exit(True);
       #$85, #$A0, #$2028, #$2029:
-        begin
-          hasSpecialChars := True;
-          Break; // Exit early once special char found
-        end;
+        exit(True);
     end;
   end;
   {$HIGHCHARUNICODE OFF}
 
-  // Check for leading/trailing whitespace
-  if (Length(value) > 0) and ((value[1] = ' ') or (value[Length(value)] = ' ')) then
-    hasSpecialChars := True;
-
-  result := hasSpecialChars;
+  result := False;
 end;
 
 procedure TYAMLWriterImpl.EscapeString(const value: string; sb: TStringBuilder);

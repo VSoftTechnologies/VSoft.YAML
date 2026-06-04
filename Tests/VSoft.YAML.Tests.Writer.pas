@@ -20,6 +20,9 @@ type
   private
     procedure ValidateRoundTrip(const originalYAML: string);
     function CreateTestDateTime: TDateTime;
+    // Writes a single 'k: <value>' mapping, reloads it and returns the reloaded value.
+    // Used by the quoting tests to assert that a scalar survives a write/read round-trip.
+    function RoundTripScalar(const value : string) : IYAMLValue;
   public
     [Setup]
     procedure Setup;
@@ -99,6 +102,72 @@ type
     procedure Test_WriteString_SpecialCharacters;
     [Test]
     procedure Test_WriteString_EscapeSequences;
+    [Test]
+    procedure Test_WriteString_DoesNotOverQuote;
+    [Test]
+    procedure Test_WriteString_QuotesWhenRequired;
+
+    // NeedsQuoting / quoting-handling tests
+    [Test]
+    procedure Test_Quoting_EmptyString;
+    [Test]
+    procedure Test_Quoting_LeadingWhitespace;
+    [Test]
+    procedure Test_Quoting_TrailingWhitespace;
+    [Test]
+    procedure Test_Quoting_LeadingTrailingTab;
+    [Test]
+    procedure Test_Quoting_InteriorSpacesNotQuoted;
+    [Test]
+    procedure Test_Quoting_BooleanLikeStrings;
+    [Test]
+    procedure Test_Quoting_NullLikeStrings;
+    [Test]
+    procedure Test_Quoting_NumberLikeStrings;
+    [Test]
+    procedure Test_Quoting_LeadingIndicatorChars;
+    [Test]
+    procedure Test_Quoting_LeadingDashQuestionColon_WithSpace;
+    [Test]
+    procedure Test_Quoting_LeadingDashQuestionColon_WithoutSpace;
+    [Test]
+    procedure Test_Quoting_DashQuestionColon_AsWholeValue;
+    [Test]
+    procedure Test_Quoting_ColonSpaceMidString;
+    [Test]
+    procedure Test_Quoting_TrailingColon;
+    [Test]
+    procedure Test_Quoting_ColonWithoutSpaceNotQuoted;
+    [Test]
+    procedure Test_Quoting_SpaceHashIsComment;
+    [Test]
+    procedure Test_Quoting_HashWithoutSpaceNotQuoted;
+    [Test]
+    procedure Test_Quoting_FlowIndicatorsAnywhere;
+    [Test]
+    procedure Test_Quoting_ControlCharsUseDoubleQuotes;
+    [Test]
+    procedure Test_Quoting_EscapeSequencesRoundTrip;
+    [Test]
+    procedure Test_Quoting_BackslashAloneNotQuoted;
+    [Test]
+    procedure Test_Quoting_BackslashWhenQuotedUsesDoubleQuotes;
+    [Test]
+    procedure Test_Quoting_DoubleQuoteContentPrefersSingleQuotes;
+    [Test]
+    procedure Test_Quoting_SingleQuoteEscapingDoubled;
+    [Test]
+    procedure Test_Quoting_KeysAreQuotedWhenRequired;
+    [Test]
+    procedure Test_Quoting_QuoteStringsOptionQuotesEverything;
+    [Test]
+    procedure Test_Quoting_LeadingZeroStringNotANumber;
+
+    // Explicit null tests
+    [Test]
+    procedure Test_AddOrSetNull_ExplicitNull;
+    [Test]
+    procedure Test_AddNull_ExplicitNull;
 
     // Numeric value tests
     [Test]
@@ -892,6 +961,544 @@ begin
   Assert.Contains(yamlStr, 'tab_string');
   Assert.Contains(yamlStr, 'newline_string');
   Assert.Contains(yamlStr, 'quote_string');
+end;
+
+procedure TYAMLWriterTests.Test_WriteString_DoesNotOverQuote;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  reloaded: IYAMLDocument;
+  yamlStr: string;
+begin
+  doc := TYAML.CreateMapping;
+  root := doc.AsMapping;
+
+  // None of these need quoting: ':' is never followed by a space, '*' is not the first char,
+  // and there is no ' #' sequence.
+  root.AddOrSetValue('url', 'https://github.com/VSoftTechnologies/VSoft.YAML');
+  root.AddOrSetValue('glob', './source/**.pas');
+  root.AddOrSetValue('path', 'C:\Users\Name');
+  root.AddOrSetValue('commit', 'Id:9459e1014dc11e244adc74907f98441557838dbb');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  // The value must appear unquoted (the 'key: value' form, with no surrounding quote after the colon).
+  Assert.Contains(yamlStr, 'url: https://github.com/VSoftTechnologies/VSoft.YAML');
+  Assert.Contains(yamlStr, 'glob: ./source/**.pas');
+  Assert.Contains(yamlStr, 'path: C:\Users\Name');
+  Assert.Contains(yamlStr, 'commit: Id:9459e1014dc11e244adc74907f98441557838dbb');
+
+  // and it must still round-trip back to the original values.
+  reloaded := TYAML.LoadFromString(yamlStr);
+  Assert.AreEqual('https://github.com/VSoftTechnologies/VSoft.YAML', reloaded.AsMapping.Values['url'].AsString);
+  Assert.AreEqual('./source/**.pas', reloaded.AsMapping.Values['glob'].AsString);
+  Assert.AreEqual('C:\Users\Name', reloaded.AsMapping.Values['path'].AsString);
+  Assert.AreEqual('Id:9459e1014dc11e244adc74907f98441557838dbb', reloaded.AsMapping.Values['commit'].AsString);
+end;
+
+procedure TYAMLWriterTests.Test_WriteString_QuotesWhenRequired;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+  reloaded: IYAMLDocument;
+  yamlStr: string;
+begin
+  doc := TYAML.CreateMapping;
+  root := doc.AsMapping;
+
+  // Leading flow indicator, a ': ' sequence, and a ' #' sequence all require quoting.
+  root.AddOrSetValue('range', '[1.2.2,]');
+  root.AddOrSetValue('mapish', 'key: value');
+  root.AddOrSetValue('commenty', 'value #1');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  // None of these may appear in their bare (unquoted) form after the key - if a quote was
+  // inserted between the colon and the value the bare substring will not be found.
+  Assert.IsTrue(Pos('range: [1.2.2,]', yamlStr) = 0, 'a value starting with [ must be quoted');
+  Assert.IsTrue(Pos('mapish: key: value', yamlStr) = 0, 'a value containing '': '' must be quoted');
+
+  // round-trip back to the originals
+  reloaded := TYAML.LoadFromString(yamlStr);
+  Assert.AreEqual('[1.2.2,]', reloaded.AsMapping.Values['range'].AsString);
+  Assert.AreEqual('key: value', reloaded.AsMapping.Values['mapish'].AsString);
+  Assert.AreEqual('value #1', reloaded.AsMapping.Values['commenty'].AsString);
+end;
+
+// NeedsQuoting / quoting-handling tests
+
+function TYAMLWriterTests.RoundTripScalar(const value : string) : IYAMLValue;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+  reloaded: IYAMLDocument;
+begin
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('k', value);
+  yamlStr := TYAML.WriteToString(doc);
+  reloaded := TYAML.LoadFromString(yamlStr);
+  result := reloaded.AsMapping.Values['k'];
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_EmptyString;
+var
+  reloaded: IYAMLValue;
+begin
+  // The library treats an empty string value as null (see AddOrSetValue's empty->null
+  // coercion), so an empty scalar serialises without crashing and reads back as an empty
+  // (null) value. We only assert the round-trip is lossless at the AsString level.
+  reloaded := RoundTripScalar('');
+  Assert.AreEqual('', reloaded.AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_LeadingWhitespace;
+var
+  reloaded: IYAMLValue;
+begin
+  // A leading space would be stripped by a plain scalar, so the value must be quoted.
+  reloaded := RoundTripScalar('  hello');
+  Assert.AreEqual('  hello', reloaded.AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_TrailingWhitespace;
+var
+  reloaded: IYAMLValue;
+begin
+  // A trailing space would be stripped by a plain scalar, so the value must be quoted.
+  reloaded := RoundTripScalar('hello  ');
+  Assert.AreEqual('hello  ', reloaded.AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_LeadingTrailingTab;
+var
+  value: string;
+  reloaded: IYAMLValue;
+begin
+  value := #9 + 'hello' + #9;
+  reloaded := RoundTripScalar(value);
+  Assert.AreEqual(value, reloaded.AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_InteriorSpacesNotQuoted;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+begin
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('k', 'hello world again');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  // Interior spaces are perfectly legal in a plain scalar - no quoting should be added.
+  Assert.Contains(yamlStr, 'k: hello world again');
+  Assert.AreEqual('hello world again', RoundTripScalar('hello world again').AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_BooleanLikeStrings;
+var
+  i: integer;
+  words: TArray<string>;
+  reloaded: IYAMLValue;
+begin
+  // Strings that look like YAML booleans must be quoted so they survive as strings.
+  words := TArray<string>.Create('true', 'false', 'yes', 'no', 'on', 'off');
+  for i := 0 to High(words) do
+  begin
+    reloaded := RoundTripScalar(words[i]);
+    Assert.IsTrue(reloaded.IsString, 'expected "' + words[i] + '" to round-trip as a string');
+    Assert.AreEqual(words[i], reloaded.AsString);
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_NullLikeStrings;
+var
+  reloaded: IYAMLValue;
+begin
+  reloaded := RoundTripScalar('null');
+  Assert.IsTrue(reloaded.IsString, '"null" should round-trip as a string');
+  Assert.AreEqual('null', reloaded.AsString);
+
+  reloaded := RoundTripScalar('~');
+  Assert.IsTrue(reloaded.IsString, '"~" should round-trip as a string');
+  Assert.AreEqual('~', reloaded.AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_NumberLikeStrings;
+var
+  i: integer;
+  words: TArray<string>;
+  reloaded: IYAMLValue;
+begin
+  // Strings that look like numbers must be quoted so they are not parsed as numbers.
+  words := TArray<string>.Create('123', '-42', '3.14', '0.5');
+  for i := 0 to High(words) do
+  begin
+    reloaded := RoundTripScalar(words[i]);
+    Assert.IsTrue(reloaded.IsString, 'expected "' + words[i] + '" to round-trip as a string');
+    Assert.AreEqual(words[i], reloaded.AsString);
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_LeadingIndicatorChars;
+var
+  i: integer;
+  values: TArray<string>;
+  reloaded: IYAMLValue;
+begin
+  // Each of these begins with a YAML indicator character and must be quoted to round-trip.
+  values := TArray<string>.Create(
+    '!tagish', '&anchorish', '*aliasish', '[bracketish', ']bracketish',
+    '{braceish', '}braceish', ',commaish', '#hashish', '|pipeish',
+    '>folded', '%percentish', '@atish', '`backtickish');
+  for i := 0 to High(values) do
+  begin
+    reloaded := RoundTripScalar(values[i]);
+    Assert.AreEqual(values[i], reloaded.AsString, 'failed to round-trip "' + values[i] + '"');
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_LeadingDashQuestionColon_WithSpace;
+var
+  i: integer;
+  values: TArray<string>;
+  reloaded: IYAMLValue;
+begin
+  // '-', '?' and ':' followed by a space start a node, so they must be quoted.
+  values := TArray<string>.Create('- item', '? key', ': value');
+  for i := 0 to High(values) do
+  begin
+    reloaded := RoundTripScalar(values[i]);
+    Assert.AreEqual(values[i], reloaded.AsString, 'failed to round-trip "' + values[i] + '"');
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_LeadingDashQuestionColon_WithoutSpace;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+begin
+  // '-', '?' and ':' NOT followed by a space are ordinary plain-scalar content - no quoting.
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('dash', '-rf');
+  doc.AsMapping.AddOrSetValue('question', '?query');
+  doc.AsMapping.AddOrSetValue('colon', ':colon');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.Contains(yamlStr, 'dash: -rf');
+  Assert.Contains(yamlStr, 'question: ?query');
+  Assert.Contains(yamlStr, 'colon: :colon');
+
+  Assert.AreEqual('-rf', RoundTripScalar('-rf').AsString);
+  Assert.AreEqual('?query', RoundTripScalar('?query').AsString);
+  Assert.AreEqual(':colon', RoundTripScalar(':colon').AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_DashQuestionColon_AsWholeValue;
+var
+  i: integer;
+  values: TArray<string>;
+  reloaded: IYAMLValue;
+begin
+  // A lone '-', '?' or ':' is an indicator and must be quoted.
+  values := TArray<string>.Create('-', '?', ':');
+  for i := 0 to High(values) do
+  begin
+    reloaded := RoundTripScalar(values[i]);
+    Assert.AreEqual(values[i], reloaded.AsString, 'failed to round-trip "' + values[i] + '"');
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_ColonSpaceMidString;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+begin
+  // A ': ' sequence in the middle would split into a nested mapping, so it must be quoted.
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('k', 'foo: bar');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.IsTrue(Pos('k: foo: bar', yamlStr) = 0, 'a value containing '': '' must be quoted');
+  Assert.AreEqual('foo: bar', RoundTripScalar('foo: bar').AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_TrailingColon;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+begin
+  // A trailing colon would be read as a mapping key indicator, so it must be quoted.
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('k', 'foo:');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.IsTrue(Pos('k: foo:', yamlStr) = 0, 'a value ending in '':'' must be quoted');
+  Assert.AreEqual('foo:', RoundTripScalar('foo:').AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_ColonWithoutSpaceNotQuoted;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+begin
+  // A colon not followed by a space (e.g. a namespace or scoped name) is fine unquoted.
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('ns', 'foo:bar:baz');
+  doc.AsMapping.AddOrSetValue('scope', 'System::Console');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.Contains(yamlStr, 'ns: foo:bar:baz');
+  Assert.Contains(yamlStr, 'scope: System::Console');
+  Assert.AreEqual('foo:bar:baz', RoundTripScalar('foo:bar:baz').AsString);
+  Assert.AreEqual('System::Console', RoundTripScalar('System::Console').AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_SpaceHashIsComment;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+begin
+  // ' #' starts a trailing comment, so a value containing it must be quoted.
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('k', 'value #comment');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.IsTrue(Pos('k: value #comment', yamlStr) = 0, 'a value containing '' #'' must be quoted');
+  Assert.AreEqual('value #comment', RoundTripScalar('value #comment').AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_HashWithoutSpaceNotQuoted;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+begin
+  // A '#' that is not preceded by a space (and not the first char) is ordinary content
+  // (e.g. a URL fragment or an embedded colour code), not a comment.
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('colour', 'bg#FF8800');
+  doc.AsMapping.AddOrSetValue('anchor', 'page#section');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.Contains(yamlStr, 'colour: bg#FF8800');
+  Assert.Contains(yamlStr, 'anchor: page#section');
+  Assert.AreEqual('bg#FF8800', RoundTripScalar('bg#FF8800').AsString);
+  Assert.AreEqual('page#section', RoundTripScalar('page#section').AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_FlowIndicatorsAnywhere;
+var
+  i: integer;
+  values: TArray<string>;
+  reloaded: IYAMLValue;
+begin
+  // Flow indicators ',', '[', ']', '{', '}' are quoted wherever they appear, since the
+  // writer may emit flow collections where they would be ambiguous.
+  values := TArray<string>.Create('a,b', 'a[b', 'a]b', 'a{b', 'a}b');
+  for i := 0 to High(values) do
+  begin
+    reloaded := RoundTripScalar(values[i]);
+    Assert.AreEqual(values[i], reloaded.AsString, 'failed to round-trip "' + values[i] + '"');
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_ControlCharsUseDoubleQuotes;
+var
+  value: string;
+  doc: IYAMLDocument;
+  yamlStr: string;
+  reloaded: IYAMLValue;
+begin
+  // A control character forces double quotes (single quotes cannot escape it).
+  value := 'a' + #9 + 'b';
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('k', value);
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  // The tab must be emitted as the \t escape inside double quotes.
+  Assert.Contains(yamlStr, '"a\tb"');
+
+  reloaded := RoundTripScalar(value);
+  Assert.AreEqual(value, reloaded.AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_EscapeSequencesRoundTrip;
+var
+  value: string;
+  reloaded: IYAMLValue;
+begin
+  // Mix several characters that map to specific escape sequences (\t \n \r \0 \\ \")
+  // and confirm they survive a full write/read round-trip.
+  value := 'tab' + #9 + 'nl' + #10 + 'cr' + #13 + 'nul' + #0 + 'bs\back' + 'dq"dq';
+  reloaded := RoundTripScalar(value);
+  Assert.AreEqual(value, reloaded.AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_BackslashAloneNotQuoted;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+begin
+  // A backslash on its own does not require quoting in a plain/block scalar - a Windows path
+  // should be emitted verbatim.
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('path', 'C:\temp\file.txt');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.Contains(yamlStr, 'path: C:\temp\file.txt');
+  Assert.AreEqual('C:\temp\file.txt', RoundTripScalar('C:\temp\file.txt').AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_BackslashWhenQuotedUsesDoubleQuotes;
+var
+  value: string;
+  doc: IYAMLDocument;
+  yamlStr: string;
+  reloaded: IYAMLValue;
+begin
+  // When a value needs quoting for another reason (a control char here) AND contains a
+  // backslash, double quotes must be used and the backslash escaped as '\\'.
+  value := 'C:\temp' + #9 + 'x';
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('k', value);
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.Contains(yamlStr, '"C:\\temp\tx"');
+
+  reloaded := RoundTripScalar(value);
+  Assert.AreEqual(value, reloaded.AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_DoubleQuoteContentPrefersSingleQuotes;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+  reloaded: IYAMLValue;
+begin
+  // A value containing a double quote (but nothing that needs escaping) should be wrapped in
+  // single quotes rather than double quotes, so the '"' does not need escaping.
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('k', 'say "hello": now');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.Contains(yamlStr, '''say "hello": now''');
+
+  reloaded := RoundTripScalar('say "hello": now');
+  Assert.AreEqual('say "hello": now', reloaded.AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_SingleQuoteEscapingDoubled;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+  reloaded: IYAMLValue;
+begin
+  // A value that needs single quoting and itself contains an apostrophe must have the
+  // apostrophe doubled ('' inside a single-quoted scalar).
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('k', 'it''s: ok');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.Contains(yamlStr, '''it''''s: ok''');
+
+  reloaded := RoundTripScalar('it''s: ok');
+  Assert.AreEqual('it''s: ok', reloaded.AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_KeysAreQuotedWhenRequired;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+  reloaded: IYAMLDocument;
+begin
+  // Keys go through the same quoting rules as values - a key with a ': ' or a leading
+  // indicator must be quoted so it round-trips.
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('a: b', 'v1');
+  doc.AsMapping.AddOrSetValue('*star', 'v2');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.Contains(yamlStr, '''a: b''');
+  Assert.Contains(yamlStr, '''*star''');
+
+  reloaded := TYAML.LoadFromString(yamlStr);
+  Assert.AreEqual('v1', reloaded.AsMapping.Values['a: b'].AsString);
+  Assert.AreEqual('v2', reloaded.AsMapping.Values['*star'].AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_QuoteStringsOptionQuotesEverything;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+begin
+  // With QuoteStrings enabled even a perfectly plain scalar must be quoted.
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('k', 'plain');
+  doc.Options.QuoteStrings := True;
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.Contains(yamlStr, '''plain''');
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_LeadingZeroStringNotANumber;
+var
+  reloaded: IYAMLValue;
+begin
+  // A leading-zero identifier such as a US zip code parses as an integer, so it must be
+  // quoted to keep it a string and stop the leading zero being dropped on the round-trip.
+  reloaded := RoundTripScalar('007');
+  Assert.IsTrue(reloaded.IsString, '"007" should round-trip as a string');
+  Assert.AreEqual('007', reloaded.AsString);
+end;
+
+// Explicit null tests
+
+procedure TYAMLWriterTests.Test_AddOrSetNull_ExplicitNull;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+  reloaded: IYAMLDocument;
+begin
+  // AddOrSetNull states the intent to write a null and must round-trip as a null value.
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetNull('k');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  reloaded := TYAML.LoadFromString(yamlStr);
+  Assert.IsTrue(reloaded.AsMapping.Values['k'].IsNull, 'AddOrSetNull should produce a null value');
+end;
+
+procedure TYAMLWriterTests.Test_AddNull_ExplicitNull;
+var
+  doc: IYAMLDocument;
+  seq: IYAMLSequence;
+  yamlStr: string;
+  reloaded: IYAMLDocument;
+begin
+  // AddNull appends an explicit null to a sequence; the other items are unaffected.
+  doc := TYAML.CreateSequence;
+  seq := doc.AsSequence;
+  seq.AddValue('first');
+  seq.AddNull;
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  reloaded := TYAML.LoadFromString(yamlStr);
+  Assert.AreEqual('first', reloaded.AsSequence[0].AsString);
+  Assert.IsTrue(reloaded.AsSequence[1].IsNull, 'AddNull should produce a null value');
 end;
 
 // Numeric value tests
