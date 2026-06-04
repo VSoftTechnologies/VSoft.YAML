@@ -673,6 +673,8 @@ var
   partCount : integer;
   i : integer;
   specialCharCount : integer;
+  scalarIndent : integer;
+  blankLines : integer;
 begin
   case FCurrentToken.TokenKind of
     TYAMLTokenKind.Literal,
@@ -689,6 +691,7 @@ begin
     TYAMLTokenKind.QuotedString :
     begin
       value := FCurrentToken.value;
+      scalarIndent := FCurrentToken.IndentLevel;
 
       // For unquoted values, collect multiple consecutive value tokens
       // This handles cases like "123 Main St" which gets tokenized as separate values
@@ -704,6 +707,49 @@ begin
           value := value + ' ' + FCurrentToken.value;
           Inc(partCount);
           NextToken;
+        end;
+
+        // YAML 1.2 (7.3.1): a plain scalar may continue onto following lines that are indented
+        // MORE than the entry. A single line break folds to a space; blank lines fold to that
+        // many newlines minus one. Only do this for a mapping value / sequence item
+        // (parent <> nil) - never at document root, where a bare multi-word run is the
+        // "missing colon" case handled below - and never for a quoted scalar (handled in the
+        // else branch). A line whose first token is followed by ':' is a key, not a
+        // continuation, so it ends the scalar. In JSON mode the lexer does no indent tracking
+        // (all IndentLevel = 0), so this never folds and the unquoted value is rejected below.
+        if (parent <> nil) and (FCurrentToken.TokenKind = TYAMLTokenKind.NewLine) then
+        begin
+          while FCurrentToken.TokenKind = TYAMLTokenKind.NewLine do
+          begin
+            blankLines := 0;
+            while FCurrentToken.TokenKind = TYAMLTokenKind.NewLine do
+            begin
+              Inc(blankLines);
+              NextToken;
+            end;
+            // An indentation increase appears as a leading Indent token.
+            if FCurrentToken.TokenKind = TYAMLTokenKind.Indent then
+              NextToken;
+            if (FCurrentToken.TokenKind = TYAMLTokenKind.Value) and
+               (FCurrentToken.IndentLevel > scalarIndent) and
+               (FLexer.PeekToken.TokenKind <> TYAMLTokenKind.Colon) then
+            begin
+              if blankLines > 1 then
+                value := value + StringOfChar(#10, blankLines - 1)
+              else
+                value := value + ' ';
+              value := value + FCurrentToken.value;
+              NextToken;
+              // Absorb the rest of the continuation line.
+              while FCurrentToken.TokenKind = TYAMLTokenKind.Value do
+              begin
+                value := value + ' ' + FCurrentToken.value;
+                NextToken;
+              end;
+            end
+            else
+              Break; // dedent / new key / sequence / comment / EOF ends the scalar
+          end;
         end;
 
         // Validate: if we're at document root and have multiple parts that look like key-value,
@@ -901,11 +947,20 @@ begin
       RaiseParseError('Expected key in flow mapping');
 
     SkipNewlines; // Allow newlines before colon in both YAML and JSON modes
-    ExpectToken(TYAMLTokenKind.Colon); // ':'
-    SkipNewlines;
-
-    // Parse value
-    value := ParseValue(result);
+    // YAML 1.2 (7.4.2): a flow mapping entry whose key is not followed by a ':' value
+    // indicator has an implicit null value (e.g. {a:b} parses as the single key "a:b" with
+    // null value; {a} as key "a" with null). JSON (RFC 8259) still requires "key": value.
+    if MatchToken(TYAMLTokenKind.Colon) then
+    begin
+      SkipNewlines;
+      value := ParseValue(result);
+    end
+    else
+    begin
+      if FJSONMode then
+        RaiseParseError('Expected ":" in JSON object');
+      value := TYAMLValue.Create(result, TYAMLValueType.vtNull, '', '');
+    end;
     (result as IYAMLMappingPrivate).AddOrSetValue(key, value);
 
     SkipNewlines;
@@ -1448,11 +1503,10 @@ end;
 
 procedure TYAMLParser.RegisterAnchor(const anchorName : string; const value : IYAMLValue);
 begin
-  if FAnchorMap.ContainsKey(anchorName) then
-    RaiseParseError('Anchor "%s" already defined', [anchorName]);
-
-  // Store a reference to the value (not a copy)
-  FAnchorMap.Add(anchorName, value);
+  // YAML 1.2 (3.2.2.2): an anchor may be redefined. The most recent definition wins, and a
+  // later alias binds to the most recent prior node with that name. Overwrite rather than
+  // raise (interface ref-counting releases the previously stored node).
+  FAnchorMap.AddOrSetValue(anchorName, value);
 end;
 
 function TYAMLParser.ResolveAlias(const aliasName : string) : IYAMLValue;

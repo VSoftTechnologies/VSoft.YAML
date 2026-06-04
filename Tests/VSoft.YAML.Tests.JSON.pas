@@ -265,6 +265,16 @@ type
     [Test]
     procedure TestRFC8259Parse_RejectsNbspAsWhitespace;
 
+    // Flow ':' compliance must not relax JSON-mode strictness
+    [Test]
+    procedure TestRFC8259Parse_FlowQuotedKeyAdjacentColonOk;
+    [Test]
+    procedure TestRFC8259Parse_RejectsFlowUnquotedKey;
+    [Test]
+    procedure TestRFC8259Parse_RejectsFlowUnquotedColonSeqElement;
+    [Test]
+    procedure TestRFC8259Parse_RejectsUnquotedMultiWordValue;
+
   end;
 
 
@@ -2027,6 +2037,73 @@ begin
     end,
     EYAMLParseException,
     'form-feed before a value must be rejected as non-RFC whitespace');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_FlowQuotedKeyAdjacentColonOk;
+var
+  options: IYAMLParserOptions;
+  doc: IYAMLDocument;
+begin
+  // A quoted (JSON-like) key with an adjacent ':' is valid JSON and must still parse.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  doc := TYAML.LoadFromString('{"a":1,"b":2}', options);
+  Assert.AreEqual<Int64>(1, doc.Root.Values['a'].AsInteger);
+  Assert.AreEqual<Int64>(2, doc.Root.Values['b'].AsInteger);
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsFlowUnquotedKey;
+var
+  options: IYAMLParserOptions;
+begin
+  // The flow ':' relaxation must not let unquoted object keys through in JSON mode.
+  // '{a:1}' tokenizes as the single unquoted scalar key "a:1" -> rejected (keys must be quoted).
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{a:1}', options);
+    end,
+    EYAMLParseException,
+    'JSON mode must reject unquoted object keys');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsFlowUnquotedColonSeqElement;
+var
+  options: IYAMLParserOptions;
+begin
+  // '[a:b]' is now a single unquoted scalar element "a:b" -> rejected (strings must be quoted).
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('[a:b]', options);
+    end,
+    EYAMLParseException,
+    'JSON mode must reject unquoted array elements');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsUnquotedMultiWordValue;
+var
+  options: IYAMLParserOptions;
+begin
+  // The multi-line plain-scalar folding (YAML) must not let unquoted values through in JSON
+  // mode. An unquoted multi-word value is rejected regardless of folding.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"a": foo bar}', options);
+    end,
+    EYAMLParseException,
+    'JSON mode must reject unquoted values');
 end;
 
 initialization

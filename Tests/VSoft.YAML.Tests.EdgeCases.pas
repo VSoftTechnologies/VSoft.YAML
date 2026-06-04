@@ -142,6 +142,26 @@ type
     procedure Test_Anchors_ForwardReference;
     [Test]
     procedure Test_Anchors_UnresolvedReference;
+    [Test]
+    procedure Test_Anchors_DuplicateLastWins;
+    [Test]
+    procedure Test_Anchors_DuplicateAliasBetween;
+    [Test]
+    procedure Test_Anchors_RejectedInJSONMode;
+
+    // Block scalar header validation (YAML 1.2 8.1.1)
+    [Test]
+    procedure Test_BlockScalar_DoubleChompRejected;
+    [Test]
+    procedure Test_BlockScalar_DoublePlusChompRejected;
+    [Test]
+    procedure Test_BlockScalar_ZeroIndentRejected;
+    [Test]
+    procedure Test_BlockScalar_MultiDigitIndentRejected;
+    [Test]
+    procedure Test_BlockScalar_ExplicitIndentValid;
+    [Test]
+    procedure Test_BlockScalar_FoldedExplicitIndentValid;
 
     // Float precision and special values
     [Test]
@@ -1277,6 +1297,132 @@ begin
     end,
     EYAMLParseException
   );
+end;
+
+procedure TYAMLEdgeCasesTests.Test_Anchors_DuplicateLastWins;
+var
+  yamlContent: string;
+  doc: IYAMLDocument;
+begin
+  // YAML 1.2 (3.2.2.2): a redefined anchor is allowed; the most recent definition wins, so an
+  // alias resolving after both definitions binds to the latter node.
+  yamlContent := 'a: &x 1' + sLineBreak +
+                 'b: &x 2' + sLineBreak +
+                 'c: *x';
+
+  doc := TYAML.LoadFromString(yamlContent);
+
+  Assert.AreEqual<integer>(2, doc.AsMapping.Items['c'].AsInteger, 'alias should bind to the most recent anchor definition');
+end;
+
+procedure TYAMLEdgeCasesTests.Test_Anchors_DuplicateAliasBetween;
+var
+  yamlContent: string;
+  doc: IYAMLDocument;
+begin
+  // An alias binds to the most recent PRIOR node with that name: b sees the first definition
+  // (1); after x is redefined, d sees the second (2).
+  yamlContent := 'a: &x 1' + sLineBreak +
+                 'b: *x' + sLineBreak +
+                 'c: &x 2' + sLineBreak +
+                 'd: *x';
+
+  doc := TYAML.LoadFromString(yamlContent);
+
+  Assert.AreEqual<integer>(1, doc.AsMapping.Items['b'].AsInteger, 'alias before redefinition binds to the first node');
+  Assert.AreEqual<integer>(2, doc.AsMapping.Items['d'].AsInteger, 'alias after redefinition binds to the second node');
+end;
+
+procedure TYAMLEdgeCasesTests.Test_Anchors_RejectedInJSONMode;
+var
+  options: IYAMLParserOptions;
+begin
+  // RFC 8259 has no anchors/aliases - JSON mode must still reject them.
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := True;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{"a": &x 1}', options);
+    end,
+    EYAMLParseException,
+    'JSON mode must reject anchors'
+  );
+end;
+
+// Block scalar header validation
+
+procedure TYAMLEdgeCasesTests.Test_BlockScalar_DoubleChompRejected;
+begin
+  // Two chomping indicators in a block header are invalid.
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('k: |-+' + sLineBreak + '  a');
+    end,
+    EYAMLParseException
+  );
+end;
+
+procedure TYAMLEdgeCasesTests.Test_BlockScalar_DoublePlusChompRejected;
+begin
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('k: |++' + sLineBreak + '  a');
+    end,
+    EYAMLParseException
+  );
+end;
+
+procedure TYAMLEdgeCasesTests.Test_BlockScalar_ZeroIndentRejected;
+begin
+  // The indentation indicator must be 1..9, never 0.
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('k: |0' + sLineBreak + ' a');
+    end,
+    EYAMLParseException
+  );
+end;
+
+procedure TYAMLEdgeCasesTests.Test_BlockScalar_MultiDigitIndentRejected;
+begin
+  // Only a single indentation digit is allowed.
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('k: |12' + sLineBreak + '  a');
+    end,
+    EYAMLParseException
+  );
+end;
+
+procedure TYAMLEdgeCasesTests.Test_BlockScalar_ExplicitIndentValid;
+var
+  docExplicit: IYAMLDocument;
+  docAuto: IYAMLDocument;
+begin
+  // A valid explicit indentation indicator (|2) with content at that indent must parse
+  // identically to auto-detected indentation (|) for the same content.
+  docExplicit := TYAML.LoadFromString('k: |2' + sLineBreak + '  a' + sLineBreak + '  b');
+  docAuto := TYAML.LoadFromString('k: |' + sLineBreak + '  a' + sLineBreak + '  b');
+
+  Assert.AreEqual(docAuto.AsMapping.Items['k'].AsString, docExplicit.AsMapping.Items['k'].AsString);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_BlockScalar_FoldedExplicitIndentValid;
+var
+  docExplicit: IYAMLDocument;
+  docAuto: IYAMLDocument;
+begin
+  // Same invariant for folded scalars with an explicit indentation indicator (>2).
+  docExplicit := TYAML.LoadFromString('k: >2' + sLineBreak + '  a' + sLineBreak + '  b');
+  docAuto := TYAML.LoadFromString('k: >' + sLineBreak + '  a' + sLineBreak + '  b');
+
+  Assert.AreEqual(docAuto.AsMapping.Items['k'].AsString, docExplicit.AsMapping.Items['k'].AsString);
 end;
 
 // Float precision and special values

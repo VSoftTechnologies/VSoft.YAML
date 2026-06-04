@@ -93,6 +93,7 @@ type
     function ReadNumber : string;
     function ReadAnchorOrAlias : string;
     function ReadTag : TTag;
+    procedure ReadBlockHeader(out chompIndicator : Char; out indentIndicator : integer);
     function ReadLiteralScalar : string;
     function ReadFoldedScalar : string;
     function ReadTimestamp : string;
@@ -567,11 +568,11 @@ end;
 function TYAMLLexer.ReadUnquotedString(reset : boolean) : string;
 const
   cValueSet =     [#10, #13, '#', '[', ']', '{', '}'];
-  // ':' is intentionally NOT in the block key set - whether it terminates the scalar depends
-  // on the following character (see the ':' handling in DoCheck below).
+  // ':' is intentionally NOT in the key sets (block or flow) - whether it terminates the
+  // scalar depends on the following character (see the ':' handling in DoCheck below).
   cNonValueSet =  [#10, #13, '#', '[', ']', '{', '}'];
   cValueSetFlow =    [#10, #13, '#', '[', ']', '{', '}', ','];
-  cNonValueSetFlow = [':', #10, #13, '#', '[', ']', '{', '}', ','];
+  cNonValueSetFlow = [#10, #13, '#', '[', ']', '{', '}', ','];
 var
   lastNonWSLen : integer;
 
@@ -601,16 +602,27 @@ var
        not TCharClassHelper.IsWhiteSpace(FReader.Previous) then
       result := True;
 
-    // YAML 1.2 (ns-plain-char): in block context a ':' is the mapping value indicator - and so
-    // terminates the plain scalar - only when it is followed by white space, a line break or
-    // the end of input. Followed by any other character it is ordinary content, so 'key:value',
-    // 'http://x' and 'key:#x' are each a single plain scalar rather than a mapping. (Flow
-    // context keeps ':' in cNonValueSetFlow; the flow ':' rules are handled separately.)
-    if result and (FFlowDepth = 0) and (not FInValueContext) and (FReader.Current = ':') then
+    // YAML 1.2 (ns-plain-char): a ':' is the mapping value indicator - and so terminates the
+    // plain scalar - only when it is followed by white space, a line break, end of input, or
+    // (inside a flow collection) a flow indicator , [ ] { }. Followed by any other character it
+    // is ordinary content, so 'key:value', 'http://x', 'key:#x' and flow '{a:b}' are each a
+    // single plain scalar rather than a mapping. A JSON-like (quoted) key is never read here,
+    // so its adjacent ':' still reaches the token dispatch and acts as a separator.
+    if result and (FReader.Current = ':') then
     begin
-      nextCh := FReader.Peek;
-      if TCharClassHelper.IsWhiteSpace(nextCh) or CharInSet(nextCh, [#0, #10, #13]) then
-        result := False;
+      if FFlowDepth > 0 then
+      begin
+        nextCh := FReader.Peek;
+        if TCharClassHelper.IsWhiteSpace(nextCh) or
+           CharInSet(nextCh, [#0, #10, #13, ',', '[', ']', '{', '}']) then
+          result := False;
+      end
+      else if not FInValueContext then
+      begin
+        nextCh := FReader.Peek;
+        if TCharClassHelper.IsWhiteSpace(nextCh) or CharInSet(nextCh, [#0, #10, #13]) then
+          result := False;
+      end;
     end;
   end;
 
@@ -1501,6 +1513,44 @@ begin
   result := PeekToken.TokenKind;
 end;
 
+procedure TYAMLLexer.ReadBlockHeader(out chompIndicator : Char; out indentIndicator : integer);
+var
+  sawChomp : boolean;
+  sawIndent : boolean;
+begin
+  chompIndicator := ' '; // Default (clip)
+  indentIndicator := 0;  // Auto-detect
+
+  sawChomp := False;
+  sawIndent := False;
+
+  // Parse the block header (YAML 1.2 8.1.1): an optional chomping indicator ('-' strip /
+  // '+' keep) and an optional indentation indicator (1..9), in either order, at most one of
+  // each. Anything else (a space then a trailing comment, the line break) ends the header.
+  while not IsAtEnd and (FReader.Current <> #10) and (FReader.Current <> #13) do
+  begin
+    if (FReader.Current = '-') or (FReader.Current = '+') then
+    begin
+      if sawChomp then
+        raise EYAMLParseException.Create('Block scalar header has more than one chomping indicator', FReader.Line, FReader.Column);
+      sawChomp := True;
+      chompIndicator := FReader.Current;
+    end
+    else if TYAMLCharUtils.IsDigit(FReader.Current) then
+    begin
+      if sawIndent then
+        raise EYAMLParseException.Create('Block scalar header has more than one indentation indicator', FReader.Line, FReader.Column);
+      if FReader.Current = '0' then
+        raise EYAMLParseException.Create('Block scalar indentation indicator must be 1..9, not 0', FReader.Line, FReader.Column);
+      sawIndent := True;
+      indentIndicator := Ord(FReader.Current) - Ord('0');
+    end
+    else if not IsWhitespace(FReader.Current) then
+      break; // End of header (e.g. a trailing comment); leave the char for later handling.
+    FReader.Read;
+  end;
+end;
+
 function TYAMLLexer.ReadLiteralScalar : string;
 var
   chompIndicator : Char;
@@ -1512,24 +1562,9 @@ var
   currentLine : string;
 begin
   FStringBuilder.Reset;
-  chompIndicator := ' '; // Default (clip)
-  indentIndicator := 0;   // Auto-detect
 
   FReader.Read; // Skip '|'
-
-  // Parse header (chomping and indentation indicators)
-  while not IsAtEnd and (FReader.Current <> #10) and (FReader.Current <> #13) do
-  begin
-    if FReader.Current = '-' then
-      chompIndicator := '-' // Strip
-    else if FReader.Current = '+' then
-      chompIndicator := '+' // Keep
-    else if TYAMLCharUtils.IsDigit(FReader.Current) then
-      indentIndicator := Ord(FReader.Current) - Ord('0')
-    else if not IsWhitespace(FReader.Current) then
-      break; // End of header
-    FReader.Read;
-  end;
+  ReadBlockHeader(chompIndicator, indentIndicator);
 
   // Skip to next line
   while (FReader.Current = #10) or (FReader.Current = #13) do
@@ -1587,7 +1622,13 @@ begin
       if baseIndent < 0 then
       begin
         if indentIndicator > 0 then
-          baseIndent := indentIndicator
+        begin
+          // YAML 1.2 (8.1.1.1): with an explicit indentation indicator the first content
+          // line must be indented at least that far.
+          if lineIndent < indentIndicator then
+            raise EYAMLParseException.Create('Block scalar content is less indented than the explicit indentation indicator', FReader.Line, FReader.Column);
+          baseIndent := indentIndicator;
+        end
         else
           baseIndent := lineIndent;
       end;
@@ -1683,24 +1724,9 @@ var
   paragraphLines : TStringList;
 begin
   FStringBuilder.Reset;
-  chompIndicator := ' '; // Default (clip)
-  indentIndicator := 0;   // Auto-detect
 
   FReader.Read; // Skip '>'
-
-  // Parse header (chomping and indentation indicators)
-  while not IsAtEnd and (FReader.Current <> #10) and (FReader.Current <> #13) do
-  begin
-    if FReader.Current = '-' then
-      chompIndicator := '-' // Strip
-    else if FReader.Current = '+' then
-      chompIndicator := '+' // Keep
-    else if TYAMLCharUtils.IsDigit(FReader.Current) then
-      indentIndicator := Ord(FReader.Current) - Ord('0')
-    else if not IsWhitespace(FReader.Current) then
-      break; // End of header
-    FReader.Read;
-  end;
+  ReadBlockHeader(chompIndicator, indentIndicator);
 
   // Skip to next line
   while (FReader.Current = #10) or (FReader.Current = #13) do

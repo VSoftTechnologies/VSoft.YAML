@@ -106,6 +106,28 @@ type
     [Test]
     procedure Test_Mapping_FlowStyle;
     [Test]
+    procedure Test_Flow_ColonAdjacentIsContent;
+    [Test]
+    procedure Test_Flow_ColonAdjacentInSequence;
+    [Test]
+    procedure Test_Flow_QuotedKeyAdjacentColon;
+    [Test]
+    procedure Test_Flow_SpacedColonStillMapping;
+    [Test]
+    procedure Test_Flow_UrlValuePreserved;
+    [Test]
+    procedure Test_PlainScalar_MultiLineFold;
+    [Test]
+    procedure Test_PlainScalar_BlankLineBecomesNewline;
+    [Test]
+    procedure Test_PlainScalar_StopsAtSiblingKey;
+    [Test]
+    procedure Test_PlainScalar_StopsAtComment;
+    [Test]
+    procedure Test_PlainScalar_SingleLineUnaffected;
+    [Test]
+    procedure Test_PlainScalar_NestedMappingNotFolded;
+    [Test]
     procedure Test_Mapping_BlockStyle;
     [Test]
     procedure Test_Mapping_NestedMappings;
@@ -876,6 +898,145 @@ begin
   flowMapping := root.Items['flow_mapping'].AsMapping;
   Assert.AreEqual('John', flowMapping.Items['name'].AsString);
   Assert.AreEqual<Int64>(30, flowMapping.Items['age'].AsInteger);
+end;
+
+procedure TYAMLComprehensiveTests.Test_Flow_ColonAdjacentIsContent;
+var
+  doc: IYAMLDocument;
+  flowMapping: IYAMLMapping;
+begin
+  // YAML 1.2 (7.4.2): in a flow mapping a plain key's ':' is a value indicator only when
+  // followed by white space / flow-indicator. '{a:b}' is therefore the single key "a:b"
+  // with an implicit null value, NOT {a: b}.
+  doc := TYAML.LoadFromString('m: {a:b}');
+  flowMapping := doc.AsMapping.Items['m'].AsMapping;
+
+  Assert.IsTrue(flowMapping.ContainsKey('a:b'), 'key should be the whole "a:b"');
+  Assert.IsTrue(flowMapping.Items['a:b'].IsNull, 'value should be null');
+  Assert.IsFalse(flowMapping.ContainsKey('a'), 'must not split into key "a"');
+end;
+
+procedure TYAMLComprehensiveTests.Test_Flow_ColonAdjacentInSequence;
+var
+  doc: IYAMLDocument;
+  flowSeq: IYAMLSequence;
+begin
+  // '[a:b]' is a sequence with one plain scalar element "a:b".
+  doc := TYAML.LoadFromString('s: [a:b]');
+  flowSeq := doc.AsMapping.Items['s'].AsSequence;
+
+  Assert.AreEqual<Int64>(1, flowSeq.Count);
+  Assert.AreEqual('a:b', flowSeq.Items[0].AsString);
+end;
+
+procedure TYAMLComprehensiveTests.Test_Flow_QuotedKeyAdjacentColon;
+var
+  doc: IYAMLDocument;
+  flowMapping: IYAMLMapping;
+begin
+  // JSON-compatibility exception: a quoted (JSON-like) key may have an adjacent ':'.
+  // '{"a":b}' => mapping {a: "b"}.
+  doc := TYAML.LoadFromString('m: {"a":b}');
+  flowMapping := doc.AsMapping.Items['m'].AsMapping;
+
+  Assert.AreEqual('b', flowMapping.Items['a'].AsString);
+end;
+
+procedure TYAMLComprehensiveTests.Test_Flow_SpacedColonStillMapping;
+var
+  doc: IYAMLDocument;
+  flowMapping: IYAMLMapping;
+begin
+  // '{a: b}' (space after colon) is still a normal mapping - regression guard.
+  doc := TYAML.LoadFromString('m: {a: b}');
+  flowMapping := doc.AsMapping.Items['m'].AsMapping;
+
+  Assert.AreEqual('b', flowMapping.Items['a'].AsString);
+end;
+
+procedure TYAMLComprehensiveTests.Test_Flow_UrlValuePreserved;
+var
+  doc: IYAMLDocument;
+  flowMapping: IYAMLMapping;
+begin
+  // A value containing ':' followed by non-space is kept intact inside a flow mapping.
+  doc := TYAML.LoadFromString('m: {u: http://example.com}');
+  flowMapping := doc.AsMapping.Items['m'].AsMapping;
+
+  Assert.AreEqual('http://example.com', flowMapping.Items['u'].AsString);
+end;
+
+procedure TYAMLComprehensiveTests.Test_PlainScalar_MultiLineFold;
+var
+  doc: IYAMLDocument;
+begin
+  // YAML 1.2 (7.3.1): a plain scalar continues onto more-indented lines; single line breaks
+  // fold to a single space.
+  doc := TYAML.LoadFromString('desc: this is' + sLineBreak + '  a folded scalar');
+
+  Assert.AreEqual('this is a folded scalar', doc.AsMapping.Items['desc'].AsString);
+end;
+
+procedure TYAMLComprehensiveTests.Test_PlainScalar_BlankLineBecomesNewline;
+var
+  doc: IYAMLDocument;
+begin
+  // A blank line inside a folded plain scalar becomes a newline.
+  doc := TYAML.LoadFromString('desc: line one' + sLineBreak + sLineBreak + '  line two');
+
+  Assert.AreEqual('line one' + #10 + 'line two', doc.AsMapping.Items['desc'].AsString);
+end;
+
+procedure TYAMLComprehensiveTests.Test_PlainScalar_StopsAtSiblingKey;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+begin
+  // Folding stops at a sibling key at the entry's indentation.
+  doc := TYAML.LoadFromString('a: one' + sLineBreak + '  two' + sLineBreak + 'b: three');
+  root := doc.AsMapping;
+
+  Assert.AreEqual('one two', root.Items['a'].AsString);
+  Assert.AreEqual('three', root.Items['b'].AsString);
+end;
+
+procedure TYAMLComprehensiveTests.Test_PlainScalar_StopsAtComment;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+begin
+  // A comment line ends the folded scalar.
+  doc := TYAML.LoadFromString('note: hello' + sLineBreak + '  world' + sLineBreak + '# trailing' + sLineBreak + 'key: val');
+  root := doc.AsMapping;
+
+  Assert.AreEqual('hello world', root.Items['note'].AsString);
+  Assert.AreEqual('val', root.Items['key'].AsString);
+end;
+
+procedure TYAMLComprehensiveTests.Test_PlainScalar_SingleLineUnaffected;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+begin
+  // A normal single-line mapping is unaffected by the continuation logic.
+  doc := TYAML.LoadFromString('a: hello world' + sLineBreak + 'b: 42');
+  root := doc.AsMapping;
+
+  Assert.AreEqual('hello world', root.Items['a'].AsString);
+  Assert.AreEqual<Int64>(42, root.Items['b'].AsInteger);
+end;
+
+procedure TYAMLComprehensiveTests.Test_PlainScalar_NestedMappingNotFolded;
+var
+  doc: IYAMLDocument;
+  outer: IYAMLMapping;
+begin
+  // A more-indented line that IS a key forms a nested mapping, not a folded scalar.
+  doc := TYAML.LoadFromString('outer:' + sLineBreak + '  inner: value' + sLineBreak + '  other: value2');
+  outer := doc.AsMapping.Items['outer'].AsMapping;
+
+  Assert.AreEqual('value', outer.Items['inner'].AsString);
+  Assert.AreEqual('value2', outer.Items['other'].AsString);
 end;
 
 procedure TYAMLComprehensiveTests.Test_Mapping_BlockStyle;
