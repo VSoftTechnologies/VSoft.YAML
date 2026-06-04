@@ -39,6 +39,21 @@ type
     procedure TestCommentWhitespaceHandling;
 
     [Test]
+    procedure TestHashInDoubleQuotedStringIsNotComment;
+
+    [Test]
+    procedure TestHashInSingleQuotedStringIsNotComment;
+
+    [Test]
+    procedure TestHashInUrlIsNotComment;
+
+    [Test]
+    procedure TestCommentAfterColonValue;
+
+    [Test]
+    procedure TestTabBeforeHashIsComment;
+
+    [Test]
     procedure TestEmptyComments;
 
     [Test]
@@ -284,6 +299,72 @@ begin
   Assert.AreEqual('', root.Items['test2'].Comment, 'No-space-before-hash must not be treated as a comment');
   Assert.AreEqual('value2#No space before hash', root.Items['test2'].AsString, 'The # and following text are part of the scalar');
   Assert.AreEqual('Normal comment', root.Items['test3'].Comment, 'Normal comment not preserved');
+end;
+
+procedure TYAMLCommentTests.TestHashInDoubleQuotedStringIsNotComment;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+begin
+  // A '#' inside a double-quoted scalar is literal content - quotes suppress comment handling.
+  doc := TYAML.LoadFromString('key: "value # not a comment"');
+  root := doc.Root.AsMapping;
+
+  Assert.AreEqual('value # not a comment', root.Items['key'].AsString, 'The # inside quotes must stay in the value');
+  Assert.AreEqual('', root.Items['key'].Comment, 'A # inside double quotes must not start a comment');
+end;
+
+procedure TYAMLCommentTests.TestHashInSingleQuotedStringIsNotComment;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+begin
+  // A '#' inside a single-quoted scalar is literal content too.
+  doc := TYAML.LoadFromString('key: ''value # not a comment''');
+  root := doc.Root.AsMapping;
+
+  Assert.AreEqual('value # not a comment', root.Items['key'].AsString, 'The # inside quotes must stay in the value');
+  Assert.AreEqual('', root.Items['key'].Comment, 'A # inside single quotes must not start a comment');
+end;
+
+procedure TYAMLCommentTests.TestHashInUrlIsNotComment;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+begin
+  // YAML 1.2 (6.6): a '#' only begins a comment when preceded by white space. In a URL the
+  // fragment '#section' is preceded by a non-space, so it is part of the plain scalar.
+  doc := TYAML.LoadFromString('docs: http://example.com/page#section');
+  root := doc.Root.AsMapping;
+
+  Assert.AreEqual('http://example.com/page#section', root.Items['docs'].AsString, 'URL fragment must be preserved');
+  Assert.AreEqual('', root.Items['docs'].Comment, 'A # not preceded by white space is not a comment');
+end;
+
+procedure TYAMLCommentTests.TestCommentAfterColonValue;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+begin
+  // A plain value may contain ':' (followed by non-space) and still carry a trailing comment.
+  doc := TYAML.LoadFromString('ratio: a:b:c # aspect ratio');
+  root := doc.Root.AsMapping;
+
+  Assert.AreEqual('a:b:c', root.Items['ratio'].AsString, 'colon-containing value must be preserved');
+  Assert.AreEqual('aspect ratio', root.Items['ratio'].Comment, 'trailing comment after a colon value not preserved');
+end;
+
+procedure TYAMLCommentTests.TestTabBeforeHashIsComment;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+begin
+  // A tab is white space, so a '#' preceded by a tab does begin a comment (6.6).
+  doc := TYAML.LoadFromString('key: value' + #9 + '#tabbed comment');
+  root := doc.Root.AsMapping;
+
+  Assert.AreEqual('value', root.Items['key'].AsString, 'value should end before the tab+comment');
+  Assert.AreEqual('tabbed comment', root.Items['key'].Comment, 'tab before # should still start a comment');
 end;
 
 procedure TYAMLCommentTests.TestEmptyComments;

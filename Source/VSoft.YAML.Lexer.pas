@@ -567,13 +567,17 @@ end;
 function TYAMLLexer.ReadUnquotedString(reset : boolean) : string;
 const
   cValueSet =     [#10, #13, '#', '[', ']', '{', '}'];
-  cNonValueSet =  [':', #10, #13, '#', '[', ']', '{', '}'];
+  // ':' is intentionally NOT in the block key set - whether it terminates the scalar depends
+  // on the following character (see the ':' handling in DoCheck below).
+  cNonValueSet =  [#10, #13, '#', '[', ']', '{', '}'];
   cValueSetFlow =    [#10, #13, '#', '[', ']', '{', '}', ','];
   cNonValueSetFlow = [':', #10, #13, '#', '[', ']', '{', '}', ','];
 var
   lastNonWSLen : integer;
 
   function DoCheck : boolean;
+  var
+    nextCh : Char;
   begin
     if FFlowDepth > 0 then
     begin
@@ -596,6 +600,18 @@ var
     if (not result) and (FReader.Current = '#') and
        not TCharClassHelper.IsWhiteSpace(FReader.Previous) then
       result := True;
+
+    // YAML 1.2 (ns-plain-char): in block context a ':' is the mapping value indicator - and so
+    // terminates the plain scalar - only when it is followed by white space, a line break or
+    // the end of input. Followed by any other character it is ordinary content, so 'key:value',
+    // 'http://x' and 'key:#x' are each a single plain scalar rather than a mapping. (Flow
+    // context keeps ':' in cNonValueSetFlow; the flow ':' rules are handled separately.)
+    if result and (FFlowDepth = 0) and (not FInValueContext) and (FReader.Current = ':') then
+    begin
+      nextCh := FReader.Peek;
+      if TCharClassHelper.IsWhiteSpace(nextCh) or CharInSet(nextCh, [#0, #10, #13]) then
+        result := False;
+    end;
   end;
 
 begin

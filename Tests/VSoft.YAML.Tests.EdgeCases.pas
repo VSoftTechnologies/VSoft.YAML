@@ -85,6 +85,17 @@ type
     [Test]
     procedure Test_SpecialChars_UnicodeNormalization;
 
+    // Colon in plain scalars (YAML 1.2 ns-plain-char): ':' is only a mapping value indicator
+    // when followed by white space / line break / end of input.
+    [Test]
+    procedure Test_Colon_NoSpaceIsPlainScalar;
+    [Test]
+    procedure Test_Colon_WithSpaceIsMapping;
+    [Test]
+    procedure Test_Colon_UrlAsValueAndKey;
+    [Test]
+    procedure Test_Colon_HashWithoutSpaceIsPlainScalar;
+
     // Type coercion edge cases
     [Test]
     procedure Test_TypeCoercion_StringToNumber;
@@ -811,6 +822,60 @@ begin
   // Both should represent the same logical character
   Assert.IsNotEmpty(root.Items['composed'].AsString);
   Assert.IsNotEmpty(root.Items['decomposed'].AsString);
+end;
+
+// Colon in plain scalars
+
+procedure TYAMLEdgeCasesTests.Test_Colon_NoSpaceIsPlainScalar;
+var
+  doc: IYAMLDocument;
+begin
+  // 'key:value' (no space after the colon) is a single plain scalar, NOT a mapping -
+  // YAML 1.2 ns-plain-char allows ':' as content when followed by a non-space char.
+  doc := TYAML.LoadFromString('key:value');
+
+  Assert.IsTrue(doc.Root.IsString, 'key:value should parse as a plain scalar, not a mapping');
+  Assert.AreEqual('key:value', doc.Root.AsString);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_Colon_WithSpaceIsMapping;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+begin
+  // 'key: value' (space after the colon) is a mapping - the space makes ':' the value indicator.
+  doc := TYAML.LoadFromString('key: value');
+
+  Assert.IsTrue(doc.Root.IsMapping, 'key: value should parse as a mapping');
+  root := doc.Root.AsMapping;
+  Assert.AreEqual('value', root.Items['key'].AsString);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_Colon_UrlAsValueAndKey;
+var
+  doc: IYAMLDocument;
+  root: IYAMLMapping;
+begin
+  // A URL contains ':' followed by non-space, so it stays intact both as a value and as a key.
+  doc := TYAML.LoadFromString('site: http://example.com/a:b' + sLineBreak +
+                              'http://example.com: home');
+  root := doc.Root.AsMapping;
+
+  Assert.AreEqual('http://example.com/a:b', root.Items['site'].AsString, 'colon-containing value must be preserved');
+  Assert.AreEqual('home', root.Items['http://example.com'].AsString, 'colon-containing key must be preserved');
+end;
+
+procedure TYAMLEdgeCasesTests.Test_Colon_HashWithoutSpaceIsPlainScalar;
+var
+  doc: IYAMLDocument;
+begin
+  // 'key:#frag' - the ':' is followed by '#' (non-space) so it is content, and the '#' is
+  // preceded by a non-space so it is not a comment. The whole thing is one plain scalar.
+  doc := TYAML.LoadFromString('key:#frag');
+
+  Assert.IsTrue(doc.Root.IsString, 'key:#frag should parse as a plain scalar');
+  Assert.AreEqual('key:#frag', doc.Root.AsString);
+  Assert.AreEqual('', doc.Root.Comment, 'there is no comment - the # is scalar content');
 end;
 
 // Type coercion edge cases

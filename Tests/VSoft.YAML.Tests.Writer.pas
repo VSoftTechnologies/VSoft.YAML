@@ -162,6 +162,10 @@ type
     procedure Test_Quoting_QuoteStringsOptionQuotesEverything;
     [Test]
     procedure Test_Quoting_LeadingZeroStringNotANumber;
+    [Test]
+    procedure Test_Quoting_ColonHashScalarsRoundTrip;
+    [Test]
+    procedure Test_Quoting_ColonInKeyNotQuoted;
 
     // Explicit null tests
     [Test]
@@ -1461,6 +1465,47 @@ begin
   reloaded := RoundTripScalar('007');
   Assert.IsTrue(reloaded.IsString, '"007" should round-trip as a string');
   Assert.AreEqual('007', reloaded.AsString);
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_ColonHashScalarsRoundTrip;
+var
+  i: integer;
+  values: TArray<string>;
+  reloaded: IYAMLValue;
+begin
+  // A ':' not followed by a space, and a '#' not preceded by a space, are valid unquoted plain
+  // scalar content (YAML 1.2 ns-plain-char). The writer must leave them unquoted and they must
+  // survive a full write/read round-trip - this exercises the writer and lexer together.
+  values := TArray<string>.Create(
+    'a:b:c', 'ns::scope', 'http://example.com/page#frag', 'git@host:user/repo.git#v1');
+  for i := 0 to High(values) do
+  begin
+    reloaded := RoundTripScalar(values[i]);
+    Assert.IsTrue(reloaded.IsString, 'expected "' + values[i] + '" to round-trip as a string');
+    Assert.AreEqual(values[i], reloaded.AsString, 'failed to round-trip "' + values[i] + '"');
+  end;
+end;
+
+procedure TYAMLWriterTests.Test_Quoting_ColonInKeyNotQuoted;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+  reloaded: IYAMLDocument;
+begin
+  // A key containing ':' not followed by a space is a valid unquoted plain scalar key: the
+  // writer must not quote it and the lexer must read the whole key back.
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('a:b', 'v1');
+  doc.AsMapping.AddOrSetValue('ns::scope', 'v2');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.Contains(yamlStr, 'a:b: v1');
+  Assert.Contains(yamlStr, 'ns::scope: v2');
+
+  reloaded := TYAML.LoadFromString(yamlStr);
+  Assert.AreEqual('v1', reloaded.AsMapping.Values['a:b'].AsString);
+  Assert.AreEqual('v2', reloaded.AsMapping.Values['ns::scope'].AsString);
 end;
 
 // Explicit null tests
