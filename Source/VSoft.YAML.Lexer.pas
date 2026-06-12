@@ -651,6 +651,62 @@ var
   dotCount : integer;
   tempChar : Char;
   ch : Char;
+
+  // True when the character immediately following the numeric run is a value
+  // terminator (end of input, white space, line break, flow indicator, or a
+  // ':' acting as the mapping value indicator). When False the token is not a
+  // number at all but a plain scalar that merely begins with digits - e.g.
+  // '10$compilerCodeName$' - and so must be read whole. This mirrors the
+  // terminator rules in ReadUnquotedString.DoCheck.
+  function NumberFollowedByTerminator : boolean;
+  var
+    cur : Char;
+    nextCh : Char;
+  begin
+    if IsAtEnd then
+    begin
+      result := True;
+      Exit;
+    end;
+    cur := FReader.Current;
+    if TCharClassHelper.IsWhiteSpace(cur) or (cur = #10) or (cur = #13) then
+    begin
+      result := True;
+      Exit;
+    end;
+    // Flow collection indicators end a value (these terminate a plain scalar in
+    // both block and flow context - see cValueSet in ReadUnquotedString).
+    if CharInSet(cur, ['[', ']', '{', '}']) then
+    begin
+      result := True;
+      Exit;
+    end;
+    // A comma only terminates inside a flow collection; in block context it is
+    // ordinary scalar content (e.g. 'a: 10, more' is the string '10, more').
+    if (cur = ',') and (FFlowDepth > 0) then
+    begin
+      result := True;
+      Exit;
+    end;
+    // ':' is the mapping value indicator (and so terminates the number) only
+    // when followed by white space / line break / end of input - or, inside a
+    // flow collection, a flow indicator. In value context it is ordinary
+    // scalar content (e.g. a time '1:30'), so the token is then a plain scalar.
+    if cur = ':' then
+    begin
+      nextCh := FReader.Peek;
+      if FFlowDepth > 0 then
+        result := TCharClassHelper.IsWhiteSpace(nextCh) or CharInSet(nextCh, [#0, #10, #13, ',', '[', ']', '{', '}'])
+      else if not FInValueContext then
+        result := TCharClassHelper.IsWhiteSpace(nextCh) or CharInSet(nextCh, [#0, #10, #13])
+      else
+        result := False;
+      Exit;
+    end;
+    // Anything else ('$', '%', '-', a letter, ...) is plain-scalar content.
+    result := False;
+  end;
+
 begin
   FStringBuilder.Reset;
   dotCount := 0;
@@ -817,11 +873,13 @@ begin
     end;
   end;
   
-  // If the character immediately following the numeric portion is an
-  // alphanumeric or identifier character (e.g. '4B599A8C9'), this token
-  // is not a number - read the rest as an unquoted string.
-  if TCharClassHelper.IsAlphaNumeric(FReader.Current) or
-     TCharClassHelper.IsIdentifierChar(FReader.Current) then
+  // The numeric run is only actually a number when what follows it is a value
+  // terminator. If it is ordinary plain-scalar content (a letter, '$', '%', a
+  // '-', ...) then this token is a plain scalar that merely starts with digits
+  // (e.g. '4B599A8C9' or '10$compilerCodeName$'), so read the whole thing as an
+  // unquoted string - otherwise the numeric prefix would be split into its own
+  // token and the remainder rejoined with a spurious space ('10 Seattle').
+  if not NumberFollowedByTerminator then
   begin
     result := ReadUnquotedString(false);
     Exit;

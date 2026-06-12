@@ -35,6 +35,9 @@ type
     [Test]
     procedure TestNestedUnquotedStringStartingWithNumber;
 
+    [Test]
+    procedure TestNumberPrefixFollowedByTokenIsString;
+
   end;
 
 
@@ -218,6 +221,30 @@ begin
   Assert.AreEqual('11AndAbove',
     doc.Root.Values['variables'].Values['packageSource'].AsString,
     'packageSource value must be the full unquoted string');
+end;
+
+procedure TBasicYAMLTests.TestNumberPrefixFollowedByTokenIsString;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+begin
+  // A plain scalar whose numeric prefix is immediately followed by a non
+  // alphanumeric content character (here a '$' beginning a DPM token) is not a
+  // number - it must be read whole. Previously the lexer read the digits as a
+  // number token and rejoined the remainder with a spurious space, turning
+  // '10$compilerCodeName$' into '10 $compilerCodeName$' (-> '10 Seattle').
+  yamlText :=
+    'a: 10$compilerCodeName$' + sLineBreak +
+    'b: 10.0$compilerCodeName$' + sLineBreak +
+    'c: 1$compilerCodeName$';
+
+  doc := TYAML.LoadFromString(yamlText);
+  Assert.AreEqual('10$compilerCodeName$', doc.Root.Values['a'].AsString,
+    'integer prefix before a token must not split the scalar');
+  Assert.AreEqual('10.0$compilerCodeName$', doc.Root.Values['b'].AsString,
+    'float prefix before a token must not split the scalar');
+  Assert.AreEqual('1$compilerCodeName$', doc.Root.Values['c'].AsString,
+    'single-digit prefix before a token must not split the scalar');
 end;
 
 initialization
