@@ -540,7 +540,7 @@ function TYAMLValue.AsBoolean : boolean;
 begin
   if not IsBoolean then
     raise Exception.Create('Value is not a boolean');
-  result := SameText(FRawValue, 'true') or SameText(FRawValue, 'yes') or SameText(FRawValue, 'on');
+  result := SameText(FRawValue, 'true') or SameText(FRawValue, 'yes') or SameText(FRawValue, 'on') or SameText(FRawValue, '1');
 end;
 
 function TYAMLValue.AsCollection: IYAMLCollection;
@@ -592,6 +592,17 @@ function TYAMLValue.AsFloat : Double;
 var
   trimmedValue : string;
 begin
+  if IsInteger then // convert part Integer -> Float
+    Self.FValueType := TYAMLValueType.vtFloat
+  else if IsBoolean then // convert part Boolean -> Float
+    if Self.AsBoolean then begin
+      Self.FRawValue := '1';
+      Self.FValueType := TYAMLValueType.vtFloat;
+    end else begin
+      Self.FRawValue := '0';
+      Self.FValueType := TYAMLValueType.vtFloat;
+    end;
+
   if not IsFloat then
     raise Exception.Create('Value is not a float');
 
