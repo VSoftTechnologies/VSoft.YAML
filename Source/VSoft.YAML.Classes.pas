@@ -58,6 +58,7 @@ type
     function IsTimeStamp : boolean;inline;
     function IsNumeric : boolean;inline;
     function IsScalar : boolean;inline;
+    function IsLiteralBlock : boolean;inline;
     // Value conversion methods
     function AsBoolean : boolean;
     function AsInteger : Int64;
@@ -513,7 +514,7 @@ function TYAMLValue.AsBoolean : boolean;
 begin
   if not IsBoolean then
     raise Exception.Create('Value is not a boolean');
-  result := SameText(FRawValue, 'true') or SameText(FRawValue, 'yes') or SameText(FRawValue, 'on');
+  result := SameText(FRawValue, 'true') or SameText(FRawValue, 'yes') or SameText(FRawValue, 'on') or SameText(FRawValue, '1');
 end;
 
 function TYAMLValue.AsCollection: IYAMLCollection;
@@ -565,6 +566,17 @@ function TYAMLValue.AsFloat : Double;
 var
   trimmedValue : string;
 begin
+  if IsInteger then // convert part Integer -> Float
+    Self.FValueType := TYAMLValueType.vtFloat
+  else if IsBoolean then // convert part Boolean -> Float
+    if Self.AsBoolean then begin
+      Self.FRawValue := '1';
+      Self.FValueType := TYAMLValueType.vtFloat;
+    end else begin
+      Self.FRawValue := '0';
+      Self.FValueType := TYAMLValueType.vtFloat;
+    end;
+
   if not IsFloat then
     raise Exception.Create('Value is not a float');
 
@@ -843,6 +855,11 @@ begin
   result := not (FValueType in [TYAMLValueType.vtSequence,TYAMLValueType.vtSet,TYAMLValueType.vtMapping, TYAMLValueType.vtAlias]);
 end;
 
+function TYAMLValue.IsLiteralBlock: boolean;
+begin
+  result :=  (FValueType = TYAMLValueType.vtLiteral) or (Pos(#10, Self.FRawValue) > 0);
+end;
+
 function TYAMLValue.IsSequence : boolean;
 begin
   result := FValueType = TYAMLValueType.vtSequence;
@@ -889,6 +906,7 @@ begin
     TYAMLValueType.vtBoolean,
     TYAMLValueType.vtInteger,
     TYAMLValueType.vtFloat,
+    TYAMLValueType.vtLiteral,
     TYAMLValueType.vtString : result := FRawValue;
     TYAMLValueType.vtSequence : result := '[Sequence]';
     TYAMLValueType.vtMapping : result := '[Mapping]';
@@ -1428,7 +1446,10 @@ end;
 
 function TYAMLMapping.AddOrSetValue(const key, value : string) : IYAMLValue;
 begin
-  result := TYAMLValue.Create(Self, TYAMLValueType.vtString,value);
+  if (Pos(#10, value) <> 0) and (Pos(#10, value) <> Length(value)) then
+    result := TYAMLValue.Create(Self, TYAMLValueType.vtLiteral,value)
+  else
+    result := TYAMLValue.Create(Self, TYAMLValueType.vtString,value);
   AddOrSetValue(key, result);
 end;
 
@@ -1572,6 +1593,8 @@ function TYAMLMapping.AddOrSetValue(const key : string; const value : string; co
 begin
   if value = '' then
     result := TYAMLValue.Create(Self, TYAMLValueType.vtNull, value, tag)
+  else if (Pos(#10, value) <> 0) and (Pos(#10, value) <> Length(value)) then
+    result := TYAMLValue.Create(Self, TYAMLValueType.vtLiteral, value, tag)
   else
     result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tag);
   AddOrSetValue(key, result);
