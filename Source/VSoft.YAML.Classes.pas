@@ -58,7 +58,6 @@ type
     function IsTimeStamp : boolean;inline;
     function IsNumeric : boolean;inline;
     function IsScalar : boolean;inline;
-    function IsLiteralBlock : boolean;inline;
     // Value conversion methods
     function AsBoolean : boolean;
     function AsInteger : Int64;
@@ -855,11 +854,6 @@ begin
   result := not (FValueType in [TYAMLValueType.vtSequence,TYAMLValueType.vtSet,TYAMLValueType.vtMapping, TYAMLValueType.vtAlias]);
 end;
 
-function TYAMLValue.IsLiteralBlock: boolean;
-begin
-  result :=  (FValueType = TYAMLValueType.vtLiteral) or (Pos(#10, Self.FRawValue) > 0);
-end;
-
 function TYAMLValue.IsSequence : boolean;
 begin
   result := FValueType = TYAMLValueType.vtSequence;
@@ -1446,10 +1440,7 @@ end;
 
 function TYAMLMapping.AddOrSetValue(const key, value : string) : IYAMLValue;
 begin
-  if (Pos(#10, value) <> 0) and (Pos(#10, value) <> Length(value)) then
-    result := TYAMLValue.Create(Self, TYAMLValueType.vtLiteral,value)
-  else
-    result := TYAMLValue.Create(Self, TYAMLValueType.vtString,value);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtString,value);
   AddOrSetValue(key, result);
 end;
 
@@ -1593,8 +1584,6 @@ function TYAMLMapping.AddOrSetValue(const key : string; const value : string; co
 begin
   if value = '' then
     result := TYAMLValue.Create(Self, TYAMLValueType.vtNull, value, tag)
-  else if (Pos(#10, value) <> 0) and (Pos(#10, value) <> Length(value)) then
-    result := TYAMLValue.Create(Self, TYAMLValueType.vtLiteral, value, tag)
   else
     result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tag);
   AddOrSetValue(key, result);
