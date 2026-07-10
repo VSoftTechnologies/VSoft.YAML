@@ -900,7 +900,6 @@ begin
     TYAMLValueType.vtBoolean,
     TYAMLValueType.vtInteger,
     TYAMLValueType.vtFloat,
-    TYAMLValueType.vtLiteral,
     TYAMLValueType.vtString : result := FRawValue;
     TYAMLValueType.vtSequence : result := '[Sequence]';
     TYAMLValueType.vtMapping : result := '[Mapping]';
