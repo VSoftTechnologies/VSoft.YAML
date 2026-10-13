@@ -298,6 +298,11 @@ type
     procedure Test_BlockScalar_ChompingStrip;
     [Test]
     procedure Test_BlockScalar_ChompingKeep;
+
+    [Test]
+    procedure Test_FlowFormat_QuotedKeysAndValues_RoundTrip;
+    [Test]
+    procedure Test_MixedFormat_WithSet_DoesNotRaise;
   end;
 
 implementation
@@ -3037,6 +3042,50 @@ begin
   Assert.Contains(yamlStr, '# database configuration', 'First mapping pre-comment missing');
   Assert.Contains(yamlStr, '# see docs for details', 'Second mapping pre-comment missing');
   Assert.Contains(yamlStr, '# list of servers', 'Sequence pre-comment missing');
+end;
+
+procedure TYAMLWriterTests.Test_FlowFormat_QuotedKeysAndValues_RoundTrip;
+var
+  doc, reparsed : IYAMLDocument;
+  root : IYAMLMapping;
+  yamlStr : string;
+begin
+  // Quoting a key or value used to reset the builder holding the flow line, so the
+  // output lost its opening brace and every earlier pair.
+  doc := TYAML.CreateMapping;
+  root := doc.AsMapping;
+  root.AddOrSetValue('first', 1);
+  root.AddOrSetValue('a: b', 'plain');
+  root.AddOrSetValue('second', 'needs: quotes');
+  doc.Options.Format := TYAMLOutputFormat.yofFlow;
+
+  yamlStr := TYAML.WriteToString(doc);
+  Assert.StartsWith('{first: 1, ', Trim(yamlStr));
+
+  reparsed := TYAML.LoadFromString(yamlStr);
+  Assert.AreEqual(3, reparsed.AsMapping.Count);
+  Assert.AreEqual<Int64>(1, reparsed.AsMapping.Values['first'].AsInteger);
+  Assert.AreEqual('plain', reparsed.AsMapping.Values['a: b'].AsString);
+  Assert.AreEqual('needs: quotes', reparsed.AsMapping.Values['second'].AsString);
+end;
+
+procedure TYAMLWriterTests.Test_MixedFormat_WithSet_DoesNotRaise;
+var
+  doc : IYAMLDocument;
+  aSet : IYAMLSet;
+  yamlStr : string;
+begin
+  // ShouldUseFlowStyle called AsSequence on sets, which raised "Value is not a sequence".
+  doc := TYAML.CreateMapping;
+  aSet := doc.AsMapping.AddOrSetSet('tags');
+  aSet.AddValue('red');
+  aSet.AddValue('green');
+  doc.Options.Format := TYAMLOutputFormat.yofMixed;
+
+  yamlStr := TYAML.WriteToString(doc);
+  Assert.Contains(yamlStr, 'tags');
+  Assert.Contains(yamlStr, 'red');
+  Assert.Contains(yamlStr, 'green');
 end;
 
 initialization

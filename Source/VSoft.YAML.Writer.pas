@@ -20,6 +20,9 @@ type
     FOptions : IYAMLEmitOptions;
     FWriter : TYAMLWriter;
     FStringBuilder : TStringBuilder;
+    // FormatKey/FormatScalar quote into this, never into FStringBuilder, which may hold
+    // the line being built (it used to, corrupting flow-style output with quoted keys)
+    FQuoteBuilder : TStringBuilder;
 
     // Helper methods for formatting
     function GetIndent : string;
@@ -101,12 +104,14 @@ begin
   FCurrentIndent := '';
   FWriter := nil;
   FStringBuilder := TStringBuilder.Create(16384);  // Increased capacity for large documents
+  FQuoteBuilder := TStringBuilder.Create(256);
 end;
 
 destructor TYAMLWriterImpl.Destroy;
 begin
   //do not free FWriter here we do not own it.
   FStringBuilder.Free;
+  FQuoteBuilder.Free;
   inherited Destroy;
 end;
 
@@ -274,20 +279,20 @@ function TYAMLWriterImpl.FormatKey(const key : string) : string;
 begin
   if NeedsQuoting(key) then
   begin
-    FStringBuilder.Reset;
+    FQuoteBuilder.Reset;
     if ShouldUseDoubleQuotes(key) then
     begin
-      FStringBuilder.Append('"');
-      EscapeString(key, FStringBuilder);
-      FStringBuilder.Append('"');
+      FQuoteBuilder.Append('"');
+      EscapeString(key, FQuoteBuilder);
+      FQuoteBuilder.Append('"');
     end
     else
     begin
-      FStringBuilder.Append('''');
-      EscapeForSingleQuotes(key, FStringBuilder);
-      FStringBuilder.Append('''');
+      FQuoteBuilder.Append('''');
+      EscapeForSingleQuotes(key, FQuoteBuilder);
+      FQuoteBuilder.Append('''');
     end;
-    result := FStringBuilder.ToString;
+    result := FQuoteBuilder.ToString;
   end
   else
     result := key;
@@ -318,20 +323,20 @@ begin
     begin
       if NeedsQuoting(value.AsString) then
       begin
-        FStringBuilder.Reset;
+        FQuoteBuilder.Reset;
         if ShouldUseDoubleQuotes(value.AsString) then
         begin
-          FStringBuilder.Append('"');
-          EscapeString(value.AsString, FStringBuilder);
-          FStringBuilder.Append('"');
+          FQuoteBuilder.Append('"');
+          EscapeString(value.AsString, FQuoteBuilder);
+          FQuoteBuilder.Append('"');
         end
         else
         begin
-          FStringBuilder.Append('''');
-          EscapeForSingleQuotes(value.AsString, FStringBuilder);
-          FStringBuilder.Append('''');
+          FQuoteBuilder.Append('''');
+          EscapeForSingleQuotes(value.AsString, FQuoteBuilder);
+          FQuoteBuilder.Append('''');
         end;
-        result := FStringBuilder.ToString;
+        result := FQuoteBuilder.ToString;
       end
       else
         result := value.AsString;
@@ -558,10 +563,14 @@ begin
       // Use flow style for simple structures
       if value.ValueType in [TYAMLValueType.vtSet, TYAMLValueType.vtSequence] then
       begin
-        result := (value.AsSequence.Count <= 5);
+        // AsSequence rejects sets, but a set is a sequence (IYAMLSet extends IYAMLSequence)
+        if value.ValueType = TYAMLValueType.vtSet then
+          seq := value.AsSet
+        else
+          seq := value.AsSequence;
+        result := (seq.Count <= 5);
         if result then
         begin
-          seq := value.AsSequence;
           for i := 0 to seq.Count - 1 do
           begin
             if not (seq[i].ValueType in [TYAMLValueType.vtNull, TYAMLValueType.vtBoolean, TYAMLValueType.vtInteger, TYAMLValueType.vtFloat, TYAMLValueType.vtString]) then
