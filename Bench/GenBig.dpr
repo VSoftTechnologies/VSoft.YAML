@@ -1,8 +1,10 @@
 program GenBig;
 
-// Scales the benchmark test files up to ~[MB] megabytes each, keeping their style by
-// repeating each file's repeating region.
-//   GenBig [outDir] [MB]
+// Makes versions of the benchmark test files of about a given size, keeping their
+// style: each file's repeating units (data_batch_N sections, "- id:" list items, the
+// elements of a JSON array) are taken in order, cycling back to the first, until the
+// target is reached. Works for sizes below the originals as well as above.
+//   GenBig [outDir] [size]      size: MB, or with a K/KB suffix kilobytes (default 100)
 
 {$APPTYPE CONSOLE}
 {$R GenBigFiles.res}
@@ -18,30 +20,50 @@ var
   target : Int64;
 
 procedure Save(const name : string; sb : TStringBuilder);
+var
+  size : Int64;
 begin
   TFile.WriteAllText(TPath.Combine(outDir, name), sb.ToString, TUTF8Encoding.Create(false)); // no BOM, like the originals
-  WriteLn(Format('%-30s %8.1f MB', [name, TFile.GetSize(TPath.Combine(outDir, name)) / (1024 * 1024)]));
+  size := TFile.GetSize(TPath.Combine(outDir, name));
+  if size < 1024 * 1024 then
+    WriteLn(Format('%-30s %8.1f KB', [name, size / 1024]))
+  else
+    WriteLn(Format('%-30s %8.1f MB', [name, size / (1024 * 1024)]));
 end;
 
-// prefix + body repeated (joined by sep) + suffix. renamer may rewrite each copy.
-procedure Repeated(const name, prefix, body, sep, suffix : string; renamer : TFunc<string, integer, string>);
+// prefix + units (joined by sep, cycling through them) + suffix, stopping before the
+// target would be passed (at least one unit is always written). renamer may rewrite a
+// unit for each pass through the list.
+procedure Repeated(const name, prefix : string; const units : TArray<string>; const sep, suffix : string;
+  renamer : TFunc<string, integer, string>);
 var
   sb : TStringBuilder;
-  copyNo : integer;
+  count, pass, i : integer;
+  u : string;
 begin
   sb := TStringBuilder.Create(target + 1024 * 1024);
   try
     sb.Append(prefix);
-    copyNo := 0;
-    while sb.Length + Length(body) + Length(suffix) < target do
+    count := 0;
+    pass := 0;
+    i := 0;
+    while True do
     begin
-      if copyNo > 0 then
-        sb.Append(sep);
+      u := units[i];
       if Assigned(renamer) then
-        sb.Append(renamer(body, copyNo))
-      else
-        sb.Append(body);
-      Inc(copyNo);
+        u := renamer(u, pass);
+      if (count > 0) and (sb.Length + Length(sep) + Length(u) + Length(suffix) > target) then
+        break;
+      if count > 0 then
+        sb.Append(sep);
+      sb.Append(u);
+      Inc(count);
+      Inc(i);
+      if i = Length(units) then
+      begin
+        i := 0;
+        Inc(pass);
+      end;
     end;
     sb.Append(suffix);
     Save(name, sb);
@@ -86,8 +108,70 @@ begin
   after := Copy(s, p, MaxInt);
 end;
 
-// data_batch_N: at the start of a line -> data_batch_<copy*100000+N>: so keys stay
-// unique across copies (the original's own duplicate keys are kept as duplicates)
+// Splits body (which starts with marker) into units that each start with marker at
+// the beginning of a line; every unit keeps its own trailing line break.
+function SplitLineUnits(const body, marker : string) : TArray<string>;
+var
+  starts : TArray<integer>;
+  p, k : integer;
+begin
+  starts := TArray<integer>.Create(1);
+  p := Pos(#10 + marker, body);
+  while p > 0 do
+  begin
+    starts := starts + [p + 1];
+    p := Pos(#10 + marker, body, p + 1);
+  end;
+  SetLength(result, Length(starts));
+  for k := 0 to High(starts) do
+    if k < High(starts) then
+      result[k] := Copy(body, starts[k], starts[k + 1] - starts[k])
+    else
+      result[k] := Copy(body, starts[k], MaxInt);
+  if not result[High(result)].EndsWith(#10) then
+    result[High(result)] := result[High(result)] + sLineBreak;
+end;
+
+// Splits the inside of a JSON array at its top-level commas (outside strings and
+// nested brackets). Each element keeps its leading white space.
+function SplitJsonElements(const body : string) : TArray<string>;
+var
+  i, depth, start : integer;
+  inString : boolean;
+begin
+  result := nil;
+  depth := 0;
+  inString := False;
+  start := 1;
+  i := 1;
+  while i <= Length(body) do
+  begin
+    if inString then
+    begin
+      if body[i] = '\' then
+        Inc(i)
+      else if body[i] = '"' then
+        inString := False;
+    end
+    else
+      case body[i] of
+        '"' : inString := True;
+        '[', '{' : Inc(depth);
+        ']', '}' : Dec(depth);
+        ',' : if depth = 0 then
+              begin
+                result := result + [Copy(body, start, i - start)];
+                start := i + 1;
+              end;
+      end;
+    Inc(i);
+  end;
+  if Trim(Copy(body, start, MaxInt)) <> '' then
+    result := result + [Copy(body, start, MaxInt)];
+end;
+
+// data_batch_N: at the start of a line -> data_batch_<pass*100000+N>: so keys stay
+// unique across passes (the original's own duplicate keys are kept as duplicates)
 function RenameBatches(b : string; n : integer) : string; // TFunc signature: no const
 const
   key = 'data_batch_';
@@ -95,6 +179,8 @@ var
   sb : TStringBuilder;
   i, j, len : integer;
 begin
+  if n = 0 then
+    exit(b);
   sb := TStringBuilder.Create(Length(b) + 4096);
   try
     i := 1;
@@ -125,14 +211,12 @@ procedure GenLargeYaml;
 var
   s, prefix, body : string;
 begin
-  // header sections + data_batch_1..3, then repeat data_batch_4.. with renamed keys
+  // header sections + data_batch_1..3, then data_batch_4.. sections (renamed per pass)
   s := ReadSrc('benchmark_large.yaml');
   SplitAt(s, #10'data_batch_4:', prefix, body);
   prefix := prefix + #10;
   body := Copy(body, 2, MaxInt);
-  if not body.EndsWith(#10) then
-    body := body + sLineBreak;
-  Repeated('benchmark_large.yaml', prefix, body, '', '', RenameBatches);
+  Repeated('benchmark_large.yaml', prefix, SplitLineUnits(body, 'data_batch_'), '', '', RenameBatches);
 end;
 
 procedure GenListYaml(const name : string);
@@ -140,13 +224,13 @@ var
   s, prefix, body, suffix : string;
   p : integer;
 begin
-  // header + "key:" line, then repeat the whole list of "  - id:" items
+  // header + "key:" line, then the "  - id:" items
   s := ReadSrc(name);
   SplitAt(s, #10'  - id:', prefix, body);
   prefix := prefix + #10;
   body := Copy(body, 2, MaxInt);
   // the list ends at the first non-indented line; what follows (other top-level
-  // sections) is written once after the copies
+  // sections) is written once after the items
   p := 1;
   while p < Length(body) do
   begin
@@ -156,21 +240,21 @@ begin
   end;
   suffix := Copy(body, p + 1, MaxInt);
   body := Copy(body, 1, p);
-  Repeated(name, prefix, body, '', suffix, nil);
+  Repeated(name, prefix, SplitLineUnits(body, '  - id:'), '', suffix, nil);
 end;
 
 procedure GenJsonArray(const name, openMarker, closeMarker : string);
 var
   s, prefix, rest, body, suffix : string;
 begin
-  // repeat the elements of the one big array, comma-joined
+  // the elements of the one big array, comma-joined
   s := ReadSrc(name);
   SplitAt(s, openMarker, prefix, rest);
   prefix := prefix + openMarker;
   rest := Copy(rest, Length(openMarker) + 1, MaxInt);
   SplitAt(rest, closeMarker, body, suffix, true);
   body := body.TrimRight;
-  Repeated(name, prefix, body, ',' + sLineBreak, sLineBreak + suffix.TrimLeft([#13, #10]), nil);
+  Repeated(name, prefix, SplitJsonElements(body), ',', sLineBreak + suffix.TrimLeft([#13, #10]), nil);
 end;
 
 procedure GenKeyValueJson;
@@ -197,13 +281,30 @@ begin
   end;
 end;
 
+function ParseSize(const s : string) : Int64;
+var
+  t : string;
+begin
+  t := UpperCase(Trim(s));
+  if t = '' then
+    exit(100 * 1024 * 1024);
+  if t.EndsWith('KB') then
+    result := Int64(StrToInt(Copy(t, 1, Length(t) - 2))) * 1024
+  else if t.EndsWith('K') then
+    result := Int64(StrToInt(Copy(t, 1, Length(t) - 1))) * 1024
+  else if t.EndsWith('MB') then
+    result := Int64(StrToInt(Copy(t, 1, Length(t) - 2))) * 1024 * 1024
+  else
+    result := Int64(StrToInt(t)) * 1024 * 1024;
+end;
+
 begin
   try
     srcDir := TPath.GetFullPath(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\Tests\TestFiles'));
     outDir := ParamStr(1);
     if outDir = '' then
       outDir := TPath.Combine(ExtractFilePath(ParamStr(0)), 'big');
-    target := Int64(StrToIntDef(ParamStr(2), 100)) * 1024 * 1024;
+    target := ParseSize(ParamStr(2));
     ForceDirectories(outDir);
     GenLargeYaml;
     GenListYaml('benchmark_block_scalars.yaml');
