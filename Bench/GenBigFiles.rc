@@ -1,0 +1,7 @@
+// the benchmark files GenBig scales up, embedded so GenBig can run on a machine
+// without the repository (see ReadSrc in GenBig.dpr)
+BENCHMARK_LARGE_YAML           RCDATA "..\Tests\TestFiles\benchmark_large.yaml"
+BENCHMARK_BLOCK_SCALARS_YAML   RCDATA "..\Tests\TestFiles\benchmark_block_scalars.yaml"
+BENCHMARK_QUOTED_STRINGS_YAML  RCDATA "..\Tests\TestFiles\benchmark_quoted_strings.yaml"
+BENCHMARK_LARGE_JSON           RCDATA "..\Tests\TestFiles\benchmark_large.json"
+LOAD_TEST_JSON                 RCDATA "..\Tests\TestFiles\load_test.json"

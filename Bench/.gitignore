@@ -4,3 +4,5 @@ dcu/
 dcu32/
 # generated data (GenBig)
 big*/
+# hand-written (the root .gitignore ignores *.rc)
+!GenBigFiles.rc
