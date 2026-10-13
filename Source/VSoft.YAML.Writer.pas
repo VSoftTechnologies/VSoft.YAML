@@ -147,9 +147,14 @@ begin
      (value = 'on') or (value = 'off') then
     exit(True);
 
-  // Check if it looks like a number
-  if TryStrToInt(value, intVal) or TryStrToFloat(value, floatVal, YAMLFormatSettings) then
-    exit(True);
+  // Check if it looks like a number. The RTL parsers are slow, so only call them when
+  // the first character could start something they accept: digits, sign, '.', the
+  // '$' / 'x' / '0x' hex prefixes Val takes, or the INF / NAN text TextToFloat takes.
+  case value[1] of
+    '0'..'9', '+', '-', '.', '$', 'x', 'X', 'i', 'I', 'n', 'N':
+      if TryStrToInt(value, intVal) or TryStrToFloat(value, floatVal, YAMLFormatSettings) then
+        exit(True);
+  end;
 
   // Indicator characters are only special at the START of a plain scalar. Mid-string they are
   // ordinary content (e.g. a URL's '*' or a Windows path), so quoting them is unnecessary.
@@ -306,7 +311,9 @@ begin
         result := 'false';
     end;
     TYAMLValueType.vtInteger : result := IntToStr(value.AsInteger);
-    TYAMLValueType.vtFloat :   result := YAMLFloatToStr(value.AsFloat);
+    TYAMLValueType.vtFloat :
+      if not YAMLCanonicalFloatText(value.RawValue, result) then
+        result := YAMLFloatToStr(value.AsFloat);
     TYAMLValueType.vtString :
     begin
       if NeedsQuoting(value.AsString) then
@@ -645,6 +652,7 @@ end;
 
 procedure TYAMLWriterImpl.WriteMapping(const mapping : IYAMLMapping);
 var
+  priv : IYAMLMappingPrivate;
   i : integer;
   key : string;
   value : IYAMLValue;
@@ -669,10 +677,19 @@ begin
   end;
 
 
+  if not Supports(mapping, IYAMLMappingPrivate, priv) then
+
+
+    priv := nil;
+
+
   for i := 0 to mapping.Count - 1 do
   begin
     key := mapping.Keys[i];
-    value := mapping.Values[key];
+    if priv <> nil then
+      value := priv.ValueAt(i)
+    else
+      value := mapping.Values[key];
 
     if FOptions.EmitTags then
       tag := GetFormattedTag(value)
@@ -847,6 +864,7 @@ end;
 
 procedure TYAMLWriterImpl.WriteMappingFlow(const mapping : IYAMLMapping; const mapKey : string);
 var
+  priv : IYAMLMappingPrivate;
   i : integer;
   key : string;
   value : IYAMLValue;
@@ -857,10 +875,17 @@ begin
   FStringBuilder.Append(mapKey);
   FStringBuilder.Append('{');
 
+  if not Supports(mapping, IYAMLMappingPrivate, priv) then
+
+    priv := nil;
+
   for i := 0 to mapping.Count - 1 do
   begin
     key := mapping.Keys[i];
-    value := mapping.Values[key];
+    if priv <> nil then
+      value := priv.ValueAt(i)
+    else
+      value := mapping.Values[key];
 
     if i > 0 then
       FStringBuilder.Append(', ');
@@ -907,6 +932,7 @@ end;
 
 function TYAMLWriterImpl.WriteNestedMappingFlow(const mapping : IYAMLMapping) : string;
 var
+  priv : IYAMLMappingPrivate;
   i : integer;
   key : string;
   value : IYAMLValue;
@@ -917,10 +943,17 @@ begin
   try
     sb.Append('{');
 
+  if not Supports(mapping, IYAMLMappingPrivate, priv) then
+
+    priv := nil;
+
   for i := 0 to mapping.Count - 1 do
   begin
     key := mapping.Keys[i];
-    value := mapping.Values[key];
+    if priv <> nil then
+      value := priv.ValueAt(i)
+    else
+      value := mapping.Values[key];
 
     if i > 0 then
       sb.Append(', ');
@@ -1131,6 +1164,7 @@ end;
 
 procedure TYAMLWriterImpl.WriteSequenceMapping(mapping : IYAMLMapping);
 var
+  priv : IYAMLMappingPrivate;
   i : integer;
   key : string;
   value : IYAMLValue;
@@ -1147,10 +1181,15 @@ begin
   end;
 
   firstKey := True;
+  if not Supports(mapping, IYAMLMappingPrivate, priv) then
+    priv := nil;
   for i := 0 to mapping.Count - 1 do
   begin
     key := mapping.Keys[i];
-    value := mapping.Values[key];
+    if priv <> nil then
+      value := priv.ValueAt(i)
+    else
+      value := mapping.Values[key];
 
     key := FormatKey(key);
 

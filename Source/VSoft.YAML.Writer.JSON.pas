@@ -110,6 +110,7 @@ end;
 function TJSONWriterImpl.FormatScalar(const value : IYAMLValue) : string;
 var
   floatValue : Double;
+  floatText : string;
 begin
   FStringBuilder.Reset;
   case value.ValueType of
@@ -126,12 +127,17 @@ begin
       FStringBuilder.Append(IntToStr(value.AsInteger));
     TYAMLValueType.vtFloat :
     begin
-      // RFC 8259 has no representation for NaN/Infinity; emit JSON null instead.
-      floatValue := value.AsFloat;
-      if IsNan(floatValue) or IsInfinite(floatValue) then
-        FStringBuilder.Append('null')
+      if YAMLCanonicalFloatText(value.RawValue, floatText) then
+        FStringBuilder.Append(floatText)
       else
-        FStringBuilder.Append(FloatToStr(floatValue, YAMLFormatSettings));
+      begin
+        // RFC 8259 has no representation for NaN/Infinity; emit JSON null instead.
+        floatValue := value.AsFloat;
+        if IsNan(floatValue) or IsInfinite(floatValue) then
+          FStringBuilder.Append('null')
+        else
+          FStringBuilder.Append(FloatToStr(floatValue, YAMLFormatSettings));
+      end;
     end;
     TYAMLValueType.vtString :
     begin
@@ -179,6 +185,7 @@ end;
 
 procedure TJSONWriterImpl.WriteMapping(const mapping : IYAMLMapping);
 var
+  priv : IYAMLMappingPrivate;
   i : integer;
   key : string;
   value : IYAMLValue;
@@ -191,6 +198,8 @@ begin
   if count > 0 then
   begin
     IncIndent;
+    if not Supports(mapping, IYAMLMappingPrivate, priv) then
+      priv := nil;
     for i := 0 to count - 1 do
     begin
       if not IsFirstItem(i) then
@@ -200,7 +209,10 @@ begin
       WriteNewlineAndIndent;
 
       key := mapping.Keys[i];
-      value := mapping.Values[key];
+      if priv <> nil then
+        value := priv.ValueAt(i)
+      else
+        value := mapping.Values[key];
 
       FStringBuilder.Append('"');
       TYAMLCharUtils.EscapeStringForJSON(key, FStringBuilder);

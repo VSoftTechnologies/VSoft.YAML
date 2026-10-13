@@ -208,13 +208,22 @@ type
   ['{F14352DD-0C83-4BDE-988B-C007D0FE93AC}']
     procedure AddOrSetValue(const key : string; const value : IYAMLValue);
     procedure MergeMapping(const ASourceMapping : IYAMLMapping);
+    // value by insertion index, so iterating Keys[i] needs no per-key lookup
+    function ValueAt(index : integer) : IYAMLValue;
   end;
 
   TYAMLMapping = class(TYAMLCollection, IYAMLMapping, IYAMLCollection, IYAMLValue, IYAMLValuePrivate, IYAMLMappingPrivate)
   private
-    FPairs : TDictionary<string, IYAMLValue>;
-    FKeys : TList<string>;  // To maintain order
+    // Insertion-ordered parallel arrays. Most mappings are small, so lookups are a
+    // linear scan; FIndex (key -> slot) is only built once a mapping grows past
+    // cIndexThreshold keys.
+    FKeys : TArray<string>;
+    FValues : TArray<IYAMLValue>;
+    FCount : integer;
+    FIndex : TDictionary<string, integer>;
+    function IndexOfKey(const key : string) : integer;
   protected
+    function ValueAt(index : integer) : IYAMLValue;
     function GetCount : integer;override;
     function GetNodes(Index : integer) : IYAMLValue;override;
 
@@ -454,6 +463,14 @@ const
 /// </summary>
 function YAMLFloatToStr(const value : Double) : string;
 
+/// <summary>
+///  Fast path for re-emitting a float's raw text. Returns true when raw is a plain
+///  decimal ([-]digits.digits, no exponent, at most 15 significant digits) and sets
+///  text to exactly what FloatToStr(StrToFloat(raw, YAMLFormatSettings), YAMLFormatSettings)
+///  would produce, without either conversion. Returns false for anything else.
+/// </summary>
+function YAMLCanonicalFloatText(const raw : string; out text : string) : boolean;
+
 implementation
 
 uses
@@ -462,6 +479,63 @@ uses
   VSoft.YAML.Utils,
   VSoft.YAML.Writer,
   VSoft.YAML.Path;
+
+function YAMLCanonicalFloatText(const raw : string; out text : string) : boolean;
+var
+  len, i, intStart, intLen, fracStart, fracLen, fracZeros, sigDigits : integer;
+begin
+  result := false;
+  len := Length(raw);
+  i := 1;
+  if (len > 0) and (raw[1] = '-') then
+    Inc(i);
+  intStart := i;
+  while (i <= len) and (raw[i] >= '0') and (raw[i] <= '9') do
+    Inc(i);
+  intLen := i - intStart;
+  // need digits, no leading zero, then a '.'
+  if (intLen = 0) or ((intLen > 1) and (raw[intStart] = '0')) or (i > len) or (raw[i] <> '.') then
+    exit;
+  Inc(i);
+  fracStart := i;
+  while (i <= len) and (raw[i] >= '0') and (raw[i] <= '9') do
+    Inc(i);
+  if (i <= len) or (i = fracStart) then // exponent / trailing junk, or no fraction digits
+    exit;
+  fracLen := i - fracStart;
+  while (fracLen > 0) and (raw[fracStart + fracLen - 1] = '0') do
+    Dec(fracLen);
+
+  if (intLen = 1) and (raw[intStart] = '0') then
+  begin
+    if fracLen = 0 then
+    begin
+      if intStart > 1 then // -0.0 : leave signed zero to the RTL
+        exit;
+      text := '0';
+      exit(true);
+    end;
+    fracZeros := 0;
+    while raw[fracStart + fracZeros] = '0' do
+      Inc(fracZeros);
+    // FloatToStr switches to exponent form for small magnitudes
+    if fracZeros > 2 then
+      exit;
+    sigDigits := fracLen - fracZeros;
+  end
+  else
+    sigDigits := intLen + fracLen;
+  if sigDigits > 15 then
+    exit;
+
+  if fracLen = 0 then
+    text := Copy(raw, 1, fracStart - 2)
+  else if fracStart + fracLen - 1 = len then
+    text := raw
+  else
+    text := Copy(raw, 1, fracStart + fracLen - 1);
+  result := true;
+end;
 
 function YAMLFloatToStr(const value : Double) : string;
 begin
@@ -591,9 +665,18 @@ end;
 function TYAMLValue.AsFloat : Double;
 var
   trimmedValue : string;
+  len : integer;
 begin
   if not IsFloat then
     raise Exception.Create('Value is not a float');
+
+  // Common case: an ordinary number with no surrounding whitespace. The special
+  // values below all start with '.', '+' or '-.', so they never take this path.
+  len := Length(FRawValue);
+  if (len > 0) and (FRawValue[len] > ' ') and
+     (CharInSet(FRawValue[1], ['0'..'9']) or
+      ((len > 1) and (FRawValue[1] = '-') and CharInSet(FRawValue[2], ['0'..'9']))) then
+    exit(StrToFloat(FRawValue, YAMLFormatSettings));
 
   trimmedValue := Trim(FRawValue);
 
@@ -1156,7 +1239,6 @@ begin
   vt := GetNodeValueType;
   inherited Create(parent, vt, '', tag);
   FItems := TList<IYAMLValue>.Create;
-  FItems.Capacity := 64;
 end;
 
 procedure TYAMLSequence.Clear;
@@ -1486,15 +1568,54 @@ begin
   AddOrSetValue(key, result);
 end;
 
+const
+  cIndexThreshold = 8;
+
+function TYAMLMapping.IndexOfKey(const key : string) : integer;
+begin
+  if FIndex <> nil then
+  begin
+    if not FIndex.TryGetValue(key, result) then
+      result := -1;
+    exit;
+  end;
+  for result := 0 to FCount - 1 do
+    if FKeys[result] = key then
+      exit;
+  result := -1;
+end;
+
 procedure TYAMLMapping.AddOrSetValue(const key : string; const value : IYAMLValue);
 var
-  oldCount: Integer;
+  idx : integer;
+  i : integer;
 begin
-  // Use count comparison to detect new key - avoids double lookup
-  oldCount := FPairs.Count;
-  FPairs.AddOrSetValue(key, value);
-  if FPairs.Count > oldCount then
-    FKeys.Add(key);
+  idx := IndexOfKey(key);
+  if idx >= 0 then
+  begin
+    FValues[idx] := value;
+    exit;
+  end;
+  if FCount = Length(FKeys) then
+  begin
+    if FCount = 0 then
+      idx := 4
+    else
+      idx := FCount * 2;
+    SetLength(FKeys, idx);
+    SetLength(FValues, idx);
+  end;
+  FKeys[FCount] := key;
+  FValues[FCount] := value;
+  if FIndex <> nil then
+    FIndex.Add(key, FCount)
+  else if FCount >= cIndexThreshold then
+  begin
+    FIndex := TDictionary<string, integer>.Create(FCount * 2);
+    for i := 0 to FCount do
+      FIndex.Add(FKeys[i], i);
+  end;
+  Inc(FCount);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : boolean) : IYAMLValue;
@@ -1663,9 +1784,15 @@ begin
 end;
 
 procedure TYAMLMapping.Clear;
+var
+  i : integer;
 begin
-  FKeys.Clear;
-  FPairs.Clear;
+  for i := 0 to FCount - 1 do
+    (FValues[i] as IYAMLValuePrivate).ClearParent;
+  FKeys := nil;
+  FValues := nil;
+  FCount := 0;
+  FreeAndNil(FIndex);
   if FComments <> nil then
     FComments.Clear;
   FComment := '';
@@ -1673,40 +1800,32 @@ end;
 
 function TYAMLMapping.Contains(const key: string): boolean;
 begin
-  result := FPairs.ContainsKey(key);
+  result := IndexOfKey(key) >= 0;
 end;
 
 function TYAMLMapping.ContainsKey(const key : string) : boolean;
 begin
-  result := FPairs.ContainsKey(key);
+  result := IndexOfKey(key) >= 0;
 end;
 
 constructor TYAMLMapping.Create(const parent : IYAMLValue; const tag : string);
 begin
   inherited Create(parent, TYAMLValueType.vtMapping, '', tag);
-  FPairs := TDictionary<string, IYAMLValue>.Create(64);
-  FKeys := TList<string>.Create;
-  FKeys.Capacity := 64;
 end;
 
 constructor TYAMLMapping.Create(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo);
 begin
   inherited Create(parent, TYAMLValueType.vtMapping, '', tagInfo);
-  FPairs := TDictionary<string, IYAMLValue>.Create(64);
-  FKeys := TList<string>.Create;
-  FKeys.Capacity := 64;
 end;
 
 
 destructor TYAMLMapping.Destroy;
 var
-  item : IYAMLValue;
+  i : integer;
 begin
-  for item in FPairs.Values do
-    (item as IYAMLValuePrivate).ClearParent;
-
-  FKeys.Free;
-  FPairs.Free;
+  for i := 0 to FCount - 1 do
+    (FValues[i] as IYAMLValuePrivate).ClearParent;
+  FIndex.Free;
   inherited Destroy;
 end;
 
@@ -1721,12 +1840,21 @@ end;
 
 function TYAMLMapping.GetCount : integer;
 begin
-  result := FPairs.Count;
+  result := FCount;
 end;
 
 function TYAMLMapping.GetKey(Index : integer) : string;
 begin
+  if (Index < 0) or (Index >= FCount) then
+    raise EArgumentOutOfRangeException.Create('Index out of range');
   result := FKeys[index]
+end;
+
+function TYAMLMapping.ValueAt(index : integer) : IYAMLValue;
+begin
+  if (index < 0) or (index >= FCount) then
+    raise EArgumentOutOfRangeException.Create('Index out of range');
+  result := FValues[index];
 end;
 
 function TYAMLMapping.GetNodes(Index : integer) : IYAMLValue;
@@ -1829,8 +1957,13 @@ begin
 end;
 
 function TYAMLMapping.GetValue(const key : string) : IYAMLValue;
+var
+  idx : integer;
 begin
-  if not FPairs.TryGetValue(key, result) then
+  idx := IndexOfKey(key);
+  if idx >= 0 then
+    result := FValues[idx]
+  else
     result := TYAMLValue.Create(Self, TYAMLValueType.vtNull,'');
 end;
 
@@ -1928,9 +2061,14 @@ begin
 end;
 
 function TYAMLMapping.TryGetValue(const key : string; out value : IYAMLValue) : boolean;
+var
+  idx : integer;
 begin
-  result := FPairs.TryGetValue(key, value);
-  if not result then
+  idx := IndexOfKey(key);
+  result := idx >= 0;
+  if result then
+    value := FValues[idx]
+  else
     value := TYAMLValue.CreateNull;
 end;
 

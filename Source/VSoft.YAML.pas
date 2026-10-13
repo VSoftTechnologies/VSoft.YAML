@@ -746,7 +746,8 @@ begin
   else
     lOptions := parserOptions;
 
-  reader := TInputReaderFactory.CreateFromStream(stream);
+  // decode up front: the lexer runs fastest over a string reader
+  reader := TInputReaderFactory.CreateFromString(TInputReaderFactory.ReadStreamText(stream));
 
   //lexer owns the reader
   lexer := TYAMLLexer.Create(reader, lOptions);
@@ -824,7 +825,8 @@ begin
   else
     lOptions := parserOptions;
 
-  reader := TInputReaderFactory.CreateFromStream(stream);
+  // decode up front: the lexer runs fastest over a string reader
+  reader := TInputReaderFactory.CreateFromString(TInputReaderFactory.ReadStreamText(stream));
 
   lexer := TYAMLLexer.Create(reader, lOptions);
   try

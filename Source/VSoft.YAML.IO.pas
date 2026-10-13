@@ -63,18 +63,13 @@ type
     class function CreateFromStream(const stream: TStream) : IInputReader; overload;static;
     class function CreateFromFile(const fileName: string) : IInputReader; overload;static;
 
+    /// <summary> Decodes the rest of a stream to a string, detecting a BOM and
+    ///  defaulting to UTF-8 (the same rules the stream reader applies). </summary>
+    class function ReadStreamText(const stream : TStream) : string;static;
   end;
 
-
-implementation
-
-uses
-  System.RTLConsts;
-
-{$I 'VSoft.YAML.inc'}
-
-
-type
+  // Declared in the interface so the lexer can hold it by class type: calls through
+  // IInputReader are virtual and cannot inline, and the lexer makes several per char.
   TStringInputReader = class(TInterfacedObject,IInputReader)
   private
     FInput : string;
@@ -88,23 +83,56 @@ type
     FSavedLine : integer;
     FSavedColumn : integer;
     FSavedIsAtEnd : boolean;
-  protected
+  public
+    constructor Create(const theString : string);
     function GetPosition : integer;inline;
     function GetLine : integer;inline;
     function GetColumn : integer;inline;
     function GetCurrent : Char;inline;
     function GetPreviousChar : Char;inline;
     function IsAtEnd : boolean;inline;
-    function Read : Char;overload;
+    function Read : Char;overload;inline;
     function Read(n : integer) : Char;overload;
     function Peek : Char;overload;inline;
-    function Peek(n : integer) : Char;overload;
+    function Peek(n : integer) : Char;overload;inline;
     procedure Save;
     procedure Restore;
     procedure DiscardSave;
-  public
-    constructor Create(const theString : string);
+
+    /// <summary> Advances over a run of characters that need no special handling
+    ///  inside a double-quoted scalar (anything except '"', '\' and C0 controls,
+    ///  which includes line breaks). Returns the run length; start is its 1-based
+    ///  index into Text. </summary>
+    function ScanDoubleQuotedRun(out start : integer) : integer;
+
+    /// <summary> Advances over a run of characters that can never end a plain
+    ///  scalar: anything except line breaks, '#', ':', ',' and the flow brackets.
+    ///  Returns the run length; start is its 1-based index into Text. </summary>
+    function ScanPlainScalarRun(out start : integer) : integer;
+
+    /// <summary> Advances to the next #10/#13 (or the end) and returns the
+    ///  rest of the current line. </summary>
+    function ReadToLineEnd : string;
+
+    property Text : string read FInput;
+    property Position : integer read GetPosition;
+    property Line     : integer read GetLine;
+    property Column   : integer read GetColumn;
+    property Current : Char read GetCurrent;
+    property Previous : Char read GetPreviousChar;
+    property IsEOF : boolean read IsAtEnd;
   end;
+
+
+implementation
+
+uses
+  System.RTLConsts;
+
+{$I 'VSoft.YAML.inc'}
+
+
+type
 
   TStreamInputReader = class(TInterfacedObject, IInputReader)
   private type
@@ -210,6 +238,33 @@ end;
 class function TInputReaderFactory.CreateFromString(const value: string): IInputReader;
 begin
   result := TStringInputReader.Create(value);
+end;
+
+class function TInputReaderFactory.ReadStreamText(const stream : TStream) : string;
+var
+  bytes : TBytes;
+  chunk, total : integer;
+  encoding : TEncoding;
+  bomLength : integer;
+begin
+  if not Assigned(stream) then
+    raise EArgumentException.CreateResFmt(@SParamIsNil, ['Stream']); // DO NOT LOCALIZE
+  // read in chunks rather than trusting Size, which not every stream supports
+  total := 0;
+  SetLength(bytes, 65536);
+  repeat
+    if total = Length(bytes) then
+      SetLength(bytes, total * 2);
+    chunk := stream.Read(bytes[total], Length(bytes) - total);
+    Inc(total, chunk);
+  until chunk <= 0;
+  SetLength(bytes, total);
+
+  encoding := nil;
+  bomLength := TEncoding.GetBufferEncoding(bytes, encoding, nil);
+  if encoding = nil then
+    encoding := TEncoding.UTF8;
+  result := encoding.GetString(bytes, bomLength, total - bomLength);
 end;
 
 { TStringInputReader }
@@ -336,6 +391,75 @@ begin
   end
   else
     raise Exception.Create('No saved position');
+end;
+
+function TStringInputReader.ScanDoubleQuotedRun(out start : integer) : integer;
+var
+  p : integer;
+  ch : Char;
+begin
+  start := FPosition;
+  if FIsAtEnd then
+    exit(0);
+  p := FPosition;
+  while p <= FLength do
+  begin
+    ch := FInput[p];
+    if (ch = '"') or (ch = '\') or (ch < ' ') then
+      break;
+    Inc(p);
+  end;
+  result := p - start;
+  if result > 0 then
+  begin
+    // no line breaks in the run, so only the column moves
+    Inc(FColumn, result);
+    FPosition := p;
+    FIsAtEnd := FPosition > FLength;
+  end;
+end;
+
+function TStringInputReader.ScanPlainScalarRun(out start : integer) : integer;
+var
+  p : integer;
+begin
+  start := FPosition;
+  if FIsAtEnd then
+    exit(0);
+  p := FPosition;
+  while p <= FLength do
+  begin
+    case FInput[p] of
+      #10, #13, '#', ':', ',', '[', ']', '{', '}' : break;
+    end;
+    Inc(p);
+  end;
+  result := p - start;
+  if result > 0 then
+  begin
+    Inc(FColumn, result);
+    FPosition := p;
+    FIsAtEnd := FPosition > FLength;
+  end;
+end;
+
+function TStringInputReader.ReadToLineEnd : string;
+var
+  p, count : integer;
+begin
+  if FIsAtEnd then
+    exit('');
+  p := FPosition;
+  while (p <= FLength) and (FInput[p] <> #10) and (FInput[p] <> #13) do
+    Inc(p);
+  count := p - FPosition;
+  result := Copy(FInput, FPosition, count);
+  if count > 0 then
+  begin
+    Inc(FColumn, count);
+    FPosition := p;
+    FIsAtEnd := FPosition > FLength;
+  end;
 end;
 
 procedure TStringInputReader.Save;

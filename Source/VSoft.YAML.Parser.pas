@@ -135,7 +135,7 @@ end;
 procedure TYAMLParser.NextToken;
 begin
   FLastTokenLine := FLexer.Line;
-  FCurrentToken := FLexer.NextToken;
+  FLexer.ReadToken(FCurrentToken);
 end;
 
 procedure TYAMLParser.ExpectToken(tokenKind : TYAMLTokenKind);
@@ -759,7 +759,7 @@ begin
               NextToken;
             if (FCurrentToken.TokenKind = TYAMLTokenKind.Value) and
                (FCurrentToken.IndentLevel > scalarIndent) and
-               (FLexer.PeekToken.TokenKind <> TYAMLTokenKind.Colon) then
+               (FLexer.PeekTokenKind <> TYAMLTokenKind.Colon) then
             begin
               if blankLines > 1 then
                 value := value + StringOfChar(#10, blankLines - 1)
@@ -877,7 +877,7 @@ begin
     // In JSON mode, check for invalid mapping syntax inside arrays
     if FJSONMode then
     begin
-      if (FCurrentToken.TokenKind in [TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString]) and (FLexer.PeekToken.TokenKind = TYAMLTokenKind.Colon) then
+      if (FCurrentToken.TokenKind in [TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString]) and (FLexer.PeekTokenKind = TYAMLTokenKind.Colon) then
       begin
         RaiseParseError('Invalid syntax: object key-value pairs are not allowed in JSON arrays');
       end;
@@ -936,10 +936,14 @@ end;
 
 function TYAMLParser.ParseFlowMapping(const parent : IYAMLValue; const tag : string) : IYAMLMapping;
 var
+  mappingObj : TYAMLMapping;
+  mappingPriv : IYAMLMappingPrivate; // obtained once; a per-key 'as' cast is a QueryInterface
   key : string;
   value : IYAMLValue;
 begin
-  result := TYAMLMapping.Create(parent, tag);
+  mappingObj := TYAMLMapping.Create(parent, tag);
+  result := mappingObj;
+  mappingPriv := mappingObj;
   AssignPendingCommentsToCollection(result);
   ExpectToken(TYAMLTokenKind.LBrace); // '{'
 
@@ -988,7 +992,7 @@ begin
         RaiseParseError('Expected ":" in JSON object');
       value := TYAMLValue.Create(result, TYAMLValueType.vtNull, '', '');
     end;
-    (result as IYAMLMappingPrivate).AddOrSetValue(key, value);
+    mappingPriv.AddOrSetValue(key, value);
 
     SkipNewlines;
 
@@ -1081,6 +1085,8 @@ end;
 
 function TYAMLParser.ParseMapping(const parent : IYAMLValue; const tag : string; const firstKey : string = '') : IYAMLMapping;
 var
+  mappingObj : TYAMLMapping;
+  mappingPriv : IYAMLMappingPrivate; // obtained once; a per-key 'as' cast is a QueryInterface
   key : string;
   value : IYAMLValue;
   expectedIndent : integer;
@@ -1091,7 +1097,9 @@ begin
   if FJSONMode then
     RaiseParseError('Block-style mapping is not valid in JSON; use flow-style "{...}" objects');
 
-  result := TYAMLMapping.Create(parent, tag);
+  mappingObj := TYAMLMapping.Create(parent, tag);
+  result := mappingObj;
+  mappingPriv := mappingObj;
   AssignPendingCommentsToCollection(result);
   expectedIndent := FCurrentToken.IndentLevel;
 
@@ -1134,7 +1142,7 @@ begin
           // This is clearly an empty value
           value := TYAMLValue.Create(result, TYAMLValueType.vtNull, '', '');
         end
-        else if ((FCurrentToken.TokenKind in [TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString]) and (FLexer.PeekToken.TokenKind = TYAMLTokenKind.Colon) and (FCurrentToken.IndentLevel <= keyIndentLevel)) then
+        else if ((FCurrentToken.TokenKind in [TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString]) and (FLexer.PeekTokenKind = TYAMLTokenKind.Colon) and (FCurrentToken.IndentLevel <= keyIndentLevel)) then
         begin
           // This is clearly an empty value
           value := TYAMLValue.Create(result, TYAMLValueType.vtNull, '', '');
@@ -1163,12 +1171,12 @@ begin
         // Merge the aliased mapping into current mapping
         if value.IsMapping then
         begin
-          (result as IYAMLMappingPrivate).MergeMapping(value.AsMapping);
+          mappingPriv.MergeMapping(value.AsMapping);
         end;
         // Don't store the merge key itself
       end
       else
-        (result as IYAMLMappingPrivate).AddOrSetValue(key, value);
+        mappingPriv.AddOrSetValue(key, value);
 
       SkipNewlines;
 
@@ -1182,7 +1190,7 @@ begin
       if ((FCurrentToken.TokenKind = TYAMLTokenKind.Value) or (FCurrentToken.TokenKind = TYAMLTokenKind.QuotedString)) then
       begin
         // Check if this is a key (followed by colon)
-        if (FLexer.PeekToken.TokenKind = TYAMLTokenKind.Colon) then
+        if (FLexer.PeekTokenKind = TYAMLTokenKind.Colon) then
         begin
           // This is a key - check indentation to see if it belongs to this mapping
           if (FCurrentToken.IndentLevel >= expectedIndent) then
@@ -1250,7 +1258,7 @@ begin
     TYAMLTokenKind.QuotedString :
       begin
       // Check if this is the start of a mapping (key followed by colon)
-        if (FLexer.PeekToken.TokenKind = TYAMLTokenKind.Colon) then
+        if (FLexer.PeekTokenKind = TYAMLTokenKind.Colon) then
         begin
           // This is a mapping key
           result := ParseMapping(parent, tag);
