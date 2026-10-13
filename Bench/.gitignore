@@ -1,0 +1,6 @@
+*.exe
+*.res
+dcu/
+dcu32/
+# generated data (GenBig)
+big*/
