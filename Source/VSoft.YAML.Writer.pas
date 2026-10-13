@@ -17,15 +17,13 @@ type
   private
     FIndentLevel : UInt32;
     FCurrentIndent : string;
+    FIndentStrings : TArray<string>; // indent text per level, see UpdateIndentCache
     FOptions : IYAMLEmitOptions;
-    FWriter : TYAMLWriter;
-    FStringBuilder : TStringBuilder;
-    // FormatKey/FormatScalar quote into this, never into FStringBuilder, which may hold
-    // the line being built (it used to, corrupting flow-style output with quoted keys)
+    FOut : TYAMLOutputBuffer;
+    // scratch for FormatKey/FormatScalar quoting; lines are written straight to FOut
     FQuoteBuilder : TStringBuilder;
 
     // Helper methods for formatting
-    function GetIndent : string;
     procedure UpdateIndentCache;
     function NeedsQuoting(const value : string) : boolean;
     function ShouldUseDoubleQuotes(const value : string) : boolean;
@@ -60,7 +58,6 @@ type
 
     // Utility methods
     function ShouldUseFlowStyle(const value : IYAMLValue) : boolean;
-    procedure AddLine(const ALine : string);inline;
     procedure IncIndent;inline;
     procedure DecIndent;inline;
     procedure WriteCollectionComments(const collection : IYAMLCollection);
@@ -102,27 +99,24 @@ begin
   FOptions := options.Clone;
   FIndentLevel := 0;
   FCurrentIndent := '';
-  FWriter := nil;
-  FStringBuilder := TStringBuilder.Create(16384);  // Increased capacity for large documents
+  FOut := nil;
   FQuoteBuilder := TStringBuilder.Create(256);
 end;
 
 destructor TYAMLWriterImpl.Destroy;
 begin
-  //do not free FWriter here we do not own it.
-  FStringBuilder.Free;
   FQuoteBuilder.Free;
   inherited Destroy;
 end;
 
-function TYAMLWriterImpl.GetIndent : string;
-begin
-  result := FCurrentIndent;
-end;
-
 procedure TYAMLWriterImpl.UpdateIndentCache;
 begin
-  FCurrentIndent := TYAMLCharUtils.SpaceStr(FIndentLevel * FOptions.IndentSize);
+  // one indent string per level, built once
+  if Integer(FIndentLevel) >= Length(FIndentStrings) then
+    SetLength(FIndentStrings, FIndentLevel + 8);
+  if (FIndentLevel > 0) and (FIndentStrings[FIndentLevel] = '') then
+    FIndentStrings[FIndentLevel] := TYAMLCharUtils.SpaceStr(FIndentLevel * FOptions.IndentSize);
+  FCurrentIndent := FIndentStrings[FIndentLevel];
 end;
 
 function TYAMLWriterImpl.NeedsQuoting(const value : string) : boolean;
@@ -145,12 +139,14 @@ begin
   if (value[1] = ' ') or (value[1] = #9) or (value[len] = ' ') or (value[len] = #9) then
     exit(True);
 
-  // Check for special YAML values that need quoting
-  if (value = 'true') or (value = 'false') or
-     (value = 'null') or (value = '~') or
-     (value = 'yes') or (value = 'no') or
-     (value = 'on') or (value = 'off') then
-    exit(True);
+  // Check for special YAML values that need quoting (only compare when the length fits)
+  case len of
+    1 : if value = '~' then exit(True);
+    2 : if (value = 'no') or (value = 'on') then exit(True);
+    3 : if (value = 'yes') or (value = 'off') then exit(True);
+    4 : if (value = 'true') or (value = 'null') then exit(True);
+    5 : if value = 'false' then exit(True);
+  end;
 
   // Check if it looks like a number. The RTL parsers are slow, so only call them when
   // the first character could start something they accept: digits, sign, '.', the
@@ -177,6 +173,9 @@ begin
   {$HIGHCHARUNICODE ON}
   for i := 1 to len do
   begin
+    // fast skip of ordinary printable ASCII (everything the case below ignores)
+    if (value[i] >= ' ') and (value[i] < #127) and not CharInSet(value[i], [':', '#', ',', '[', ']', '{', '}']) then
+      continue;
     case value[i] of
       ':':
         // ': ' (colon + space) or a trailing colon would terminate the plain scalar / start a map
@@ -203,11 +202,21 @@ end;
 
 procedure TYAMLWriterImpl.EscapeString(const value: string; sb: TStringBuilder);
 var
-  i : integer;
+  i, runStart : integer;
 begin
+  // Characters that need no escape are appended in runs rather than one at a time.
+  runStart := 1;
   {$HIGHCHARUNICODE ON}
   for i := 1 to Length(value) do
   begin
+    case value[i] of
+      #0, #7..#13, #27, '"', '\', #$85, #$A0, #$2028, #$2029 : ;
+    else
+      continue;
+    end;
+    if i > runStart then
+      sb.Append(value, runStart - 1, i - runStart);
+    runStart := i + 1;
     case value[i] of
       #0: sb.Append('\0');     // Null character
       #7: sb.Append('\a');     // Bell character
@@ -225,11 +234,11 @@ begin
       #$A0: sb.Append('\_');   // Non-breaking space
       #$2028: sb.Append('\L'); // Line separator
       #$2029: sb.Append('\P'); // Paragraph separator
-      else
-        sb.Append(value[i]);
     end;
   end;
  {$HIGHCHARUNICODE OFF}
+  if Length(value) >= runStart then
+    sb.Append(value, runStart - 1, Length(value) - runStart + 1);
 end;
 
 function TYAMLWriterImpl.ShouldUseDoubleQuotes(const value : string) : boolean;
@@ -263,15 +272,21 @@ end;
 
 procedure TYAMLWriterImpl.EscapeForSingleQuotes(const value: string; sb: TStringBuilder);
 var
-  i : integer;
+  i, runStart : integer;
 begin
+  // Every character is literal except the single quote, which is doubled. Appending
+  // through each quote (inclusive) and starting the next run at it doubles it.
+  runStart := 1;
   for i := 1 to Length(value) do
   begin
     if value[i] = '''' then
-      sb.Append('''''') // Double the single quote
-    else
-      sb.Append(value[i]); // All other characters are literal
+    begin
+      sb.Append(value, runStart - 1, i - runStart + 1);
+      runStart := i; // the quote is emitted again at the start of the next run
+    end;
   end;
+  if Length(value) >= runStart then
+    sb.Append(value, runStart - 1, Length(value) - runStart + 1);
 end;
 
 
@@ -321,25 +336,24 @@ begin
         result := YAMLFloatToStr(value.AsFloat);
     TYAMLValueType.vtString :
     begin
-      if NeedsQuoting(value.AsString) then
+      result := value.AsString; // fetched once; each AsString call is an interface call + string copy
+      if NeedsQuoting(result) then
       begin
         FQuoteBuilder.Reset;
-        if ShouldUseDoubleQuotes(value.AsString) then
+        if ShouldUseDoubleQuotes(result) then
         begin
           FQuoteBuilder.Append('"');
-          EscapeString(value.AsString, FQuoteBuilder);
+          EscapeString(result, FQuoteBuilder);
           FQuoteBuilder.Append('"');
         end
         else
         begin
           FQuoteBuilder.Append('''');
-          EscapeForSingleQuotes(value.AsString, FQuoteBuilder);
+          EscapeForSingleQuotes(result, FQuoteBuilder);
           FQuoteBuilder.Append('''');
         end;
         result := FQuoteBuilder.ToString;
-      end
-      else
-        result := value.AsString;
+      end;
     end;
   else
     result := value.AsString;
@@ -426,14 +440,13 @@ begin
     indicator := '|';
 
   // Write the key and block indicator with chomping
-  FStringBuilder.Reset;
-  FStringBuilder.Append(GetIndent);
-  FStringBuilder.Append(key);
-  FStringBuilder.Append(': ');
-  FStringBuilder.Append(tag);
-  FStringBuilder.Append(indicator);
-  FStringBuilder.Append(GetChompingIndicator);
-  AddLine(FStringBuilder.ToString);
+  FOut.Write(FCurrentIndent);
+  FOut.Write(key);
+  FOut.Write(': ');
+  FOut.Write(tag);
+  FOut.Write(indicator);
+  FOut.Write(GetChompingIndicator);
+  FOut.WriteNewLine;
 
   // Split the value into lines and write each with proper indentation
   lines := TStringList.Create;
@@ -445,10 +458,9 @@ begin
     for i := 0 to lines.Count - 1 do
     begin
       lineContent := lines[i];
-      FStringBuilder.Reset;
-      FStringBuilder.Append(GetIndent);
-      FStringBuilder.Append(lineContent);
-      AddLine(FStringBuilder.ToString);
+      FOut.Write(FCurrentIndent);
+      FOut.Write(lineContent);
+      FOut.WriteNewLine;
     end;
     DecIndent;
   finally
@@ -470,12 +482,11 @@ begin
     indicator := '|';
 
   // Write the dash and block indicator with chomping
-  FStringBuilder.Reset;
-  FStringBuilder.Append(GetIndent);
-  FStringBuilder.Append('- ');
-  FStringBuilder.Append(indicator);
-  FStringBuilder.Append(GetChompingIndicator);
-  AddLine(FStringBuilder.ToString);
+  FOut.Write(FCurrentIndent);
+  FOut.Write('- ');
+  FOut.Write(indicator);
+  FOut.Write(GetChompingIndicator);
+  FOut.WriteNewLine;
 
   // Split the value into lines and write each with proper indentation
   lines := TStringList.Create;
@@ -487,10 +498,9 @@ begin
     for i := 0 to lines.Count - 1 do
     begin
       lineContent := lines[i];
-      FStringBuilder.Reset;
-      FStringBuilder.Append(GetIndent);
-      FStringBuilder.Append(lineContent);
-      AddLine(FStringBuilder.ToString);
+      FOut.Write(FCurrentIndent);
+      FOut.Write(lineContent);
+      FOut.WriteNewLine;
     end;
     DecIndent;
   finally
@@ -512,14 +522,13 @@ begin
     indicator := '|';
 
   // Write the prefix (e.g., '- ' or '  '), key and block indicator with chomping
-  FStringBuilder.Reset;
-  FStringBuilder.Append(GetIndent);
-  FStringBuilder.Append(prefix);
-  FStringBuilder.Append(key);
-  FStringBuilder.Append(': ');
-  FStringBuilder.Append(indicator);
-  FStringBuilder.Append(GetChompingIndicator);
-  AddLine(FStringBuilder.ToString);
+  FOut.Write(FCurrentIndent);
+  FOut.Write(prefix);
+  FOut.Write(key);
+  FOut.Write(': ');
+  FOut.Write(indicator);
+  FOut.Write(GetChompingIndicator);
+  FOut.WriteNewLine;
 
   // Split the value into lines and write each with proper indentation
   lines := TStringList.Create;
@@ -533,10 +542,9 @@ begin
     for i := 0 to lines.Count - 1 do
     begin
       lineContent := lines[i];
-      FStringBuilder.Reset;
-      FStringBuilder.Append(GetIndent);
-      FStringBuilder.Append(lineContent);
-      AddLine(FStringBuilder.ToString);
+      FOut.Write(FCurrentIndent);
+      FOut.Write(lineContent);
+      FOut.WriteNewLine;
     end;
     if prefix = '  ' then
       DecIndent;
@@ -607,12 +615,6 @@ begin
   end;
 end;
 
-procedure TYAMLWriterImpl.AddLine(const ALine : string);
-begin
-  Assert(FWriter <> nil);
-  FWriter.WriteLine(ALine);
-end;
-
 procedure TYAMLWriterImpl.IncIndent;
 begin
   Inc(FIndentLevel);
@@ -633,11 +635,10 @@ begin
   begin
     for index := 0 to collection.Comments.Count - 1 do
     begin
-      FStringBuilder.Reset;
       WriteIndent;
-      FStringBuilder.Append('# ');
-      FStringBuilder.Append(collection.Comments[index]);
-      AddLine(FStringBuilder.ToString);
+      FOut.Write('# ');
+      FOut.Write(collection.Comments[index]);
+      FOut.WriteNewLine;
     end;
   end;
 end;
@@ -645,7 +646,7 @@ end;
 procedure TYAMLWriterImpl.WriteIndent;
 begin
   // Use cached indent string instead of recalculating each time
-  FStringBuilder.Append(FCurrentIndent);
+  FOut.Write(FCurrentIndent);
 end;
 
 procedure TYAMLWriterImpl.WriteValue(const value : IYAMLValue);
@@ -672,10 +673,9 @@ begin
 
   if mapping.Count = 0 then
   begin
-    FStringBuilder.Reset;
     WriteIndent;
-    FStringBuilder.Append('{}');
-    AddLine(FStringBuilder.ToString);
+    FOut.Write('{}');
+    FOut.WriteNewLine;
     Exit;
   end;
 
@@ -715,12 +715,11 @@ begin
           WriteSequenceFlow(value.AsSequence, key + ': ')
         else
         begin
-          FStringBuilder.Reset;
           WriteIndent;
-          FStringBuilder.Append(key);
-          FStringBuilder.Append(':');
-          FStringBuilder.Append(tag);
-          AddLine(FStringBuilder.ToString);
+          FOut.Write(key);
+          FOut.Write(':');
+          FOut.Write(tag);
+          FOut.WriteNewLine;
           IncIndent;
           WriteValue(value);
           DecIndent;
@@ -732,12 +731,11 @@ begin
           WriteSequenceFlow(value.AsSet, key + ': ')
         else
         begin
-          FStringBuilder.Reset;
           WriteIndent;
-          FStringBuilder.Append(key);
-          FStringBuilder.Append(':');
-          FStringBuilder.Append(tag);
-          AddLine(FStringBuilder.ToString);
+          FOut.Write(key);
+          FOut.Write(':');
+          FOut.Write(tag);
+          FOut.WriteNewLine;
           IncIndent;
           WriteValue(value);
           DecIndent;
@@ -749,12 +747,11 @@ begin
           WriteMappingFlow(value.AsMapping, key + ': ')
         else
         begin
-          FStringBuilder.Reset;
           WriteIndent;
-          FStringBuilder.Append(key);
-          FStringBuilder.Append(':');
-          FStringBuilder.Append(tag);
-          AddLine(FStringBuilder.ToString);
+          FOut.Write(key);
+          FOut.Write(':');
+          FOut.Write(tag);
+          FOut.WriteNewLine;
           IncIndent;
           WriteValue(value);
           DecIndent;
@@ -771,18 +768,17 @@ begin
         else
         begin
           valueStr := FormatScalar(value);
-          FStringBuilder.Reset;
-          FStringBuilder.Append(GetIndent);
-          FStringBuilder.Append(key);
-          FStringBuilder.Append(': ');
-          FStringBuilder.Append(tag);
-          FStringBuilder.Append(valueStr);
+          FOut.Write(FCurrentIndent);
+          FOut.Write(key);
+          FOut.Write(': ');
+          FOut.Write(tag);
+          FOut.Write(valueStr);
           if value.Comment <> '' then
           begin
-            FStringBuilder.Append(' # ');
-            FStringBuilder.Append(value.Comment);
+            FOut.Write(' # ');
+            FOut.Write(value.Comment);
           end;
-          AddLine(FStringBuilder.ToString);
+          FOut.WriteNewLine;
         end;
       end;
     end;
@@ -799,10 +795,9 @@ begin
 
   if sequence.Count = 0 then
   begin
-    FStringBuilder.Reset;
     WriteIndent;
-    FStringBuilder.Append('[]');
-    AddLine(FStringBuilder.ToString);
+    FOut.Write('[]');
+    FOut.WriteNewLine;
     Exit;
   end;
 
@@ -820,10 +815,9 @@ begin
       TYAMLValueType.vtSequence,
       TYAMLValueType.vtSet :
       begin
-        FStringBuilder.Reset;
         WriteIndent;
-        FStringBuilder.Append('-');
-        AddLine(FStringBuilder.ToString);
+        FOut.Write('-');
+        FOut.WriteNewLine;
         IncIndent;
         WriteValue(item);
         DecIndent;
@@ -839,16 +833,15 @@ begin
         else
         begin
           itemStr := FormatScalar(item);
-          FStringBuilder.Reset;
-          FStringBuilder.Append(GetIndent);
-          FStringBuilder.Append('- ');
-          FStringBuilder.Append(itemStr);
+          FOut.Write(FCurrentIndent);
+          FOut.Write('- ');
+          FOut.Write(itemStr);
           if item.Comment <> '' then
           begin
-            FStringBuilder.Append(' # ');
-            FStringBuilder.Append(item.Comment);
+            FOut.Write(' # ');
+            FOut.Write(item.Comment);
           end;
-          AddLine(FStringBuilder.ToString);
+          FOut.WriteNewLine;
         end;
       end;
     end;
@@ -860,15 +853,14 @@ var
   formattedValue : string;
 begin
   formattedValue := FormatScalar(value);
-  FStringBuilder.Reset;
   WriteIndent;
-  FStringBuilder.Append(formattedValue);
+  FOut.Write(formattedValue);
   if value.Comment <> '' then
   begin
-    FStringBuilder.Append(' # ');
-    FStringBuilder.Append(value.Comment);
+    FOut.Write(' # ');
+    FOut.Write(value.Comment);
   end;
-  AddLine(FStringBuilder.ToString);
+  FOut.WriteNewLine;
 end;
 
 procedure TYAMLWriterImpl.WriteMappingFlow(const mapping : IYAMLMapping; const mapKey : string);
@@ -878,11 +870,10 @@ var
   key : string;
   value : IYAMLValue;
   valueStr : string;
-  flowStr : string;
 begin
-  FStringBuilder.Reset;
-  FStringBuilder.Append(mapKey);
-  FStringBuilder.Append('{');
+  FOut.Write(FCurrentIndent);
+  FOut.Write(mapKey);
+  FOut.WriteChar('{');
 
   if not Supports(mapping, IYAMLMappingPrivate, priv) then
 
@@ -897,7 +888,7 @@ begin
       value := mapping.Values[key];
 
     if i > 0 then
-      FStringBuilder.Append(', ');
+      FOut.Write(', ');
 
     key := FormatKey(key);
 
@@ -921,22 +912,18 @@ begin
       valueStr := FormatScalar(value);
     end;
 
-    FStringBuilder.Append(key);
-    FStringBuilder.Append(': ');
-    FStringBuilder.Append(valueStr);
+    FOut.Write(key);
+    FOut.Write(': ');
+    FOut.Write(valueStr);
   end;
 
-  FStringBuilder.Append('}');
-  flowStr := FStringBuilder.ToString;
-  FStringBuilder.Reset;
-  FStringBuilder.Append(GetIndent);
-  FStringBuilder.Append(flowStr);
+  FOut.Write('}');
   if mapping.Comment <> '' then
   begin
-    FStringBuilder.Append(' # ');
-    FStringBuilder.Append(mapping.Comment);
+    FOut.Write(' # ');
+    FOut.Write(mapping.Comment);
   end;
-  AddLine(FStringBuilder.ToString);
+  FOut.WriteNewLine;
 end;
 
 function TYAMLWriterImpl.WriteNestedMappingFlow(const mapping : IYAMLMapping) : string;
@@ -1122,18 +1109,17 @@ var
   i : integer;
   item : IYAMLValue;
   itemStr : string;
-  flowStr : string;
 begin
-  FStringBuilder.Reset;
-  FStringBuilder.Append(key);
-  FStringBuilder.Append('[');
+  FOut.Write(FCurrentIndent);
+  FOut.Write(key);
+  FOut.WriteChar('[');
 
   for i := 0 to sequence.Count - 1 do
   begin
     item := sequence[i];
 
     if i > 0 then
-      FStringBuilder.Append(', ');
+      FOut.Write(', ');
 
     // Handle nested structures properly in flow style
     case item.ValueType of
@@ -1155,20 +1141,16 @@ begin
       itemStr := FormatScalar(item);
     end;
 
-    FStringBuilder.Append(itemStr);
+    FOut.Write(itemStr);
   end;
 
-  FStringBuilder.Append(']');
-  flowStr := FStringBuilder.ToString;
-  FStringBuilder.Reset;
-  FStringBuilder.Append(GetIndent);
-  FStringBuilder.Append(flowStr);
+  FOut.Write(']');
   if sequence.Comment <> '' then
   begin
-    FStringBuilder.Append(' # ');
-    FStringBuilder.Append(sequence.Comment);
+    FOut.Write(' # ');
+    FOut.Write(sequence.Comment);
   end;
-  AddLine(FStringBuilder.ToString);
+  FOut.WriteNewLine;
 end;
 
 procedure TYAMLWriterImpl.WriteSequenceMapping(mapping : IYAMLMapping);
@@ -1182,10 +1164,9 @@ var
 begin
   if mapping.Count = 0 then
   begin
-    FStringBuilder.Reset;
     WriteIndent;
-    FStringBuilder.Append('- {}');
-    AddLine(FStringBuilder.ToString);
+    FOut.Write('- {}');
+    FOut.WriteNewLine;
     Exit;
   end;
 
@@ -1211,27 +1192,25 @@ begin
           if ShouldUseFlowStyle(value) then
           begin
             valueStr := WriteNestedSequenceFlow(value.AsSequence);
-            FStringBuilder.Reset;
-            FStringBuilder.Append(GetIndent);
-            FStringBuilder.Append('- ');
-            FStringBuilder.Append(key);
-            FStringBuilder.Append(': ');
-            FStringBuilder.Append(valueStr);
+            FOut.Write(FCurrentIndent);
+            FOut.Write('- ');
+            FOut.Write(key);
+            FOut.Write(': ');
+            FOut.Write(valueStr);
             if value.Comment <> '' then
             begin
-              FStringBuilder.Append(' # ');
-              FStringBuilder.Append(value.Comment);
+              FOut.Write(' # ');
+              FOut.Write(value.Comment);
             end;
-            AddLine(FStringBuilder.ToString);
+            FOut.WriteNewLine;
           end
           else
           begin
-            FStringBuilder.Reset;
             WriteIndent;
-            FStringBuilder.Append('- ');
-            FStringBuilder.Append(key);
-            FStringBuilder.Append(':');
-            AddLine(FStringBuilder.ToString);
+            FOut.Write('- ');
+            FOut.Write(key);
+            FOut.Write(':');
+            FOut.WriteNewLine;
             IncIndent;
             WriteValue(value);
             DecIndent;
@@ -1239,12 +1218,11 @@ begin
         end;
         TYAMLValueType.vtMapping :
         begin
-          FStringBuilder.Reset;
           WriteIndent;
-          FStringBuilder.Append('- ');
-          FStringBuilder.Append(key);
-          FStringBuilder.Append(':');
-          AddLine(FStringBuilder.ToString);
+          FOut.Write('- ');
+          FOut.Write(key);
+          FOut.Write(':');
+          FOut.WriteNewLine;
           IncIndent;
           WriteValue(value);
           DecIndent;
@@ -1259,18 +1237,17 @@ begin
           else
           begin
             valueStr := FormatScalar(value);
-            FStringBuilder.Reset;
-            FStringBuilder.Append(GetIndent);
-            FStringBuilder.Append('- ');
-            FStringBuilder.Append(key);
-            FStringBuilder.Append(': ');
-            FStringBuilder.Append(valueStr);
+            FOut.Write(FCurrentIndent);
+            FOut.Write('- ');
+            FOut.Write(key);
+            FOut.Write(': ');
+            FOut.Write(valueStr);
             if value.Comment <> '' then
             begin
-              FStringBuilder.Append(' # ');
-              FStringBuilder.Append(value.Comment);
+              FOut.Write(' # ');
+              FOut.Write(value.Comment);
             end;
-            AddLine(FStringBuilder.ToString);
+            FOut.WriteNewLine;
           end;
         end;
       end;
@@ -1286,27 +1263,25 @@ begin
           if ShouldUseFlowStyle(value) then
           begin
             valueStr := WriteNestedSequenceFlow(value.AsSequence);
-            FStringBuilder.Reset;
-            FStringBuilder.Append(GetIndent);
-            FStringBuilder.Append('  ');
-            FStringBuilder.Append(key);
-            FStringBuilder.Append(': ');
-            FStringBuilder.Append(valueStr);
+            FOut.Write(FCurrentIndent);
+            FOut.Write('  ');
+            FOut.Write(key);
+            FOut.Write(': ');
+            FOut.Write(valueStr);
             if value.Comment <> '' then
             begin
-              FStringBuilder.Append(' # ');
-              FStringBuilder.Append(value.Comment);
+              FOut.Write(' # ');
+              FOut.Write(value.Comment);
             end;
-            AddLine(FStringBuilder.ToString);
+            FOut.WriteNewLine;
           end
           else
           begin
-            FStringBuilder.Reset;
             WriteIndent;
-            FStringBuilder.Append('  ');
-            FStringBuilder.Append(key);
-            FStringBuilder.Append(':');
-            AddLine(FStringBuilder.ToString);
+            FOut.Write('  ');
+            FOut.Write(key);
+            FOut.Write(':');
+            FOut.WriteNewLine;
             IncIndent;
             IncIndent; // Extra indent for sequence context
             WriteValue(value);
@@ -1316,12 +1291,11 @@ begin
         end;
         TYAMLValueType.vtMapping :
         begin
-          FStringBuilder.Reset;
           WriteIndent;
-          FStringBuilder.Append('  ');
-          FStringBuilder.Append(key);
-          FStringBuilder.Append(':');
-          AddLine(FStringBuilder.ToString);
+          FOut.Write('  ');
+          FOut.Write(key);
+          FOut.Write(':');
+          FOut.WriteNewLine;
           IncIndent;
           IncIndent; // Extra indent for sequence context
           WriteValue(value);
@@ -1338,18 +1312,17 @@ begin
           else
           begin
             valueStr := FormatScalar(value);
-            FStringBuilder.Reset;
-            FStringBuilder.Append(GetIndent);
-            FStringBuilder.Append('  ');
-            FStringBuilder.Append(key);
-            FStringBuilder.Append(': ');
-            FStringBuilder.Append(valueStr);
+            FOut.Write(FCurrentIndent);
+            FOut.Write('  ');
+            FOut.Write(key);
+            FOut.Write(': ');
+            FOut.Write(valueStr);
             if value.Comment <> '' then
             begin
-              FStringBuilder.Append(' # ');
-              FStringBuilder.Append(value.Comment);
+              FOut.Write(' # ');
+              FOut.Write(value.Comment);
             end;
-            AddLine(FStringBuilder.ToString);
+            FOut.WriteNewLine;
           end;
         end;
       end;
@@ -1368,10 +1341,9 @@ begin
 
   if ASet.Count = 0 then
   begin
-    FStringBuilder.Reset;
     WriteIndent;
-    FStringBuilder.Append('[]');
-    AddLine(FStringBuilder.ToString);
+    FOut.Write('[]');
+    FOut.WriteNewLine;
     Exit;
   end;
 
@@ -1389,20 +1361,18 @@ begin
     case item.ValueType of
       TYAMLValueType.vtSequence :
       begin
-        FStringBuilder.Reset;
         WriteIndent;
-        FStringBuilder.Append('?');
-        AddLine(FStringBuilder.ToString);
+        FOut.Write('?');
+        FOut.WriteNewLine;
         IncIndent;
         WriteValue(item);
         DecIndent;
       end;
       TYAMLValueType.vtSet :
       begin
-        FStringBuilder.Reset;
         WriteIndent;
-        FStringBuilder.Append('?');
-        AddLine(FStringBuilder.ToString);
+        FOut.Write('?');
+        FOut.WriteNewLine;
         IncIndent;
         WriteValue(item);
         DecIndent;
@@ -1411,16 +1381,15 @@ begin
     else
       begin
         itemStr := FormatScalar(item);
-        FStringBuilder.Reset;
-        FStringBuilder.Append(GetIndent);
-        FStringBuilder.Append('? ');
-        FStringBuilder.Append(itemStr);
+        FOut.Write(FCurrentIndent);
+        FOut.Write('? ');
+        FOut.Write(itemStr);
         if item.Comment <> '' then
         begin
-          FStringBuilder.Append(' # ');
-          FStringBuilder.Append(item.Comment);
+          FOut.Write(' # ');
+          FOut.Write(item.Comment);
         end;
-        AddLine(FStringBuilder.ToString);
+        FOut.WriteNewLine;
       end;
     end;
   end;
@@ -1429,16 +1398,16 @@ end;
 function TYAMLWriterImpl.WriteToString(const value : IYAMLValue) : string;
 begin
   //force utf16 to avoid round trip encoding conversions
-  FWriter := TYAMLStringWriter.Create;
+  FOut := TYAMLOutputBuffer.CreateForString;
   try
     if FOptions.EmitDocumentMarkers then
-      FWriter.WriteLine('---');
+      FOut.WriteLine('---');
     WriteValue(value);
     if FOptions.EmitDocumentMarkers then
-      FWriter.WriteLine('...');
-    result := FWriter.ToString;
+      FOut.WriteLine('...');
+    result := FOut.ExtractString;
   finally
-    FreeAndNil(FWriter);
+    FreeAndNil(FOut);
   end;
 end;
 
@@ -1448,10 +1417,10 @@ var
 begin
   //force utf16 to avoid round trip encoding conversions
   FOptions.Encoding := TEncoding.Unicode;
-  FWriter := TYAMLStringWriter.Create;
+  FOut := TYAMLOutputBuffer.CreateForString;
   try
     if FOptions.EmitYAMLDirective then
-      FWriter.WriteLine('%YAML ' + doc.Version.ToString);
+      FOut.WriteLine('%YAML ' + doc.Version.ToString);
 
     if FOptions.EmitTagDirectives then
     begin
@@ -1459,20 +1428,20 @@ begin
       if doc.TagDirectives.Count > 2 then
       begin
         for i := 2 to doc.TagDirectives.Count -1 do
-          FWriter.WriteLine('%TAG ' + doc.TagDirectives[i].ToString);
+          FOut.WriteLine('%TAG ' + doc.TagDirectives[i].ToString);
       end;
     end;
 
     if FOptions.EmitDocumentMarkers or FOptions.EmitTagDirectives or FOptions.EmitYAMLDirective then
-      FWriter.WriteLine('---');
+      FOut.WriteLine('---');
 
     WriteValue(doc.Root);
     if FOptions.EmitDocumentMarkers then
-      FWriter.WriteLine('...') ;
+      FOut.WriteLine('...') ;
 
-    result := FWriter.ToString;
+    result := FOut.ExtractString;
   finally
-    FreeAndNil(FWriter);
+    FreeAndNil(FOut);
   end;
 end;
 
@@ -1506,20 +1475,20 @@ var
 begin
   ownsWriter := false;
   //if called from WriteToStreem(doc) then the writer will already exist
-  if FWriter = nil then
+  if FOut = nil then
   begin
-    FWriter := TYAMLStreamWriter.Create(stream, FOptions.WriteByteOrderMark, FOptions.Encoding);
+    FOut := TYAMLOutputBuffer.CreateForStream(stream, FOptions.Encoding, FOptions.WriteByteOrderMark);
     ownsWriter := true;
   end;
   try
     if ownsWriter and FOptions.EmitDocumentMarkers then
-      FWriter.WriteLine('---');
+      FOut.WriteLine('---');
     WriteValue(value);
     if ownsWriter and FOptions.EmitDocumentMarkers then
-      FWriter.WriteLine('...');
+      FOut.WriteLine('...');
   finally
     if ownsWriter then
-      FreeAndNil(FWriter);
+      FreeAndNil(FOut);
   end;
 end;
 
@@ -1527,10 +1496,10 @@ procedure TYAMLWriterImpl.WriteToStream(const doc : IYAMLDocument; const stream 
 var
   i : integer;
 begin
-  FWriter := TYAMLStreamWriter.Create(stream, FOptions.WriteByteOrderMark, FOptions.Encoding);
+  FOut := TYAMLOutputBuffer.CreateForStream(stream, FOptions.Encoding, FOptions.WriteByteOrderMark);
   try
     if FOptions.EmitYAMLDirective then
-      FWriter.WriteLine('%YAML ' + doc.Version.ToString);
+      FOut.WriteLine('%YAML ' + doc.Version.ToString);
 
     if FOptions.EmitTagDirectives then
     begin
@@ -1538,19 +1507,19 @@ begin
       if doc.TagDirectives.Count > 2 then
       begin
         for i := 2 to doc.TagDirectives.Count -1 do
-          FWriter.WriteLine('%TAG ' + doc.TagDirectives[i].ToString);
+          FOut.WriteLine('%TAG ' + doc.TagDirectives[i].ToString);
       end;
     end;
 
     if FOptions.EmitDocumentMarkers or FOptions.EmitTagDirectives or FOptions.EmitYAMLDirective then
-      FWriter.WriteLine('---');
+      FOut.WriteLine('---');
 
     WriteToStream(doc.Root,stream);
 
     if FOptions.EmitDocumentMarkers then
-      FWriter.WriteLine('...') ;
+      FOut.WriteLine('...') ;
   finally
-    FreeAndNil(FWriter);
+    FreeAndNil(FOut);
   end;
 
 end;

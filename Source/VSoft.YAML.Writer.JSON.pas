@@ -17,15 +17,11 @@ type
   private
     FOptions : IYAMLEmitOptions;
     FPrettyPrint : boolean;
-    FWriter : TYAMLWriter;
+    FOut : TYAMLOutputBuffer;
     FIndentLevel : UInt32;
-    FStringBuilder : TStringBuilder;
 
-    // Helper methods for formatting
-    function FormatScalar(const value : IYAMLValue) : string;
-
-    // Direct writing helpers
-    procedure WriteIndent;inline;
+    // Writes value as a JSON string literal (quotes included)
+    procedure WriteQuoted(const value : string);
     procedure WriteNewlineAndIndent;inline;
 
     // Core writing methods
@@ -34,13 +30,6 @@ type
     procedure WriteSequence(const sequence : IYAMLSequence);
     procedure WriteSet(const aSet : IYAMLSet);
     procedure WriteScalar(const value : IYAMLValue);
-
-    // Utility methods
-    procedure WriteString(const str : string);inline;
-    function IsFirstItem(const index : integer) : boolean;inline;
-    procedure IncIndent;inline;
-    procedure DecIndent;inline;
-
 
   public
     constructor Create(const options : IYAMLEmitOptions);
@@ -72,104 +61,111 @@ begin
   // cloning options as we may need to modify them depending on methods called
   FOptions := options.Clone;
   FPrettyPrint := FOptions.PrettyPrint;
-  FWriter := nil;
+  FOut := nil;
   FIndentLevel := 0;
-  FStringBuilder := TStringBuilder.Create(8192);  // Increased capacity for large documents
 end;
 
 destructor TJSONWriterImpl.Destroy;
 begin
-  //do not free FWriter here we do not own it.
-  FStringBuilder.Free;
+  FOut.Free;
   inherited Destroy;
-end;
-procedure TJSONWriterImpl.IncIndent;
-begin
-  Inc(FIndentLevel);
-end;
-
-procedure TJSONWriterImpl.DecIndent;
-begin
-  Dec(FIndentLevel);
-end;
-
-procedure TJSONWriterImpl.WriteIndent;
-begin
-  FWriter.Write(TYAMLCharUtils.SpaceStr(FIndentLevel * FOptions.IndentSize));
 end;
 
 procedure TJSONWriterImpl.WriteNewlineAndIndent;
 begin
   if FPrettyPrint then
   begin
-    FWriter.Write(sLineBreak);
-    WriteIndent;
+    FOut.WriteNewLine;
+    FOut.WriteSpaces(FIndentLevel * FOptions.IndentSize);
   end;
 end;
 
-function TJSONWriterImpl.FormatScalar(const value : IYAMLValue) : string;
+// Same escaping as TYAMLCharUtils.EscapeStringForJSON: '"', '\' and control characters
+// are escaped, as is every surrogate (a valid pair as two \uXXXX escapes). Runs of
+// characters that need nothing are copied in one go.
+procedure TJSONWriterImpl.WriteQuoted(const value : string);
+var
+  p : PChar;
+  len, i, runStart : integer;
+  ch : Char;
+begin
+  FOut.WriteChar('"');
+  p := PChar(Pointer(value));
+  len := Length(value);
+  i := 0;
+  runStart := 0;
+  while i < len do
+  begin
+    ch := p[i];
+    if (ch >= ' ') and (ch <> '"') and (ch <> '\') and ((Ord(ch) < $D800) or (Ord(ch) > $DFFF)) then
+    begin
+      Inc(i);
+      continue;
+    end;
+    if i > runStart then
+      FOut.Write(@p[runStart], i - runStart);
+    case ch of
+      '"': FOut.Write('\"');
+      '\': FOut.Write('\\');
+      #8: FOut.Write('\b');
+      #12: FOut.Write('\f');
+      #10: FOut.Write('\n');
+      #13: FOut.Write('\r');
+      #9: FOut.Write('\t');
+    else
+      // other control characters and surrogates (paired or not) - a valid pair simply
+      // comes out as two consecutive escapes, one per code unit
+      FOut.Write('\u');
+      FOut.Write(IntToHex(Ord(ch), 4));
+    end;
+    Inc(i);
+    runStart := i;
+  end;
+  if len > runStart then
+    FOut.Write(@p[runStart], len - runStart);
+  FOut.WriteChar('"');
+end;
+
+procedure TJSONWriterImpl.WriteScalar(const value : IYAMLValue);
 var
   floatValue : Double;
   floatText : string;
 begin
-  FStringBuilder.Reset;
   case value.ValueType of
     TYAMLValueType.vtNull :
-      FStringBuilder.Append('null');
+      FOut.Write('null');
     TYAMLValueType.vtBoolean :
     begin
       if value.AsBoolean then
-        FStringBuilder.Append('true')
+        FOut.Write('true')
       else
-        FStringBuilder.Append('false');
+        FOut.Write('false');
     end;
     TYAMLValueType.vtInteger :
-      FStringBuilder.Append(IntToStr(value.AsInteger));
+      FOut.Write(IntToStr(value.AsInteger));
     TYAMLValueType.vtFloat :
     begin
       if YAMLCanonicalFloatText(value.RawValue, floatText) then
-        FStringBuilder.Append(floatText)
+        FOut.Write(floatText)
       else
       begin
         // RFC 8259 has no representation for NaN/Infinity; emit JSON null instead.
         floatValue := value.AsFloat;
         if IsNan(floatValue) or IsInfinite(floatValue) then
-          FStringBuilder.Append('null')
+          FOut.Write('null')
         else
-          FStringBuilder.Append(FloatToStr(floatValue, YAMLFormatSettings));
+          FOut.Write(FloatToStr(floatValue, YAMLFormatSettings));
       end;
-    end;
-    TYAMLValueType.vtString :
-    begin
-      FStringBuilder.Append('"');
-      TYAMLCharUtils.EscapeStringForJSON(value.AsString, FStringBuilder);
-      FStringBuilder.Append('"');
     end;
     TYAMLValueType.vtTimestamp :
     begin
-      FStringBuilder.Append('"');
-      FStringBuilder.Append(value.AsString);
-      FStringBuilder.Append('"');
+      FOut.WriteChar('"');
+      FOut.Write(value.AsString);
+      FOut.WriteChar('"');
     end;
-    else
-    begin
-      FStringBuilder.Append('"');
-      TYAMLCharUtils.EscapeStringForJSON(value.AsString, FStringBuilder);
-      FStringBuilder.Append('"');
-    end;
+  else
+    WriteQuoted(value.AsString);
   end;
-  result := FStringBuilder.ToString;
-end;
-
-procedure TJSONWriterImpl.WriteString(const str : string);
-begin
-//  Assert(FWriter <> nil);
-  FWriter.Write(str);
-end;
-
-function TJSONWriterImpl.IsFirstItem(const index : integer) : boolean;
-begin
-  result := index = 0;
 end;
 
 procedure TJSONWriterImpl.WriteValue(const value : IYAMLValue);
@@ -191,21 +187,19 @@ var
   value : IYAMLValue;
   count : integer;
 begin
-  WriteString('{');
+  FOut.WriteChar('{');
 
   count := mapping.Count;
 
   if count > 0 then
   begin
-    IncIndent;
+    Inc(FIndentLevel);
     if not Supports(mapping, IYAMLMappingPrivate, priv) then
       priv := nil;
     for i := 0 to count - 1 do
     begin
-      if not IsFirstItem(i) then
-        WriteString(',');
-
-      FStringBuilder.Reset;
+      if i > 0 then
+        FOut.WriteChar(',');
       WriteNewlineAndIndent;
 
       key := mapping.Keys[i];
@@ -214,101 +208,59 @@ begin
       else
         value := mapping.Values[key];
 
-      FStringBuilder.Append('"');
-      TYAMLCharUtils.EscapeStringForJSON(key, FStringBuilder);
-      FStringBuilder.Append('":');
+      WriteQuoted(key);
+      FOut.WriteChar(':');
       if FPrettyPrint then
-        FStringBuilder.Append(' ');
+        FOut.WriteChar(' ');
 
-      WriteString(FStringBuilder.ToString);
       WriteValue(value);
     end;
-    DecIndent;
-    FStringBuilder.Reset;
+    Dec(FIndentLevel);
     WriteNewlineAndIndent;
-    WriteString(FStringBuilder.ToString);
   end;
 
-  WriteString('}');
+  FOut.WriteChar('}');
 end;
 
 procedure TJSONWriterImpl.WriteSequence(const sequence : IYAMLSequence);
 var
   i : integer;
-  item : IYAMLValue;
   count : integer;
 begin
-  WriteString('[');
+  FOut.WriteChar('[');
 
   count := sequence.Count;
   if count > 0 then
   begin
-    IncIndent;
+    Inc(FIndentLevel);
     for i := 0 to count - 1 do
     begin
-      if not IsFirstItem(i) then
-        WriteString(',');
-
-      FStringBuilder.Reset;
+      if i > 0 then
+        FOut.WriteChar(',');
       WriteNewlineAndIndent;
-      WriteString(FStringBuilder.ToString);
-
-      item := sequence[i];
-      WriteValue(item);
+      WriteValue(sequence[i]);
     end;
-    DecIndent;
-    FStringBuilder.Reset;
+    Dec(FIndentLevel);
     WriteNewlineAndIndent;
-    WriteString(FStringBuilder.ToString);
   end;
-  WriteString(']');
+  FOut.WriteChar(']');
 end;
 
 procedure TJSONWriterImpl.WriteSet(const aSet : IYAMLSet);
-var
-  i : integer;
-  item : IYAMLValue;
 begin
   // JSON doesn't have sets, so write as array
-  WriteString('[');
-
-  if aSet.Count > 0 then
-  begin
-    IncIndent;
-    for i := 0 to aSet.Count - 1 do
-    begin
-      if not IsFirstItem(i) then
-        WriteString(',');
-
-      FStringBuilder.Reset;
-      WriteNewlineAndIndent;
-      WriteString(FStringBuilder.ToString);
-
-      item := aSet[i];
-      WriteValue(item);
-    end;
-    DecIndent;
-    FStringBuilder.Reset;
-    WriteNewlineAndIndent;
-    WriteString(FStringBuilder.ToString);
-  end;
-
-  WriteString(']');
-end;
-
-procedure TJSONWriterImpl.WriteScalar(const value : IYAMLValue);
-begin
-  WriteString(FormatScalar(value));
+  WriteSequence(aSet);
 end;
 
 function TJSONWriterImpl.WriteToString(const value : IYAMLValue) : string;
 begin
-  FWriter := TYAMLStringWriter.Create;
+  FreeAndNil(FOut);
+  FOut := TYAMLOutputBuffer.CreateForString;
   try
     WriteValue(value);
-    result := FWriter.ToString;
+    result := FOut.ExtractString;
   finally
-    FreeAndNil(FWriter);
+    FreeAndNil(FOut);
   end;
 end;
 
@@ -325,7 +277,6 @@ begin
   try
     WriteToStream(value, fileStream);
   finally
-    FWriter.Free;
     fileStream.Free;
   end;
 end;
@@ -336,21 +287,14 @@ begin
 end;
 
 procedure TJSONWriterImpl.WriteToStream(const value : IYAMLValue; const stream : TStream);
-var
-  ownsWriter : boolean;
 begin
-  ownsWriter := false;
-  //if called from WriteToStream(doc) then the writer will already exist
-  if FWriter = nil then
-  begin
-    FWriter := TYAMLStreamWriter.Create(stream, FOptions.WriteByteOrderMark, FOptions.Encoding);
-    ownsWriter := true;
-  end;
+  FreeAndNil(FOut);
+  FOut := TYAMLOutputBuffer.CreateForStream(stream, FOptions.Encoding, FOptions.WriteByteOrderMark);
   try
     WriteValue(value);
+    FOut.Flush;
   finally
-    if ownsWriter then
-      FreeAndNil(FWriter);
+    FreeAndNil(FOut);
   end;
 end;
 
