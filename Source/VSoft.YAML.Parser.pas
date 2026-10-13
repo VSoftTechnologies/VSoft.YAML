@@ -62,6 +62,7 @@ type
     function IsScalarValueYAML(const trimmedValue : string; len : Integer) : TYAMLValueType;
     function FastIsNumber(const value : string; out isFloat : Boolean) : Boolean;
     procedure SkipNewlines;
+    procedure CheckDocumentEnd;
     procedure RegisterAnchor(const anchorName : string; const value : IYAMLValue);
     function ResolveAlias(const aliasName : string) : IYAMLValue;
     
@@ -151,6 +152,32 @@ begin
     NextToken;
 end;
 
+
+// After a document's root value only blank lines and comments may follow before the
+// end of input or the next document marker. Anything else is content the nested
+// parsers stopped at because it did not fit (typically a mis-indented line, such as a
+// "- item" under a mapping); without this check it was silently dropped.
+procedure TYAMLParser.CheckDocumentEnd;
+begin
+  while FCurrentToken.TokenKind in [TYAMLTokenKind.NewLine, TYAMLTokenKind.Indent, TYAMLTokenKind.Comment] do
+  begin
+    if FCurrentToken.TokenKind = TYAMLTokenKind.Comment then
+      ProcessComment
+    else
+      NextToken;
+  end;
+  // A directive may also start the next document (without the '...' that YAML 1.2
+  // strictly requires) - ParseAll has long accepted that, so keep it.
+  if not (FCurrentToken.TokenKind in [TYAMLTokenKind.EOF, TYAMLTokenKind.DocStart, TYAMLTokenKind.DocEnd,
+                                      TYAMLTokenKind.Directive]) then
+  begin
+    if FCurrentToken.TokenKind = TYAMLTokenKind.SequenceItem then
+      RaiseParseError('Unexpected sequence item "-" - it does not belong to the preceding collection (check its indentation)')
+    else
+      RaiseParseError('Unexpected content after the end of the document value (%s "%s") - check its indentation',
+        [GetEnumName(TypeInfo(TYAMLTokenKind), Ord(FCurrentToken.TokenKind)), FCurrentToken.Value]);
+  end;
+end;
 
 procedure TYAMLParser.SkipNewlines;
 begin
@@ -1451,6 +1478,8 @@ begin
         
         // Parse document content
         root := ParseValue(nil);
+        if not FJSONMode then
+          CheckDocumentEnd;
         doc := TYAMLDocument.Create(root, FYAMLVersion, FTagDirectives);
         documents.Add(doc);
         Inc(documentCount);
@@ -1605,7 +1634,11 @@ begin
     if FCurrentToken.TokenKind = TYAMLTokenKind.EOF then
       root := TYAMLValue.Create(nil, TYAMLValueType.vtNull, '', '')
     else
+    begin
       root := ParseDocument;
+      if not FJSONMode then
+        CheckDocumentEnd;
+    end;
 
     // RFC 8259 §2: a JSON text contains exactly one top-level value.
     // Reject any non-trivial trailing content.
