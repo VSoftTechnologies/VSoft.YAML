@@ -47,6 +47,9 @@ type
     Line : integer;
     Column : integer;
     IndentLevel : integer;
+    // vtInteger / vtFloat when the lexer already validated Value as a plain decimal
+    // number (so the parser need not classify it again); vtNull otherwise.
+    NumberType : TYAMLValueType;
   end;
 
   // YAML Lexer class
@@ -72,6 +75,7 @@ type
     // Peek token cache for performance
     FPeekedToken: TYAMLToken;
     FHasPeekedToken: Boolean;
+    FNumberType : TYAMLValueType; // set by ReadNumber's fast path for the token being read
 
     // Stack management methods
     procedure PushIndentLevel(level: Integer);
@@ -92,6 +96,8 @@ type
     function ReadSingleQuotedString : string;
     function ReadUnquotedString(reset : boolean = true) : string;
     function ReadNumber : string;
+    function TryReadPlainNumber(out value : string) : boolean;
+    function IsNumberTerminator(cur, nextCh : Char; atEnd : boolean) : boolean;
     function ReadAnchorOrAlias : string;
     function ReadTag : TTag;
     procedure ReadTagInto(var token : TYAMLToken);
@@ -707,68 +713,125 @@ begin
   result := FStringBuilder.ToString;
 end;
 
+// True when the character immediately following a numeric run (cur, then nextCh) is a
+// value terminator (end of input, white space, line break, flow indicator, or a ':'
+// acting as the mapping value indicator). When False the token is not a number at all
+// but a plain scalar that merely begins with digits - e.g. '10$compilerCodeName$' - and
+// so must be read whole. This mirrors the terminator rules in ReadUnquotedString.DoCheck.
+function TYAMLLexer.IsNumberTerminator(cur, nextCh : Char; atEnd : boolean) : boolean;
+begin
+  if atEnd then
+    exit(True);
+  if TCharClassHelper.IsWhiteSpace(cur) or (cur = #10) or (cur = #13) then
+    exit(True);
+  // Flow collection indicators end a value (these terminate a plain scalar in
+  // both block and flow context - see cValueSet in ReadUnquotedString).
+  if CharInSet(cur, ['[', ']', '{', '}']) then
+    exit(True);
+  // A comma only terminates inside a flow collection; in block context it is
+  // ordinary scalar content (e.g. 'a: 10, more' is the string '10, more').
+  if (cur = ',') and (FFlowDepth > 0) then
+    exit(True);
+  // ':' is the mapping value indicator (and so terminates the number) only
+  // when followed by white space / line break / end of input - or, inside a
+  // flow collection, a flow indicator. In value context it is ordinary
+  // scalar content (e.g. a time '1:30'), so the token is then a plain scalar.
+  if cur = ':' then
+  begin
+    if FFlowDepth > 0 then
+      result := TCharClassHelper.IsWhiteSpace(nextCh) or CharInSet(nextCh, [#0, #10, #13, ',', '[', ']', '{', '}'])
+    else if not FInValueContext then
+      result := TCharClassHelper.IsWhiteSpace(nextCh) or CharInSet(nextCh, [#0, #10, #13])
+    else
+      result := False;
+    exit;
+  end;
+  // Anything else ('$', '%', '-', a letter, ...) is plain-scalar content.
+  result := False;
+end;
+
+// Fast path for the common case: an optionally negative decimal with optional fraction
+// and exponent ([-]digits[.digits][(e|E)[+|-]digits]), no '_' separators and no leading
+// zero before another digit or a radix prefix, followed by a terminator. It is checked in
+// place and copied out in one go. Anything else returns False with the reader untouched,
+// and ReadNumber's general path handles it (including every error case), so results are
+// unchanged. The grammar is exactly what TYAMLParser.FastIsNumber accepts, so the
+// recorded type matches what the parser would have worked out.
+function TYAMLLexer.TryReadPlainNumber(out value : string) : boolean;
+var
+  txt : PChar;
+  len, start, i : integer;
+  isFloat : boolean;
+  cur, nextCh : Char;
+begin
+  result := False;
+  if IsAtEnd then
+    exit;
+  txt := PChar(FReader.Text); // 0-based
+  len := Length(FReader.Text);
+  start := FReader.Position - 1;
+  i := start;
+  if txt[i] = '-' then
+    Inc(i);
+  if (i >= len) or not TCharClassHelper.IsDigit(txt[i]) then
+    exit;
+  if (txt[i] = '0') and (i + 1 < len) and
+     CharInSet(txt[i + 1], ['0'..'9', '_', 'x', 'X', 'o', 'O', 'b', 'B']) then
+    exit;
+  while (i < len) and TCharClassHelper.IsDigit(txt[i]) do
+    Inc(i);
+  isFloat := False;
+  if (i < len) and (txt[i] = '.') then
+  begin
+    Inc(i);
+    if (i >= len) or not TCharClassHelper.IsDigit(txt[i]) then
+      exit;
+    while (i < len) and TCharClassHelper.IsDigit(txt[i]) do
+      Inc(i);
+    isFloat := True;
+  end;
+  if (i < len) and ((txt[i] = 'e') or (txt[i] = 'E')) then
+  begin
+    Inc(i);
+    if (i < len) and ((txt[i] = '+') or (txt[i] = '-')) then
+      Inc(i);
+    if (i >= len) or not TCharClassHelper.IsDigit(txt[i]) then
+      exit;
+    while (i < len) and TCharClassHelper.IsDigit(txt[i]) do
+      Inc(i);
+    isFloat := True;
+  end;
+  if (i < len) and ((txt[i] = '_') or (txt[i] = '.')) then
+    exit; // digit separator or second dot: general path
+  if i < len then
+    cur := txt[i]
+  else
+    cur := #0;
+  if i + 1 < len then
+    nextCh := txt[i + 1]
+  else
+    nextCh := #0;
+  if not IsNumberTerminator(cur, nextCh, i >= len) then
+    exit;
+
+  value := Copy(FReader.Text, start + 1, i - start);
+  FReader.AdvanceInLine(i - start);
+  if isFloat then
+    FNumberType := TYAMLValueType.vtFloat
+  else
+    FNumberType := TYAMLValueType.vtInteger;
+  result := True;
+end;
+
 function TYAMLLexer.ReadNumber : string;
 var
   dotCount : integer;
   tempChar : Char;
   ch : Char;
-
-  // True when the character immediately following the numeric run is a value
-  // terminator (end of input, white space, line break, flow indicator, or a
-  // ':' acting as the mapping value indicator). When False the token is not a
-  // number at all but a plain scalar that merely begins with digits - e.g.
-  // '10$compilerCodeName$' - and so must be read whole. This mirrors the
-  // terminator rules in ReadUnquotedString.DoCheck.
-  function NumberFollowedByTerminator : boolean;
-  var
-    cur : Char;
-    nextCh : Char;
-  begin
-    if IsAtEnd then
-    begin
-      result := True;
-      Exit;
-    end;
-    cur := FReader.Current;
-    if TCharClassHelper.IsWhiteSpace(cur) or (cur = #10) or (cur = #13) then
-    begin
-      result := True;
-      Exit;
-    end;
-    // Flow collection indicators end a value (these terminate a plain scalar in
-    // both block and flow context - see cValueSet in ReadUnquotedString).
-    if CharInSet(cur, ['[', ']', '{', '}']) then
-    begin
-      result := True;
-      Exit;
-    end;
-    // A comma only terminates inside a flow collection; in block context it is
-    // ordinary scalar content (e.g. 'a: 10, more' is the string '10, more').
-    if (cur = ',') and (FFlowDepth > 0) then
-    begin
-      result := True;
-      Exit;
-    end;
-    // ':' is the mapping value indicator (and so terminates the number) only
-    // when followed by white space / line break / end of input - or, inside a
-    // flow collection, a flow indicator. In value context it is ordinary
-    // scalar content (e.g. a time '1:30'), so the token is then a plain scalar.
-    if cur = ':' then
-    begin
-      nextCh := FReader.Peek;
-      if FFlowDepth > 0 then
-        result := TCharClassHelper.IsWhiteSpace(nextCh) or CharInSet(nextCh, [#0, #10, #13, ',', '[', ']', '{', '}'])
-      else if not FInValueContext then
-        result := TCharClassHelper.IsWhiteSpace(nextCh) or CharInSet(nextCh, [#0, #10, #13])
-      else
-        result := False;
-      Exit;
-    end;
-    // Anything else ('$', '%', '-', a letter, ...) is plain-scalar content.
-    result := False;
-  end;
-
 begin
+  if TryReadPlainNumber(result) then
+    exit;
+
   FStringBuilder.Reset;
   dotCount := 0;
 
@@ -940,7 +1003,7 @@ begin
   // (e.g. '4B599A8C9' or '10$compilerCodeName$'), so read the whole thing as an
   // unquoted string - otherwise the numeric prefix would be split into its own
   // token and the remainder rejoined with a spurious space ('10 Seattle').
-  if not NumberFollowedByTerminator then
+  if not IsNumberTerminator(FReader.Current, FReader.Peek, IsAtEnd) then
   begin
     result := ReadUnquotedString(false);
     Exit;
@@ -1260,6 +1323,8 @@ begin
   token.Line := FReader.Line;
   token.Column := FReader.Column;
   token.IndentLevel := 0;
+  token.NumberType := TYAMLValueType.vtNull;
+  FNumberType := TYAMLValueType.vtNull;
 
   // Skip whitespace but track indentation at line start.
   // RFC 8259 §2: JSON has no indentation semantics; tab and space are simply
@@ -1615,6 +1680,7 @@ begin
 
   if value <> '' then
     token.Value := value;
+  token.NumberType := FNumberType;
   token.Line := startLine;
   token.Column := startColumn;
 end;

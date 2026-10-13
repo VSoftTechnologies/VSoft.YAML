@@ -110,6 +110,10 @@ type
     ///  Returns the run length; start is its 1-based index into Text. </summary>
     function ScanPlainScalarRun(out start : integer) : integer;
 
+    /// <summary> Advances count characters that the caller has checked contain no
+    ///  line breaks (so only the column moves). </summary>
+    procedure AdvanceInLine(count : integer);inline;
+
     /// <summary> Advances to the next #10/#13 (or the end) and returns the
     ///  rest of the current line. </summary>
     function ReadToLineEnd : string;
@@ -441,6 +445,13 @@ begin
     FPosition := p;
     FIsAtEnd := FPosition > FLength;
   end;
+end;
+
+procedure TStringInputReader.AdvanceInLine(count : integer);
+begin
+  Inc(FColumn, count);
+  Inc(FPosition, count);
+  FIsAtEnd := FPosition > FLength;
 end;
 
 function TStringInputReader.ReadToLineEnd : string;

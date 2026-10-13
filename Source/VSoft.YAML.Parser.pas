@@ -702,6 +702,7 @@ var
   specialCharCount : integer;
   scalarIndent : integer;
   blankLines : integer;
+  firstNumberType : TYAMLValueType;
 begin
   case FCurrentToken.TokenKind of
     TYAMLTokenKind.Literal,
@@ -725,6 +726,7 @@ begin
       if FCurrentToken.TokenKind = TYAMLTokenKind.Value then
       begin
         firstPart := value;
+        firstNumberType := FCurrentToken.NumberType;
         partCount := 1;
         NextToken;
 
@@ -791,7 +793,13 @@ begin
             RaiseParseError('Missing colon after key "' + firstPart + '"');
         end;
 
-        valueType := IsScalarValue(value, FJSONMode);
+        // A single token the lexer already validated as a plain number needs no
+        // re-classification (continuation lines would have lengthened value).
+        if (firstNumberType <> TYAMLValueType.vtNull) and (partCount = 1) and
+           (Length(value) = Length(firstPart)) then
+          valueType := firstNumberType
+        else
+          valueType := IsScalarValue(value, FJSONMode);
 
         // Additional JSON mode validation for invalid literals.
         // Reaching this branch in JSON mode means we have an unquoted plain
