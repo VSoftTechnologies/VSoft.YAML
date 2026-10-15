@@ -9,6 +9,10 @@ Benchmark, profiling and verification tools for VSoft.YAML. Build any of them wi
   free, YAML output and JSON output (best of `rounds`), and prints an MD5 of both
   outputs so A/B runs can confirm identical results. It also prints the machine's
   clock and free memory at the start and end. `dir` defaults to `..\Tests\TestFiles`.
+- **LoadMem** `<file>`: loads one file with `LoadFromFile` and prints the process's peak
+  memory and the heap the loaded tree keeps (run it once per file).
+- **MemBreak** `<file>`: where a loaded document's memory goes: node counts, object sizes,
+  and the bytes in key and value strings, with how many are duplicates.
 - **GenBig** `[outDir] [size]`: makes versions of the benchmark test files of about
   `size` each (MB, or KB with a `K`/`KB` suffix, e.g. `100KB`), keeping their style by
   repeating their units (sections, list items, array elements); smaller than the

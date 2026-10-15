@@ -6,3 +6,4 @@ dcu32/
 big*/
 # hand-written (the root .gitignore ignores *.rc)
 !GenBigFiles.rc
+dcu104/
