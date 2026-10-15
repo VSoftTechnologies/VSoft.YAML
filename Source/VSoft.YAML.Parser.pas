@@ -11,6 +11,11 @@ uses
 {$I 'VSoft.YAML.inc'}
 
 type
+  TInternState = record
+    Remaining : integer; // lookups left in this sample (> 0), or strings left to skip (< 0)
+    Hits : integer;
+  end;
+
   // YAML Parser class
   TYAMLParser = class
   private
@@ -28,6 +33,15 @@ type
     FYAMLVersion : IYAMLVersionDirective;
     FHasYAMLDirective : boolean;
     FTagDirectives : TList<IYAMLTagDirective>;
+
+    // Recently seen keys and short scalars: repeats (the same keys in every record,
+    // true/false, enum-like values) share one string instead of holding a copy each.
+    // Unique data would pay for hashing with nothing saved, so each kind (keys,
+    // values) samples its hit rate and switches itself off for a while when low.
+    FInternCache : array[0..4095] of string;
+    FKeyIntern : TInternState;
+    FValueIntern : TInternState;
+    procedure Intern(var s : string; var state : TInternState);
   protected
 
     procedure RaiseParseError(const message : string);overload;{$IFDEF NORETURN}noreturn;{$ENDIF}
@@ -123,6 +137,52 @@ begin
   
   NextToken; // Initialize with first token
 end;
+
+const
+  cMaxInternLength = 64; // longer strings rarely repeat and cost more to hash
+  cInternSample = 256;    // lookups per hit-rate sample
+  cInternSkip = 16384;    // strings left alone after a sample with few hits
+
+{$IFOPT Q+}{$DEFINE YAML_INTERN_Q}{$Q-}{$ENDIF} // the hash wraps on purpose
+procedure TYAMLParser.Intern(var s : string; var state : TInternState);
+var
+  p : PChar;
+  len, i : integer;
+  h : Cardinal;
+  slot : PString;
+begin
+  if state.Remaining < 0 then
+  begin
+    // switched off; reaching 0 starts a new sample
+    Inc(state.Remaining);
+    exit;
+  end;
+  len := Length(s);
+  if (len = 0) or (len > cMaxInternLength) then
+    exit;
+  if state.Remaining = 0 then
+  begin
+    state.Remaining := cInternSample;
+    state.Hits := 0;
+  end;
+  p := Pointer(s);
+  h := Cardinal(len);
+  for i := 0 to len - 1 do
+    h := (h xor Ord(p[i])) * 16777619; // FNV-1a
+  // direct-mapped: a slot holds the last string that hashed to it
+  slot := @FInternCache[h and High(FInternCache)];
+  if slot^ = s then
+  begin
+    s := slot^;
+    Inc(state.Hits);
+  end
+  else
+    slot^ := s;
+  Dec(state.Remaining);
+  if (state.Remaining = 0) and (state.Hits * 8 < cInternSample) then
+    state.Remaining := -cInternSkip; // under 1 in 8 repeated: not worth hashing
+end;
+{$IFDEF YAML_INTERN_Q}{$Q+}{$UNDEF YAML_INTERN_Q}{$ENDIF}
 
 destructor TYAMLParser.Destroy;
 begin
@@ -852,6 +912,7 @@ begin
         NextToken;
       end;
 
+      Intern(value, FValueIntern);
       result := TYAMLValue.Create(parent, valueType, value, tag);
       CheckForSameLineComment(result);
     end;
@@ -974,6 +1035,7 @@ begin
       end;
       
       key := FCurrentToken.value;
+      Intern(key, FKeyIntern);
       if (FOptions.DuplicateKeyBehavior = TYAMLDuplicateKeyBehavior.dkError) and result.ContainsKey(key) then
         RaiseParseError('duplicated mapping key : "' + key + '"');
       NextToken;
@@ -1121,6 +1183,7 @@ begin
         end;
         
         key := FCurrentToken.value;
+        Intern(key, FKeyIntern);
         // Only check for duplicates if we're in error mode (skip lookup otherwise)
         if (FOptions.DuplicateKeyBehavior = TYAMLDuplicateKeyBehavior.dkError) and result.ContainsKey(key) then
           RaiseParseError('duplicated mapping key : "' + key + '"');
