@@ -32,5 +32,5 @@ the two dumps must be byte-identical.
 | BufferCheck | TYAMLOutputBuffer string and stream (64-char chunks, surrogate pairs) against whole-string encoding |
 | FloatCheck | YAMLCanonicalFloatText against FloatToStr(StrToFloat()) on 3M inputs |
 | QuoteCheck | NeedsQuoting's first-character pre-check never skips a string the RTL parses as a number |
-| StreamCheck | LoadFromFile / LoadFromStream (UTF-8, BOM, UTF-16) match LoadFromString |
+| StreamCheck `[quick]` | LoadFromFile / LoadFromStream give the same document or error as LoadFromString: UTF-8 (with and without BOM), UTF-16 LE/BE, CRLF and truncated copies, read in blocks of 8 bytes upwards so block boundaries fall inside every kind of token |
 | TruncCheck | content after a mis-indented line raises instead of being dropped |

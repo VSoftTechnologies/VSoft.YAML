@@ -944,14 +944,12 @@ end;
 
 function TYAMLParser.ParseFlowMapping(const parent : IYAMLValue; const tag : string) : IYAMLMapping;
 var
-  mappingObj : TYAMLMapping;
   mappingPriv : IYAMLMappingPrivate; // obtained once; a per-key 'as' cast is a QueryInterface
   key : string;
   value : IYAMLValue;
 begin
-  mappingObj := TYAMLMapping.Create(parent, tag);
-  result := mappingObj;
-  mappingPriv := mappingObj;
+  result := TYAMLMapping.Create(parent, tag);
+  mappingPriv := result as IYAMLMappingPrivate;
   AssignPendingCommentsToCollection(result);
   ExpectToken(TYAMLTokenKind.LBrace); // '{'
 
@@ -1093,7 +1091,6 @@ end;
 
 function TYAMLParser.ParseMapping(const parent : IYAMLValue; const tag : string; const firstKey : string = '') : IYAMLMapping;
 var
-  mappingObj : TYAMLMapping;
   mappingPriv : IYAMLMappingPrivate; // obtained once; a per-key 'as' cast is a QueryInterface
   key : string;
   value : IYAMLValue;
@@ -1105,9 +1102,8 @@ begin
   if FJSONMode then
     RaiseParseError('Block-style mapping is not valid in JSON; use flow-style "{...}" objects');
 
-  mappingObj := TYAMLMapping.Create(parent, tag);
-  result := mappingObj;
-  mappingPriv := mappingObj;
+  result := TYAMLMapping.Create(parent, tag);
+  mappingPriv := result as IYAMLMappingPrivate;
   AssignPendingCommentsToCollection(result);
   expectedIndent := FCurrentToken.IndentLevel;
 

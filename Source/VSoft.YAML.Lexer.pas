@@ -61,7 +61,7 @@ type
         Handle : string;
       end;
   private
-    FReader : TStringInputReader; // concrete type so the per-char accessors inline
+    FReader : TBufferedInputReader; // concrete type so the per-char accessors inline
     FReaderRef : IInputReader;   // holds the reader's lifetime
     FOptions : IYAMLParserOptions;
     FJSONMode : boolean;
@@ -148,7 +148,7 @@ var
 begin
   inherited Create;
   obj := reader as TObject;
-  if obj is TStringInputReader then
+  if obj is TBufferedInputReader then
     FReaderRef := reader
   else
   begin
@@ -162,7 +162,7 @@ begin
       sb.Free;
     end;
   end;
-  FReader := FReaderRef as TObject as TStringInputReader;
+  FReader := FReaderRef as TObject as TBufferedInputReader;
   FOptions := options;
   if FOptions <> nil then
     FJSONMode := FOptions.JSONMode
@@ -328,10 +328,10 @@ begin
   if FReader.Current = '"' then
   begin
     FReader.Read; // Skip closing quote
-    exit(Copy(FReader.Text, runStart, runLength));
+    exit(FReader.CopyText(runStart, runLength));
   end;
   if runLength > 0 then
-    FStringBuilder.Append(FReader.Text, runStart - 1, runLength);
+    FReader.AppendText(FStringBuilder, runStart, runLength);
 
   while not IsAtEnd do
   begin
@@ -339,7 +339,7 @@ begin
     runLength := FReader.ScanDoubleQuotedRun(runStart);
     if runLength > 0 then
     begin
-      FStringBuilder.Append(FReader.Text, runStart - 1, runLength);
+      FReader.AppendText(FStringBuilder, runStart, runLength);
       if IsAtEnd then
         break;
     end;
@@ -690,9 +690,9 @@ begin
     runLength := FReader.ScanPlainScalarRun(runStart);
     if runLength > 0 then
     begin
-      FStringBuilder.Append(FReader.Text, runStart - 1, runLength);
+      FReader.AppendText(FStringBuilder, runStart, runLength);
       i := runStart + runLength - 1;
-      while (i >= runStart) and TCharClassHelper.IsWhiteSpace(FReader.Text[i]) do
+      while (i >= runStart) and TCharClassHelper.IsWhiteSpace(FReader.CharAt(i)) do
         Dec(i);
       if i >= runStart then
         lastNonWSLen := FStringBuilder.Length - (runStart + runLength - 1 - i);
@@ -767,9 +767,9 @@ begin
   result := False;
   if IsAtEnd then
     exit;
-  txt := PChar(FReader.Text); // 0-based
-  len := Length(FReader.Text);
-  start := FReader.Position - 1;
+  txt := PChar(FReader.Buffer); // 0-based
+  len := FReader.BufferLength;
+  start := FReader.BufferPosition - 1;
   i := start;
   if txt[i] = '-' then
     Inc(i);
@@ -803,6 +803,8 @@ begin
   end;
   if (i < len) and ((txt[i] = '_') or (txt[i] = '.')) then
     exit; // digit separator or second dot: general path
+  if (i + 1 >= len) and FReader.HasMoreInput then
+    exit; // ran into the end of the reader's window: general path
   if i < len then
     cur := txt[i]
   else
@@ -814,7 +816,7 @@ begin
   if not IsNumberTerminator(cur, nextCh, i >= len) then
     exit;
 
-  value := Copy(FReader.Text, start + 1, i - start);
+  value := Copy(FReader.Buffer, start + 1, i - start);
   FReader.AdvanceInLine(i - start);
   if isFloat then
     FNumberType := TYAMLValueType.vtFloat
@@ -1314,6 +1316,9 @@ begin
     FHasPeekedToken := False;
     Exit;
   end;
+
+  // nothing before here is referred to again, so the reader may drop it
+  FReader.MarkTokenStart;
 
   // Initialize token
   token.TokenKind := TYAMLTokenKind.EOF;
