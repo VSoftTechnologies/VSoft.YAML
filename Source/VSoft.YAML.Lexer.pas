@@ -47,6 +47,9 @@ type
     Line : integer;
     Column : integer;
     IndentLevel : integer;
+    // vtInteger / vtFloat when the lexer already validated Value as a plain decimal
+    // number (so the parser need not classify it again); vtNull otherwise.
+    NumberType : TYAMLValueType;
   end;
 
   // YAML Lexer class
@@ -58,7 +61,8 @@ type
         Handle : string;
       end;
   private
-    FReader : IInputReader;
+    FReader : TBufferedInputReader; // concrete type so the per-char accessors inline
+    FReaderRef : IInputReader;   // holds the reader's lifetime
     FOptions : IYAMLParserOptions;
     FJSONMode : boolean;
     FIndentStack : TList<Integer>;
@@ -71,6 +75,7 @@ type
     // Peek token cache for performance
     FPeekedToken: TYAMLToken;
     FHasPeekedToken: Boolean;
+    FNumberType : TYAMLValueType; // set by ReadNumber's fast path for the token being read
 
     // Stack management methods
     procedure PushIndentLevel(level: Integer);
@@ -91,8 +96,13 @@ type
     function ReadSingleQuotedString : string;
     function ReadUnquotedString(reset : boolean = true) : string;
     function ReadNumber : string;
+    function TryReadPlainNumber(out value : string) : boolean;
+    function IsNumberTerminator(cur, nextCh : Char; atEnd : boolean) : boolean;
     function ReadAnchorOrAlias : string;
     function ReadTag : TTag;
+    procedure ReadTagInto(var token : TYAMLToken);
+    procedure RaiseInvalidJSONWhitespace;
+    procedure FillPeek;
     procedure ReadBlockHeader(out chompIndicator : Char; out indentIndicator : integer);
     function ReadLiteralScalar : string;
     function ReadFoldedScalar : string;
@@ -104,9 +114,11 @@ type
     constructor Create(const reader : IInputReader; const options : IYAMLParserOptions = nil);
     destructor Destroy; override;
 
+    // Reads the next token straight into token (avoids a temporary record copy)
+    procedure ReadToken(var token : TYAMLToken);
     function NextToken : TYAMLToken;
     function PeekToken : TYAMLToken;
-    function PeekTokenKind : TYAMLTokenKind;inline;
+    function PeekTokenKind : TYAMLTokenKind;
 
     property Line : integer read GetLine;
     property Column : integer read GetColumn;
@@ -130,9 +142,27 @@ var
 { TYAMLLexer }
 
 constructor TYAMLLexer.Create(const reader : IInputReader; const options : IYAMLParserOptions);
+var
+  obj : TObject;
+  sb : TStringBuilder;
 begin
   inherited Create;
-  FReader := reader;
+  obj := reader as TObject;
+  if obj is TBufferedInputReader then
+    FReaderRef := reader
+  else
+  begin
+    // Some other reader implementation: drain what is left of it into a string reader.
+    sb := TStringBuilder.Create;
+    try
+      while not reader.IsEOF do
+        sb.Append(reader.Read);
+      FReaderRef := TInputReaderFactory.CreateFromString(sb.ToString);
+    finally
+      sb.Free;
+    end;
+  end;
+  FReader := FReaderRef as TObject as TBufferedInputReader;
   FOptions := options;
   if FOptions <> nil then
     FJSONMode := FOptions.JSONMode
@@ -287,13 +317,33 @@ var
   peekChar : Char;
   escapeChar : Char;
   currentCharOrd : Integer;
+  runStart, runLength : integer;
 begin
   FStringBuilder.Reset;
   FReader.Read; // Skip opening quote
   foundClosingQuote := False;
 
+  // Fast path: no escapes or control characters before the closing quote.
+  runLength := FReader.ScanDoubleQuotedRun(runStart);
+  if FReader.Current = '"' then
+  begin
+    FReader.Read; // Skip closing quote
+    exit(FReader.CopyText(runStart, runLength));
+  end;
+  if runLength > 0 then
+    FReader.AppendText(FStringBuilder, runStart, runLength);
+
   while not IsAtEnd do
   begin
+    // Copy the next run of ordinary characters in one go
+    runLength := FReader.ScanDoubleQuotedRun(runStart);
+    if runLength > 0 then
+    begin
+      FReader.AppendText(FStringBuilder, runStart, runLength);
+      if IsAtEnd then
+        break;
+    end;
+
     // Double-quoted strings: backslash acts as escape character
     if FReader.Current = '\' then
     begin
@@ -575,6 +625,7 @@ const
   cNonValueSetFlow = [#10, #13, '#', '[', ']', '{', '}', ','];
 var
   lastNonWSLen : integer;
+  runStart, runLength, i : integer;
 
   function DoCheck : boolean;
   var
@@ -632,8 +683,24 @@ begin
 
   lastNonWSLen := FStringBuilder.Length;
 
-  while not IsAtEnd and DoCheck do
+  while not IsAtEnd do
   begin
+    // Bulk-copy characters that cannot end the scalar; only the few that can
+    // (see ScanPlainScalarRun) go through DoCheck one at a time.
+    runLength := FReader.ScanPlainScalarRun(runStart);
+    if runLength > 0 then
+    begin
+      FReader.AppendText(FStringBuilder, runStart, runLength);
+      i := runStart + runLength - 1;
+      while (i >= runStart) and TCharClassHelper.IsWhiteSpace(FReader.CharAt(i)) do
+        Dec(i);
+      if i >= runStart then
+        lastNonWSLen := FStringBuilder.Length - (runStart + runLength - 1 - i);
+      if IsAtEnd then
+        break;
+    end;
+    if not DoCheck then
+      break;
     FStringBuilder.Append(FReader.Current);
     if not TCharClassHelper.IsWhiteSpace(FReader.Current) then
       lastNonWSLen := FStringBuilder.Length;
@@ -646,68 +713,127 @@ begin
   result := FStringBuilder.ToString;
 end;
 
+// True when the character immediately following a numeric run (cur, then nextCh) is a
+// value terminator (end of input, white space, line break, flow indicator, or a ':'
+// acting as the mapping value indicator). When False the token is not a number at all
+// but a plain scalar that merely begins with digits - e.g. '10$compilerCodeName$' - and
+// so must be read whole. This mirrors the terminator rules in ReadUnquotedString.DoCheck.
+function TYAMLLexer.IsNumberTerminator(cur, nextCh : Char; atEnd : boolean) : boolean;
+begin
+  if atEnd then
+    exit(True);
+  if TCharClassHelper.IsWhiteSpace(cur) or (cur = #10) or (cur = #13) then
+    exit(True);
+  // Flow collection indicators end a value (these terminate a plain scalar in
+  // both block and flow context - see cValueSet in ReadUnquotedString).
+  if CharInSet(cur, ['[', ']', '{', '}']) then
+    exit(True);
+  // A comma only terminates inside a flow collection; in block context it is
+  // ordinary scalar content (e.g. 'a: 10, more' is the string '10, more').
+  if (cur = ',') and (FFlowDepth > 0) then
+    exit(True);
+  // ':' is the mapping value indicator (and so terminates the number) only
+  // when followed by white space / line break / end of input - or, inside a
+  // flow collection, a flow indicator. In value context it is ordinary
+  // scalar content (e.g. a time '1:30'), so the token is then a plain scalar.
+  if cur = ':' then
+  begin
+    if FFlowDepth > 0 then
+      result := TCharClassHelper.IsWhiteSpace(nextCh) or CharInSet(nextCh, [#0, #10, #13, ',', '[', ']', '{', '}'])
+    else if not FInValueContext then
+      result := TCharClassHelper.IsWhiteSpace(nextCh) or CharInSet(nextCh, [#0, #10, #13])
+    else
+      result := False;
+    exit;
+  end;
+  // Anything else ('$', '%', '-', a letter, ...) is plain-scalar content.
+  result := False;
+end;
+
+// Fast path for the common case: an optionally negative decimal with optional fraction
+// and exponent ([-]digits[.digits][(e|E)[+|-]digits]), no '_' separators and no leading
+// zero before another digit or a radix prefix, followed by a terminator. It is checked in
+// place and copied out in one go. Anything else returns False with the reader untouched,
+// and ReadNumber's general path handles it (including every error case), so results are
+// unchanged. The grammar is exactly what TYAMLParser.FastIsNumber accepts, so the
+// recorded type matches what the parser would have worked out.
+function TYAMLLexer.TryReadPlainNumber(out value : string) : boolean;
+var
+  txt : PChar;
+  len, start, i : integer;
+  isFloat : boolean;
+  cur, nextCh : Char;
+begin
+  result := False;
+  if IsAtEnd then
+    exit;
+  txt := PChar(FReader.Buffer); // 0-based
+  len := FReader.BufferLength;
+  start := FReader.BufferPosition - 1;
+  i := start;
+  if txt[i] = '-' then
+    Inc(i);
+  if (i >= len) or not TCharClassHelper.IsDigit(txt[i]) then
+    exit;
+  if (txt[i] = '0') and (i + 1 < len) and
+     CharInSet(txt[i + 1], ['0'..'9', '_', 'x', 'X', 'o', 'O', 'b', 'B']) then
+    exit;
+  while (i < len) and TCharClassHelper.IsDigit(txt[i]) do
+    Inc(i);
+  isFloat := False;
+  if (i < len) and (txt[i] = '.') then
+  begin
+    Inc(i);
+    if (i >= len) or not TCharClassHelper.IsDigit(txt[i]) then
+      exit;
+    while (i < len) and TCharClassHelper.IsDigit(txt[i]) do
+      Inc(i);
+    isFloat := True;
+  end;
+  if (i < len) and ((txt[i] = 'e') or (txt[i] = 'E')) then
+  begin
+    Inc(i);
+    if (i < len) and ((txt[i] = '+') or (txt[i] = '-')) then
+      Inc(i);
+    if (i >= len) or not TCharClassHelper.IsDigit(txt[i]) then
+      exit;
+    while (i < len) and TCharClassHelper.IsDigit(txt[i]) do
+      Inc(i);
+    isFloat := True;
+  end;
+  if (i < len) and ((txt[i] = '_') or (txt[i] = '.')) then
+    exit; // digit separator or second dot: general path
+  if (i + 1 >= len) and FReader.HasMoreInput then
+    exit; // ran into the end of the reader's window: general path
+  if i < len then
+    cur := txt[i]
+  else
+    cur := #0;
+  if i + 1 < len then
+    nextCh := txt[i + 1]
+  else
+    nextCh := #0;
+  if not IsNumberTerminator(cur, nextCh, i >= len) then
+    exit;
+
+  value := Copy(FReader.Buffer, start + 1, i - start);
+  FReader.AdvanceInLine(i - start);
+  if isFloat then
+    FNumberType := TYAMLValueType.vtFloat
+  else
+    FNumberType := TYAMLValueType.vtInteger;
+  result := True;
+end;
+
 function TYAMLLexer.ReadNumber : string;
 var
   dotCount : integer;
   tempChar : Char;
   ch : Char;
-
-  // True when the character immediately following the numeric run is a value
-  // terminator (end of input, white space, line break, flow indicator, or a
-  // ':' acting as the mapping value indicator). When False the token is not a
-  // number at all but a plain scalar that merely begins with digits - e.g.
-  // '10$compilerCodeName$' - and so must be read whole. This mirrors the
-  // terminator rules in ReadUnquotedString.DoCheck.
-  function NumberFollowedByTerminator : boolean;
-  var
-    cur : Char;
-    nextCh : Char;
-  begin
-    if IsAtEnd then
-    begin
-      result := True;
-      Exit;
-    end;
-    cur := FReader.Current;
-    if TCharClassHelper.IsWhiteSpace(cur) or (cur = #10) or (cur = #13) then
-    begin
-      result := True;
-      Exit;
-    end;
-    // Flow collection indicators end a value (these terminate a plain scalar in
-    // both block and flow context - see cValueSet in ReadUnquotedString).
-    if CharInSet(cur, ['[', ']', '{', '}']) then
-    begin
-      result := True;
-      Exit;
-    end;
-    // A comma only terminates inside a flow collection; in block context it is
-    // ordinary scalar content (e.g. 'a: 10, more' is the string '10, more').
-    if (cur = ',') and (FFlowDepth > 0) then
-    begin
-      result := True;
-      Exit;
-    end;
-    // ':' is the mapping value indicator (and so terminates the number) only
-    // when followed by white space / line break / end of input - or, inside a
-    // flow collection, a flow indicator. In value context it is ordinary
-    // scalar content (e.g. a time '1:30'), so the token is then a plain scalar.
-    if cur = ':' then
-    begin
-      nextCh := FReader.Peek;
-      if FFlowDepth > 0 then
-        result := TCharClassHelper.IsWhiteSpace(nextCh) or CharInSet(nextCh, [#0, #10, #13, ',', '[', ']', '{', '}'])
-      else if not FInValueContext then
-        result := TCharClassHelper.IsWhiteSpace(nextCh) or CharInSet(nextCh, [#0, #10, #13])
-      else
-        result := False;
-      Exit;
-    end;
-    // Anything else ('$', '%', '-', a letter, ...) is plain-scalar content.
-    result := False;
-  end;
-
 begin
+  if TryReadPlainNumber(result) then
+    exit;
+
   FStringBuilder.Reset;
   dotCount := 0;
 
@@ -879,7 +1005,7 @@ begin
   // (e.g. '4B599A8C9' or '10$compilerCodeName$'), so read the whole thing as an
   // unquoted string - otherwise the numeric prefix would be split into its own
   // token and the remainder rejoined with a spurious space ('10 Seattle').
-  if not NumberFollowedByTerminator then
+  if not IsNumberTerminator(FReader.Current, FReader.Peek, IsAtEnd) then
   begin
     result := ReadUnquotedString(false);
     Exit;
@@ -1173,27 +1299,37 @@ begin
   result := FStringBuilder.ToString;
 end;
 
-function TYAMLLexer.NextToken : TYAMLToken;
+procedure TYAMLLexer.ReadToken(var token : TYAMLToken);
 var
   startLine, startColumn : integer;
   currentIndent : integer;
-  tag : TTag;
   peekChar : Char;
+  // All scalar reads land here rather than in token.Value directly: assigning a
+  // function result to a var-record field costs a hidden string temp per call site,
+  // and clearing ~20 of those on every token showed up in the profile.
+  value : string;
 begin
   // Check for cached peeked token first
   if FHasPeekedToken then
   begin
-    result := FPeekedToken;
+    token := FPeekedToken;
     FHasPeekedToken := False;
     Exit;
   end;
 
+  // nothing before here is referred to again, so the reader may drop it
+  FReader.MarkTokenStart;
+
   // Initialize token
-  result.TokenKind := TYAMLTokenKind.EOF;
-  result.Value := '';
-  result.Line := FReader.Line;
-  result.Column := FReader.Column;
-  result.IndentLevel := 0;
+  token.TokenKind := TYAMLTokenKind.EOF;
+  token.Value := '';
+  if token.Prefix <> '' then
+    token.Prefix := '';
+  token.Line := FReader.Line;
+  token.Column := FReader.Column;
+  token.IndentLevel := 0;
+  token.NumberType := TYAMLValueType.vtNull;
+  FNumberType := TYAMLValueType.vtNull;
 
   // Skip whitespace but track indentation at line start.
   // RFC 8259 §2: JSON has no indentation semantics; tab and space are simply
@@ -1205,11 +1341,11 @@ begin
   else if FReader.Column = 1 then
   begin
     currentIndent := SkipWhitespaceAndCalculateIndent;
-    result.IndentLevel := currentIndent;
+    token.IndentLevel := currentIndent;
     if currentIndent > CurrentIndentLevel then
     begin
       PushIndentLevel(currentIndent);
-      result.TokenKind := TYAMLTokenKind.Indent;
+      token.TokenKind := TYAMLTokenKind.Indent;
       Exit;
     end
     else if currentIndent < CurrentIndentLevel then
@@ -1218,13 +1354,13 @@ begin
       while (FIndentStack.Count > 1) and (currentIndent < CurrentIndentLevel) do
         PopIndentLevel;
 
-      // Set the result indent level to the current level after popping
-      result.IndentLevel := currentIndent;
+      // Set the token indent level to the current level after popping
+      token.IndentLevel := currentIndent;
     end
     else
     begin
       // Same indentation level, just preserve indent level
-      result.IndentLevel := currentIndent;
+      token.IndentLevel := currentIndent;
     end;
   end
   else
@@ -1232,15 +1368,15 @@ begin
     // Set indent level to current stack level for tokens not at line start
     // Special handling for tokens following sequence items
     if FSequenceItemIndent >= 0 then
-      result.IndentLevel := FSequenceItemIndent
+      token.IndentLevel := FSequenceItemIndent
     else
-      result.IndentLevel := CurrentIndentLevel;
+      token.IndentLevel := CurrentIndentLevel;
     SkipWhitespace;
   end;
 
   if IsAtEnd then
   begin
-    result.TokenKind := TYAMLTokenKind.EOF;
+    token.TokenKind := TYAMLTokenKind.EOF;
     Exit;
   end;
 
@@ -1250,9 +1386,7 @@ begin
   // by ReadUnquotedString and then stripped by the scalar classifier's Trim.
   if FJSONMode and (Ord(FReader.Current) < $20) and
      not CharInSet(FReader.Current, [#10, #13]) then
-    raise EYAMLParseException.Create(
-      Format('U+%.4X is not valid whitespace in JSON', [Ord(FReader.Current)]),
-      FReader.Line, FReader.Column);
+    RaiseInvalidJSONWhitespace;
 
   startLine := FReader.Line;
   startColumn := FReader.Column;
@@ -1260,7 +1394,7 @@ begin
   case FReader.Current of
     #10, #13 :
       begin
-        result.TokenKind := TYAMLTokenKind.NewLine;
+        token.TokenKind := TYAMLTokenKind.NewLine;
         // Reset sequence item indent tracking at newlines
         FSequenceItemIndent := -1;
         // Reset to key context at newlines
@@ -1282,12 +1416,12 @@ begin
         if FInValueContext and (FFlowDepth = 0) and
            not IsWhitespace(peekChar) and not CharInSet(peekChar, [#0, #10, #13]) then
         begin
-          result.TokenKind := TYAMLTokenKind.Value;
-          result.Value := ReadUnquotedString;
+          token.TokenKind := TYAMLTokenKind.Value;
+          value := ReadUnquotedString;
         end
         else
         begin
-          result.TokenKind := TYAMLTokenKind.Colon;
+          token.TokenKind := TYAMLTokenKind.Colon;
           // Switch to value context after colon
           FInValueContext := True;
           FReader.Read;
@@ -1301,10 +1435,10 @@ begin
         begin
           // RFC 8259: block-style sequences are YAML-only.
           RejectInJSONMode('Block-style sequence "- item"');
-          result.TokenKind := TYAMLTokenKind.SequenceItem;
+          token.TokenKind := TYAMLTokenKind.SequenceItem;
           // For sequence items, use the actual column position for proper nesting
           // Override the FSequenceItemIndent setting for this token
-          result.IndentLevel := FReader.Column - 1; // Column is 1-based, indent is 0-based
+          token.IndentLevel := FReader.Column - 1; // Column is 1-based, indent is 0-based
           FReader.Read;
           // After reading '-', FReader.Column points to the space that follows.
           // Content on the same line starts after that space, at indent = FReader.Column
@@ -1317,19 +1451,19 @@ begin
         begin
           // RFC 8259 §2: JSON has no document markers.
           RejectInJSONMode('Document start marker "---"');
-          result.TokenKind := TYAMLTokenKind.DocStart;
+          token.TokenKind := TYAMLTokenKind.DocStart;
           // No value assignment needed for ttDocStart
           FReader.Read; FReader.Read; FReader.Read;
         end
         else if IsSpecialFloat then
         begin
-          result.TokenKind := TYAMLTokenKind.Value;
-          result.Value := ReadSpecialFloat;
+          token.TokenKind := TYAMLTokenKind.Value;
+          value := ReadSpecialFloat;
         end
         else
         begin
-          result.TokenKind := TYAMLTokenKind.Value;
-          result.Value := ReadNumber; //if it isn't a numbeer then it will call ReadUnquotedString
+          token.TokenKind := TYAMLTokenKind.Value;
+          value := ReadNumber; //if it isn't a numbeer then it will call ReadUnquotedString
         end;
       end;
 
@@ -1337,13 +1471,13 @@ begin
       begin
         if IsSpecialFloat then
         begin
-          result.TokenKind := TYAMLTokenKind.Value;
-          result.Value := ReadSpecialFloat;
+          token.TokenKind := TYAMLTokenKind.Value;
+          value := ReadSpecialFloat;
         end
         else
         begin
-          result.TokenKind := TYAMLTokenKind.Value;
-          result.Value := ReadNumber;
+          token.TokenKind := TYAMLTokenKind.Value;
+          value := ReadNumber;
         end;
       end;
 
@@ -1354,14 +1488,14 @@ begin
         begin
           // RFC 8259 §2: JSON has no document markers.
           RejectInJSONMode('Document end marker "..."');
-          result.TokenKind := TYAMLTokenKind.DocEnd;
+          token.TokenKind := TYAMLTokenKind.DocEnd;
           // No value assignment needed for ttDocEnd
           FReader.Read; FReader.Read; FReader.Read;
         end
         else if IsSpecialFloat then
         begin
-          result.TokenKind := TYAMLTokenKind.Value;
-          result.Value := ReadSpecialFloat;
+          token.TokenKind := TYAMLTokenKind.Value;
+          value := ReadSpecialFloat;
         end
         else if TYAMLCharUtils.IsDigit(peekChar) then
         begin
@@ -1369,19 +1503,19 @@ begin
           if FJSONMode then
             raise EYAMLParseException.Create('Decimal numbers must have a leading digit before the dot in JSON', FReader.Line, FReader.Column);
             
-          result.TokenKind := TYAMLTokenKind.Value;
-          result.Value := ReadNumber;
+          token.TokenKind := TYAMLTokenKind.Value;
+          value := ReadNumber;
         end
         else
         begin
-          result.TokenKind := TYAMLTokenKind.Value;
-          result.Value := ReadUnquotedString;
+          token.TokenKind := TYAMLTokenKind.Value;
+          value := ReadUnquotedString;
         end;
       end;
 
     ',':
       begin
-        result.TokenKind := TYAMLTokenKind.Comma;
+        token.TokenKind := TYAMLTokenKind.Comma;
         // Reset to key context after comma in flow collections
         FInValueContext := False;
         FReader.Read;
@@ -1389,7 +1523,7 @@ begin
 
     '[':
       begin
-        result.TokenKind := TYAMLTokenKind.LBracket;
+        token.TokenKind := TYAMLTokenKind.LBracket;
         // Reset to key context when entering flow sequence
         FInValueContext := False;
         Inc(FFlowDepth);
@@ -1398,7 +1532,7 @@ begin
 
     ']':
       begin
-        result.TokenKind := TYAMLTokenKind.RBracket;
+        token.TokenKind := TYAMLTokenKind.RBracket;
         // Reset to key context when exiting flow sequence
         FInValueContext := False;
         if FFlowDepth > 0 then
@@ -1408,7 +1542,7 @@ begin
 
     '{':
       begin
-        result.TokenKind := TYAMLTokenKind.LBrace;
+        token.TokenKind := TYAMLTokenKind.LBrace;
         // Reset to key context when entering flow mapping
         FInValueContext := False;
         Inc(FFlowDepth);
@@ -1417,7 +1551,7 @@ begin
 
     '}':
       begin
-        result.TokenKind := TYAMLTokenKind.RBrace;
+        token.TokenKind := TYAMLTokenKind.RBrace;
         if FFlowDepth > 0 then
           Dec(FFlowDepth);
         FReader.Read;
@@ -1425,8 +1559,8 @@ begin
 
     '"':
       begin
-        result.TokenKind := TYAMLTokenKind.QuotedString;
-        result.Value := ReadDoubleQuotedString;
+        token.TokenKind := TYAMLTokenKind.QuotedString;
+        value := ReadDoubleQuotedString;
       end;
 
     '''':
@@ -1435,22 +1569,22 @@ begin
         if FJSONMode then
           raise EYAMLParseException.Create('Single-quoted strings are not valid in JSON', FReader.Line, FReader.Column);
 
-        result.TokenKind := TYAMLTokenKind.QuotedString;
-        result.Value := ReadSingleQuotedString;
+        token.TokenKind := TYAMLTokenKind.QuotedString;
+        value := ReadSingleQuotedString;
       end;
 
     '#':
       begin
-        result.TokenKind := TYAMLTokenKind.Comment;
-        result.Value := ReadComment;
+        token.TokenKind := TYAMLTokenKind.Comment;
+        value := ReadComment;
       end;
 
     '%':
       begin
         // YAML directive
         RejectInJSONMode('Directive');
-        result.TokenKind := TYAMLTokenKind.Directive;
-        result.Value := ReadDirective;
+        token.TokenKind := TYAMLTokenKind.Directive;
+        value := ReadDirective;
       end;
 
     '&':
@@ -1458,9 +1592,9 @@ begin
         // Anchor definition
         RejectInJSONMode('Anchor "&name"');
         FReader.Read; // Skip '&'
-        result.Value := ReadAnchorOrAlias;
-        if result.Value <> '' then
-          result.TokenKind := TYAMLTokenKind.Anchor
+        value := ReadAnchorOrAlias;
+        if value <> '' then
+          token.TokenKind := TYAMLTokenKind.Anchor
         else
           raise EYAMLParseException.Create('Invalid anchor name', FReader.Line, FReader.Column);
       end;
@@ -1470,9 +1604,9 @@ begin
         // Alias reference
         RejectInJSONMode('Alias "*name"');
         FReader.Read; // Skip '*'
-        result.Value := ReadAnchorOrAlias;
-        if result.Value <> '' then
-          result.TokenKind := TYAMLTokenKind.Alias
+        value := ReadAnchorOrAlias;
+        if value <> '' then
+          token.TokenKind := TYAMLTokenKind.Alias
         else
           raise EYAMLParseException.Create('Invalid alias name', FReader.Line, FReader.Column);
       end;
@@ -1481,11 +1615,9 @@ begin
       begin
         // YAML tag
         RejectInJSONMode('Tag "!name"');
-        tag := ReadTag;
-        result.Prefix := tag.Prefix;
-        result.Value := tag.Handle;
-        if result.Value <> '' then
-          result.TokenKind := TYAMLTokenKind.Tag
+        ReadTagInto(token);
+        if token.Value <> '' then
+          token.TokenKind := TYAMLTokenKind.Tag
         else
           raise EYAMLParseException.Create('Invalid tag name', FReader.Line, FReader.Column);
       end;
@@ -1494,16 +1626,16 @@ begin
       begin
         // Literal scalar
         RejectInJSONMode('Literal block scalar "|"');
-        result.TokenKind := TYAMLTokenKind.Literal;
-        result.Value := ReadLiteralScalar;
+        token.TokenKind := TYAMLTokenKind.Literal;
+        value := ReadLiteralScalar;
       end;
 
     '>':
       begin
         // Folded scalar
         RejectInJSONMode('Folded block scalar ">"');
-        result.TokenKind := TYAMLTokenKind.Folded;
-        result.Value := ReadFoldedScalar;
+        token.TokenKind := TYAMLTokenKind.Folded;
+        value := ReadFoldedScalar;
       end;
 
       '?':
@@ -1514,61 +1646,92 @@ begin
         if IsWhitespace(peekChar) or (peekChar = #10) or (peekChar = #13) then
         begin
           RejectInJSONMode('Set/complex-key indicator "?"');
-          result.TokenKind := TYAMLTokenKind.SetItem;
+          token.TokenKind := TYAMLTokenKind.SetItem;
           FReader.Read; // Skip '?'
         end
         else
         begin
           // Complex key syntax, treat as value
-          result.TokenKind := TYAMLTokenKind.Value;
-          result.Value := ReadUnquotedString;
+          token.TokenKind := TYAMLTokenKind.Value;
+          value := ReadUnquotedString;
         end;
       end;
 
   else
     if TYAMLCharUtils.IsDigit(FReader.Current) then
     begin
-      result.TokenKind := TYAMLTokenKind.Value;
+      token.TokenKind := TYAMLTokenKind.Value;
       // Check if this looks like a timestamp pattern first
       if IsTimestampStart then
-        result.Value := ReadTimestamp
+        value := ReadTimestamp
       else
-        result.Value := ReadNumber;
+        value := ReadNumber;
     end
     else if IsSpecialFloat then
     begin
-      result.TokenKind := TYAMLTokenKind.Value;
-      result.Value := ReadSpecialFloat;
+      token.TokenKind := TYAMLTokenKind.Value;
+      value := ReadSpecialFloat;
     end
     else
     begin
 
-      result.Value := ReadUnquotedString;
-      if result.Value <> '' then
-        result.TokenKind := TYAMLTokenKind.Value
+      value := ReadUnquotedString;
+      if value <> '' then
+        token.TokenKind := TYAMLTokenKind.Value
       else
-        result := NextToken; // Skip empty values
+        ReadToken(token); // Skip empty values
     end;
   end;
 
-  result.Line := startLine;
-  result.Column := startColumn;
+  if value <> '' then
+    token.Value := value;
+  token.NumberType := FNumberType;
+  token.Line := startLine;
+  token.Column := startColumn;
+end;
+
+procedure TYAMLLexer.RaiseInvalidJSONWhitespace;
+begin
+  raise EYAMLParseException.Create(
+    Format('U+%.4X is not valid whitespace in JSON', [Ord(FReader.Current)]),
+    FReader.Line, FReader.Column);
+end;
+
+// Kept out of ReadToken so that ReadToken has no managed (TTag) locals and
+// therefore no per-call record initialise/finalise frame.
+procedure TYAMLLexer.ReadTagInto(var token : TYAMLToken);
+var
+  tag : TTag;
+begin
+  tag := ReadTag;
+  token.Prefix := tag.Prefix;
+  token.Value := tag.Handle;
+end;
+
+function TYAMLLexer.NextToken : TYAMLToken;
+begin
+  ReadToken(result);
+end;
+
+procedure TYAMLLexer.FillPeek;
+begin
+  if not FHasPeekedToken then
+  begin
+    ReadToken(FPeekedToken);
+    FHasPeekedToken := True;
+  end;
 end;
 
 function TYAMLLexer.PeekToken : TYAMLToken;
 begin
-  // Use cached token if available
-  if not FHasPeekedToken then
-  begin
-    FPeekedToken := NextToken;
-    FHasPeekedToken := True;
-  end;
+  FillPeek;
   result := FPeekedToken;
 end;
 
 function TYAMLLexer.PeekTokenKind: TYAMLTokenKind;
 begin
-  result := PeekToken.TokenKind;
+  FillPeek;
+  result := FPeekedToken.TokenKind;
 end;
 
 procedure TYAMLLexer.ReadBlockHeader(out chompIndicator : Char; out indentIndicator : integer);
@@ -1691,14 +1854,8 @@ begin
           baseIndent := lineIndent;
       end;
 
-      // Read the rest of the line using FHexBuilder (reuse existing builder)
-      FHexBuilder.Clear;
-      while (FReader.Current <> #10) and (FReader.Current <> #13) and not IsAtEnd do
-      begin
-        FHexBuilder.Append(FReader.Current);
-        FReader.Read;
-      end;
-      currentLine := FHexBuilder.ToString;
+      // Read the rest of the line
+      currentLine := FReader.ReadToLineEnd;
 
       // Add line with proper indentation preserved
       if lineIndent >= baseIndent then
@@ -1866,14 +2023,8 @@ begin
           baseIndent := lineIndent;
       end;
 
-      // Read the rest of the line using FHexBuilder
-      FHexBuilder.Clear;
-      while (FReader.Current <> #10) and (FReader.Current <> #13) and not IsAtEnd do
-      begin
-        FHexBuilder.Append(FReader.Current);
-        FReader.Read;
-      end;
-      currentLine := FHexBuilder.ToString;
+      // Read the rest of the line
+      currentLine := FReader.ReadToLineEnd;
 
       // Handle indented lines (preserve more indentation as literal)
       if lineIndent > baseIndent then

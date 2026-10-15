@@ -11,6 +11,11 @@ uses
 {$I 'VSoft.YAML.inc'}
 
 type
+  TInternState = record
+    Remaining : integer; // lookups left in this sample (> 0), or strings left to skip (< 0)
+    Hits : integer;
+  end;
+
   // YAML Parser class
   TYAMLParser = class
   private
@@ -28,6 +33,15 @@ type
     FYAMLVersion : IYAMLVersionDirective;
     FHasYAMLDirective : boolean;
     FTagDirectives : TList<IYAMLTagDirective>;
+
+    // Recently seen keys and short scalars: repeats (the same keys in every record,
+    // true/false, enum-like values) share one string instead of holding a copy each.
+    // Unique data would pay for hashing with nothing saved, so each kind (keys,
+    // values) samples its hit rate and switches itself off for a while when low.
+    FInternCache : array[0..4095] of string;
+    FKeyIntern : TInternState;
+    FValueIntern : TInternState;
+    procedure Intern(var s : string; var state : TInternState);
   protected
 
     procedure RaiseParseError(const message : string);overload;{$IFDEF NORETURN}noreturn;{$ENDIF}
@@ -62,6 +76,7 @@ type
     function IsScalarValueYAML(const trimmedValue : string; len : Integer) : TYAMLValueType;
     function FastIsNumber(const value : string; out isFloat : Boolean) : Boolean;
     procedure SkipNewlines;
+    procedure CheckDocumentEnd;
     procedure RegisterAnchor(const anchorName : string; const value : IYAMLValue);
     function ResolveAlias(const aliasName : string) : IYAMLValue;
     
@@ -123,6 +138,52 @@ begin
   NextToken; // Initialize with first token
 end;
 
+const
+  cMaxInternLength = 64; // longer strings rarely repeat and cost more to hash
+  cInternSample = 256;    // lookups per hit-rate sample
+  cInternSkip = 16384;    // strings left alone after a sample with few hits
+
+{$IFOPT Q+}{$DEFINE YAML_INTERN_Q}{$Q-}{$ENDIF} // the hash wraps on purpose
+procedure TYAMLParser.Intern(var s : string; var state : TInternState);
+var
+  p : PChar;
+  len, i : integer;
+  h : Cardinal;
+  slot : PString;
+begin
+  if state.Remaining < 0 then
+  begin
+    // switched off; reaching 0 starts a new sample
+    Inc(state.Remaining);
+    exit;
+  end;
+  len := Length(s);
+  if (len = 0) or (len > cMaxInternLength) then
+    exit;
+  if state.Remaining = 0 then
+  begin
+    state.Remaining := cInternSample;
+    state.Hits := 0;
+  end;
+  p := Pointer(s);
+  h := Cardinal(len);
+  for i := 0 to len - 1 do
+    h := (h xor Ord(p[i])) * 16777619; // FNV-1a
+  // direct-mapped: a slot holds the last string that hashed to it
+  slot := @FInternCache[h and High(FInternCache)];
+  if slot^ = s then
+  begin
+    s := slot^;
+    Inc(state.Hits);
+  end
+  else
+    slot^ := s;
+  Dec(state.Remaining);
+  if (state.Remaining = 0) and (state.Hits * 8 < cInternSample) then
+    state.Remaining := -cInternSkip; // under 1 in 8 repeated: not worth hashing
+end;
+{$IFDEF YAML_INTERN_Q}{$Q+}{$UNDEF YAML_INTERN_Q}{$ENDIF}
+
 destructor TYAMLParser.Destroy;
 begin
   FAnchorMap.Free;
@@ -134,7 +195,7 @@ end;
 procedure TYAMLParser.NextToken;
 begin
   FLastTokenLine := FLexer.Line;
-  FCurrentToken := FLexer.NextToken;
+  FLexer.ReadToken(FCurrentToken);
 end;
 
 procedure TYAMLParser.ExpectToken(tokenKind : TYAMLTokenKind);
@@ -151,6 +212,32 @@ begin
     NextToken;
 end;
 
+
+// After a document's root value only blank lines and comments may follow before the
+// end of input or the next document marker. Anything else is content the nested
+// parsers stopped at because it did not fit (typically a mis-indented line, such as a
+// "- item" under a mapping); without this check it was silently dropped.
+procedure TYAMLParser.CheckDocumentEnd;
+begin
+  while FCurrentToken.TokenKind in [TYAMLTokenKind.NewLine, TYAMLTokenKind.Indent, TYAMLTokenKind.Comment] do
+  begin
+    if FCurrentToken.TokenKind = TYAMLTokenKind.Comment then
+      ProcessComment
+    else
+      NextToken;
+  end;
+  // A directive may also start the next document (without the '...' that YAML 1.2
+  // strictly requires) - ParseAll has long accepted that, so keep it.
+  if not (FCurrentToken.TokenKind in [TYAMLTokenKind.EOF, TYAMLTokenKind.DocStart, TYAMLTokenKind.DocEnd,
+                                      TYAMLTokenKind.Directive]) then
+  begin
+    if FCurrentToken.TokenKind = TYAMLTokenKind.SequenceItem then
+      RaiseParseError('Unexpected sequence item "-" - it does not belong to the preceding collection (check its indentation)')
+    else
+      RaiseParseError('Unexpected content after the end of the document value (%s "%s") - check its indentation',
+        [GetEnumName(TypeInfo(TYAMLTokenKind), Ord(FCurrentToken.TokenKind)), FCurrentToken.Value]);
+  end;
+end;
 
 procedure TYAMLParser.SkipNewlines;
 begin
@@ -675,6 +762,7 @@ var
   specialCharCount : integer;
   scalarIndent : integer;
   blankLines : integer;
+  firstNumberType : TYAMLValueType;
 begin
   case FCurrentToken.TokenKind of
     TYAMLTokenKind.Literal,
@@ -698,6 +786,7 @@ begin
       if FCurrentToken.TokenKind = TYAMLTokenKind.Value then
       begin
         firstPart := value;
+        firstNumberType := FCurrentToken.NumberType;
         partCount := 1;
         NextToken;
 
@@ -732,7 +821,7 @@ begin
               NextToken;
             if (FCurrentToken.TokenKind = TYAMLTokenKind.Value) and
                (FCurrentToken.IndentLevel > scalarIndent) and
-               (FLexer.PeekToken.TokenKind <> TYAMLTokenKind.Colon) then
+               (FLexer.PeekTokenKind <> TYAMLTokenKind.Colon) then
             begin
               if blankLines > 1 then
                 value := value + StringOfChar(#10, blankLines - 1)
@@ -764,7 +853,13 @@ begin
             RaiseParseError('Missing colon after key "' + firstPart + '"');
         end;
 
-        valueType := IsScalarValue(value, FJSONMode);
+        // A single token the lexer already validated as a plain number needs no
+        // re-classification (continuation lines would have lengthened value).
+        if (firstNumberType <> TYAMLValueType.vtNull) and (partCount = 1) and
+           (Length(value) = Length(firstPart)) then
+          valueType := firstNumberType
+        else
+          valueType := IsScalarValue(value, FJSONMode);
 
         // Additional JSON mode validation for invalid literals.
         // Reaching this branch in JSON mode means we have an unquoted plain
@@ -817,6 +912,7 @@ begin
         NextToken;
       end;
 
+      Intern(value, FValueIntern);
       result := TYAMLValue.Create(parent, valueType, value, tag);
       CheckForSameLineComment(result);
     end;
@@ -850,7 +946,7 @@ begin
     // In JSON mode, check for invalid mapping syntax inside arrays
     if FJSONMode then
     begin
-      if (FCurrentToken.TokenKind in [TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString]) and (FLexer.PeekToken.TokenKind = TYAMLTokenKind.Colon) then
+      if (FCurrentToken.TokenKind in [TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString]) and (FLexer.PeekTokenKind = TYAMLTokenKind.Colon) then
       begin
         RaiseParseError('Invalid syntax: object key-value pairs are not allowed in JSON arrays');
       end;
@@ -909,10 +1005,12 @@ end;
 
 function TYAMLParser.ParseFlowMapping(const parent : IYAMLValue; const tag : string) : IYAMLMapping;
 var
+  mappingPriv : IYAMLMappingPrivate; // obtained once; a per-key 'as' cast is a QueryInterface
   key : string;
   value : IYAMLValue;
 begin
   result := TYAMLMapping.Create(parent, tag);
+  mappingPriv := result as IYAMLMappingPrivate;
   AssignPendingCommentsToCollection(result);
   ExpectToken(TYAMLTokenKind.LBrace); // '{'
 
@@ -937,6 +1035,7 @@ begin
       end;
       
       key := FCurrentToken.value;
+      Intern(key, FKeyIntern);
       if (FOptions.DuplicateKeyBehavior = TYAMLDuplicateKeyBehavior.dkError) and result.ContainsKey(key) then
         RaiseParseError('duplicated mapping key : "' + key + '"');
       NextToken;
@@ -961,7 +1060,7 @@ begin
         RaiseParseError('Expected ":" in JSON object');
       value := TYAMLValue.Create(result, TYAMLValueType.vtNull, '', '');
     end;
-    (result as IYAMLMappingPrivate).AddOrSetValue(key, value);
+    mappingPriv.AddOrSetValue(key, value);
 
     SkipNewlines;
 
@@ -1054,6 +1153,7 @@ end;
 
 function TYAMLParser.ParseMapping(const parent : IYAMLValue; const tag : string; const firstKey : string = '') : IYAMLMapping;
 var
+  mappingPriv : IYAMLMappingPrivate; // obtained once; a per-key 'as' cast is a QueryInterface
   key : string;
   value : IYAMLValue;
   expectedIndent : integer;
@@ -1065,6 +1165,7 @@ begin
     RaiseParseError('Block-style mapping is not valid in JSON; use flow-style "{...}" objects');
 
   result := TYAMLMapping.Create(parent, tag);
+  mappingPriv := result as IYAMLMappingPrivate;
   AssignPendingCommentsToCollection(result);
   expectedIndent := FCurrentToken.IndentLevel;
 
@@ -1082,6 +1183,7 @@ begin
         end;
         
         key := FCurrentToken.value;
+        Intern(key, FKeyIntern);
         // Only check for duplicates if we're in error mode (skip lookup otherwise)
         if (FOptions.DuplicateKeyBehavior = TYAMLDuplicateKeyBehavior.dkError) and result.ContainsKey(key) then
           RaiseParseError('duplicated mapping key : "' + key + '"');
@@ -1107,7 +1209,7 @@ begin
           // This is clearly an empty value
           value := TYAMLValue.Create(result, TYAMLValueType.vtNull, '', '');
         end
-        else if ((FCurrentToken.TokenKind in [TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString]) and (FLexer.PeekToken.TokenKind = TYAMLTokenKind.Colon) and (FCurrentToken.IndentLevel <= keyIndentLevel)) then
+        else if ((FCurrentToken.TokenKind in [TYAMLTokenKind.Value, TYAMLTokenKind.QuotedString]) and (FLexer.PeekTokenKind = TYAMLTokenKind.Colon) and (FCurrentToken.IndentLevel <= keyIndentLevel)) then
         begin
           // This is clearly an empty value
           value := TYAMLValue.Create(result, TYAMLValueType.vtNull, '', '');
@@ -1136,12 +1238,12 @@ begin
         // Merge the aliased mapping into current mapping
         if value.IsMapping then
         begin
-          (result as IYAMLMappingPrivate).MergeMapping(value.AsMapping);
+          mappingPriv.MergeMapping(value.AsMapping);
         end;
         // Don't store the merge key itself
       end
       else
-        (result as IYAMLMappingPrivate).AddOrSetValue(key, value);
+        mappingPriv.AddOrSetValue(key, value);
 
       SkipNewlines;
 
@@ -1155,7 +1257,7 @@ begin
       if ((FCurrentToken.TokenKind = TYAMLTokenKind.Value) or (FCurrentToken.TokenKind = TYAMLTokenKind.QuotedString)) then
       begin
         // Check if this is a key (followed by colon)
-        if (FLexer.PeekToken.TokenKind = TYAMLTokenKind.Colon) then
+        if (FLexer.PeekTokenKind = TYAMLTokenKind.Colon) then
         begin
           // This is a key - check indentation to see if it belongs to this mapping
           if (FCurrentToken.IndentLevel >= expectedIndent) then
@@ -1223,7 +1325,7 @@ begin
     TYAMLTokenKind.QuotedString :
       begin
       // Check if this is the start of a mapping (key followed by colon)
-        if (FLexer.PeekToken.TokenKind = TYAMLTokenKind.Colon) then
+        if (FLexer.PeekTokenKind = TYAMLTokenKind.Colon) then
         begin
           // This is a mapping key
           result := ParseMapping(parent, tag);
@@ -1451,6 +1553,8 @@ begin
         
         // Parse document content
         root := ParseValue(nil);
+        if not FJSONMode then
+          CheckDocumentEnd;
         doc := TYAMLDocument.Create(root, FYAMLVersion, FTagDirectives);
         documents.Add(doc);
         Inc(documentCount);
@@ -1605,7 +1709,11 @@ begin
     if FCurrentToken.TokenKind = TYAMLTokenKind.EOF then
       root := TYAMLValue.Create(nil, TYAMLValueType.vtNull, '', '')
     else
+    begin
       root := ParseDocument;
+      if not FJSONMode then
+        CheckDocumentEnd;
+    end;
 
     // RFC 8259 §2: a JSON text contains exactly one top-level value.
     // Reject any non-trivial trailing content.

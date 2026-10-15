@@ -12,25 +12,71 @@ uses
   VSoft.YAML.TagInfo;
 
 type
-  IYAMLValuePrivate = interface
-  ['{B6122037-9063-45C4-BD6F-279583AA4576}']
-    procedure ClearParent;
+  // Every value in a document is a heap object, so the node classes are kept small:
+  // fields most nodes never use live in this record, allocated on first use, and each
+  // class lists only the interfaces it adds (each listing costs 8 bytes per object).
+  PYAMLValueExtra = ^TYAMLValueExtra;
+  TYAMLValueExtra = record
+    Tag : string;  // Keep for backward compatibility
+    TagInfo : IYAMLTagInfo;
+    Comment : string;
+    Comments : TStringList; // collections only
   end;
 
-  TYAMLValue = class(TInterfacedObject, IYAMLValue, IYAMLValuePrivate)
+  // A sequence's items, held in the sequence object itself rather than in a separate
+  // TList. Out-of-range access raises as TList<T> did.
+  TYAMLValueList = record
   private
-    FValueType : TYAMLValueType;
-    FRawValue : string;
-    FTag : string;  // Keep for backward compatibility
-    FTagInfo : IYAMLTagInfo;
-    FParent : Pointer;
-    FComment : string;
+    FValues : TArray<IYAMLValue>;
+    FCount : integer;
+    function GetItem(index : integer) : IYAMLValue;inline;
+    procedure SetItem(index : integer; const value : IYAMLValue);inline;
+    procedure RaiseOutOfRange;
+  public
+    procedure Add(const value : IYAMLValue);
+    procedure Clear;
+    property Count : integer read FCount;
+    property Items[index : integer] : IYAMLValue read GetItem write SetItem; default;
+  end;
 
+  TYAMLMappingEntry = record
+    Key : string;
+    Value : IYAMLValue;
+  end;
+
+{$IF defined(AUTOREFCOUNT) or not defined(XE3PLUS)}
+  TYAMLNodeBase = class(TInterfacedObject)
+  protected
+    FValueType : TYAMLValueType;
+  end;
+{$ELSE}
+  // TInterfacedObject's behaviour without its separate IInterface slot (IInterface is
+  // answered with IYAMLValue) and with the value type packed beside the reference
+  // count: 16 bytes less per node.
+  TYAMLNodeBase = class(TObject)
+  protected
+    FRefCount : integer;
+    FValueType : TYAMLValueType;
+    function QueryInterface(const IID : TGUID; out Obj) : HResult; stdcall;
+    function _AddRef : integer; stdcall;
+    function _Release : integer; stdcall;
+  public
+    procedure AfterConstruction; override;
+    procedure BeforeDestruction; override;
+    class function NewInstance : TObject; override;
+  end;
+{$IFEND}
+
+  TYAMLValue = class(TYAMLNodeBase, IYAMLValue)
+  private
+    FRawValue : string;
+    FParent : Pointer;
+    FExtra : PYAMLValueExtra;
+    function Extra : PYAMLValueExtra;
   protected
     function GetComment : string;
     procedure SetComment(const value : string);
     function GetCount : integer;virtual;
-    procedure ClearParent;inline;
     function GetParent : IYAMLValue;
     function FindRoot : IYAMLValue;
     function GetNodes(Index : integer) : IYAMLValue;virtual;
@@ -82,13 +128,12 @@ type
     constructor Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string = ''; const tag : string = ''); overload;
     constructor Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string; const tagInfo : IYAMLTagInfo); overload;
     constructor CreateNull;
+    destructor Destroy; override;
     // String representation
     function ToString : string; override;
   end;
 
-  TYAMLCollection = class(TYAMLValue, IYAMLValue, IYAMLCollection)
-  private
-    FComments : TStringList; // lazy create;
+  TYAMLCollection = class(TYAMLValue, IYAMLCollection)
   protected
     procedure EnsureComments;
     function GetHasComments : boolean;inline;
@@ -103,13 +148,11 @@ type
   public
     constructor Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string = ''; const tag : string = ''); overload;
     constructor Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string; const tagInfo : IYAMLTagInfo); overload;
-    destructor Destroy; override;
-
   end;
 
-  TYAMLSequence = class(TYAMLCollection, IYAMLSequence,IYAMLCollection, IYAMLValue, IYAMLValuePrivate)
+  TYAMLSequence = class(TYAMLCollection, IYAMLSequence)
   private
-    FItems : TList<IYAMLValue>;
+    FItems : TYAMLValueList;
   protected
     class function GetNodeValueType : TYAMLValueType;virtual;
     function GetNodes(Index : integer) : IYAMLValue;override;
@@ -189,7 +232,7 @@ type
   end;
 
 
-  TYAMLSet = class(TYAMLSequence, IYAMLSet,IYAMLSequence, IYAMLCollection, IYAMLValue, IYAMLValuePrivate)
+  TYAMLSet = class(TYAMLSequence, IYAMLSet)
   private
     FValues : TStringList; // For fast duplicate checking using string representations
   protected
@@ -208,13 +251,21 @@ type
   ['{F14352DD-0C83-4BDE-988B-C007D0FE93AC}']
     procedure AddOrSetValue(const key : string; const value : IYAMLValue);
     procedure MergeMapping(const ASourceMapping : IYAMLMapping);
+    // value by insertion index, so iterating Keys[i] needs no per-key lookup
+    function ValueAt(index : integer) : IYAMLValue;
   end;
 
-  TYAMLMapping = class(TYAMLCollection, IYAMLMapping, IYAMLCollection, IYAMLValue, IYAMLValuePrivate, IYAMLMappingPrivate)
+  TYAMLMapping = class(TYAMLCollection, IYAMLMapping, IYAMLMappingPrivate)
   private
-    FPairs : TDictionary<string, IYAMLValue>;
-    FKeys : TList<string>;  // To maintain order
+    // Insertion-ordered entries. Most mappings are small, so lookups are a linear
+    // scan; FIndex (key -> slot) is only built once a mapping grows past
+    // cIndexThreshold keys.
+    FEntries : TArray<TYAMLMappingEntry>;
+    FCount : integer;
+    FIndex : TDictionary<string, integer>;
+    function IndexOfKey(const key : string) : integer;
   protected
+    function ValueAt(index : integer) : IYAMLValue;
     function GetCount : integer;override;
     function GetNodes(Index : integer) : IYAMLValue;override;
 
@@ -454,6 +505,14 @@ const
 /// </summary>
 function YAMLFloatToStr(const value : Double) : string;
 
+/// <summary>
+///  Fast path for re-emitting a float's raw text. Returns true when raw is a plain
+///  decimal ([-]digits.digits, no exponent, at most 15 significant digits) and sets
+///  text to exactly what FloatToStr(StrToFloat(raw, YAMLFormatSettings), YAMLFormatSettings)
+///  would produce, without either conversion. Returns false for anything else.
+/// </summary>
+function YAMLCanonicalFloatText(const raw : string; out text : string) : boolean;
+
 implementation
 
 uses
@@ -462,6 +521,63 @@ uses
   VSoft.YAML.Utils,
   VSoft.YAML.Writer,
   VSoft.YAML.Path;
+
+function YAMLCanonicalFloatText(const raw : string; out text : string) : boolean;
+var
+  len, i, intStart, intLen, fracStart, fracLen, fracZeros, sigDigits : integer;
+begin
+  result := false;
+  len := Length(raw);
+  i := 1;
+  if (len > 0) and (raw[1] = '-') then
+    Inc(i);
+  intStart := i;
+  while (i <= len) and (raw[i] >= '0') and (raw[i] <= '9') do
+    Inc(i);
+  intLen := i - intStart;
+  // need digits, no leading zero, then a '.'
+  if (intLen = 0) or ((intLen > 1) and (raw[intStart] = '0')) or (i > len) or (raw[i] <> '.') then
+    exit;
+  Inc(i);
+  fracStart := i;
+  while (i <= len) and (raw[i] >= '0') and (raw[i] <= '9') do
+    Inc(i);
+  if (i <= len) or (i = fracStart) then // exponent / trailing junk, or no fraction digits
+    exit;
+  fracLen := i - fracStart;
+  while (fracLen > 0) and (raw[fracStart + fracLen - 1] = '0') do
+    Dec(fracLen);
+
+  if (intLen = 1) and (raw[intStart] = '0') then
+  begin
+    if fracLen = 0 then
+    begin
+      if intStart > 1 then // -0.0 : leave signed zero to the RTL
+        exit;
+      text := '0';
+      exit(true);
+    end;
+    fracZeros := 0;
+    while raw[fracStart + fracZeros] = '0' do
+      Inc(fracZeros);
+    // FloatToStr switches to exponent form for small magnitudes
+    if fracZeros > 2 then
+      exit;
+    sigDigits := fracLen - fracZeros;
+  end
+  else
+    sigDigits := intLen + fracLen;
+  if sigDigits > 15 then
+    exit;
+
+  if fracLen = 0 then
+    text := Copy(raw, 1, fracStart - 2)
+  else if fracStart + fracLen - 1 = len then
+    text := raw
+  else
+    text := Copy(raw, 1, fracStart + fracLen - 1);
+  result := true;
+end;
 
 function YAMLFloatToStr(const value : Double) : string;
 begin
@@ -478,13 +594,129 @@ begin
     result := FloatToStr(value, YAMLFormatSettings);
 end;
 
+{$IF not (defined(AUTOREFCOUNT) or not defined(XE3PLUS))}
+
+{ TYAMLNodeBase }
+
+const
+  // System.ObjCastGUID, which 'intf as TObject' asks for (declared in System's
+  // implementation section)
+  cObjCastGUID : TGUID = '{CEDF24DE-80A4-447D-8C75-EB871DC121FD}';
+  cDestroying = Integer($80000000);
+
+function TYAMLNodeBase.QueryInterface(const IID : TGUID; out Obj) : HResult;
+begin
+  // checked first: collections cast every child this way when they are destroyed
+  if IsEqualGUID(IID, cObjCastGUID) then
+  begin
+    Pointer(Obj) := Pointer(Self);
+    exit(S_OK);
+  end;
+  if GetInterface(IID, Obj) then
+    exit(S_OK);
+  // no slot of its own (see the class comment): any interface the node has will do
+  if IsEqualGUID(IID, IInterface) and GetInterface(IYAMLValue, Obj) then
+    exit(S_OK);
+  result := E_NOINTERFACE;
+end;
+
+function TYAMLNodeBase._AddRef : integer;
+begin
+  result := AtomicIncrement(FRefCount);
+end;
+
+function TYAMLNodeBase._Release : integer;
+begin
+  result := AtomicDecrement(FRefCount);
+  if result = 0 then
+  begin
+    // so that any refcounting during destruction cannot get back to zero
+    FRefCount := cDestroying;
+    Destroy;
+  end;
+end;
+
+procedure TYAMLNodeBase.AfterConstruction;
+begin
+  // release the constructor's implicit reference
+  AtomicDecrement(FRefCount);
+end;
+
+procedure TYAMLNodeBase.BeforeDestruction;
+begin
+  if (FRefCount <> 0) and (FRefCount <> cDestroying) then
+    System.Error(reInvalidPtr);
+end;
+
+class function TYAMLNodeBase.NewInstance : TObject;
+begin
+  // a reference held during construction, so refcounting there cannot free the node
+  result := inherited NewInstance;
+  TYAMLNodeBase(result).FRefCount := 1;
+end;
+
+{$IFEND}
+
+{ TYAMLValueList }
+
+procedure TYAMLValueList.RaiseOutOfRange;
+begin
+  raise EArgumentOutOfRangeException.Create('Argument out of range');
+end;
+
+function TYAMLValueList.GetItem(index : integer) : IYAMLValue;
+begin
+  if Cardinal(index) >= Cardinal(FCount) then
+    RaiseOutOfRange;
+  result := FValues[index];
+end;
+
+procedure TYAMLValueList.SetItem(index : integer; const value : IYAMLValue);
+begin
+  if Cardinal(index) >= Cardinal(FCount) then
+    RaiseOutOfRange;
+  FValues[index] := value;
+end;
+
+procedure TYAMLValueList.Add(const value : IYAMLValue);
+begin
+  if FCount = Length(FValues) then
+  begin
+    if FCount = 0 then
+      SetLength(FValues, 4)
+    else
+      SetLength(FValues, FCount * 2);
+  end;
+  FValues[FCount] := value;
+  Inc(FCount);
+end;
+
+procedure TYAMLValueList.Clear;
+begin
+  FValues := nil;
+  FCount := 0;
+end;
+
+// Children hold a raw pointer to their collection, so one still referenced elsewhere
+// must forget it when the collection goes.
+procedure DetachFromParent(const value : IYAMLValue);
+var
+  obj : TObject;
+begin
+  if value = nil then
+    exit;
+  obj := value as TObject;
+  if obj is TYAMLValue then
+    TYAMLValue(obj).FParent := nil;
+end;
+
 { TYAMLValue }
 
 //TODO : handle !yaml! style tags
 procedure TYAMLValue.ApplyTagConversion;
 begin
   // Apply type conversion based on tag
-  if FTag <> '' then
+  if GetTag <> '' then
   begin
     if IsTaggedAs('!!str') then
       FValueType := TYAMLValueType.vtString
@@ -547,7 +779,8 @@ function TYAMLValue.AsCollection: IYAMLCollection;
 begin
   if not IsCollection then
     raise Exception.Create('Value is not a collection');
-  result := Self as IYAMLCollection;
+  result := nil; // GetInterface overwrites without releasing
+  GetInterface(IYAMLCollection, result);
 end;
 
 function TYAMLValue.AsCurrency: Currency;
@@ -591,9 +824,18 @@ end;
 function TYAMLValue.AsFloat : Double;
 var
   trimmedValue : string;
+  len : integer;
 begin
   if not IsFloat then
     raise Exception.Create('Value is not a float');
+
+  // Common case: an ordinary number with no surrounding whitespace. The special
+  // values below all start with '.', '+' or '-.', so they never take this path.
+  len := Length(FRawValue);
+  if (len > 0) and (FRawValue[len] > ' ') and
+     (CharInSet(FRawValue[1], ['0'..'9']) or
+      ((len > 1) and (FRawValue[1] = '-') and CharInSet(FRawValue[2], ['0'..'9']))) then
+    exit(StrToFloat(FRawValue, YAMLFormatSettings));
 
   trimmedValue := Trim(FRawValue);
 
@@ -688,7 +930,8 @@ function TYAMLValue.AsMapping : IYAMLMapping;
 begin
   if not IsMapping then
     raise Exception.Create('Value is not a mapping : ');
-  result := Self as IYAMLMapping;
+  result := nil; // GetInterface overwrites without releasing
+  GetInterface(IYAMLMapping, result);
 end;
 
 function TYAMLValue.AsSequence : IYAMLSequence;
@@ -696,14 +939,16 @@ begin
   //todo : a set is a sequence too - should we allow it here
   if not IsSequence then
     raise Exception.Create('Value is not a sequence');
-  result := Self as IYAMLSequence;
+  result := nil; // GetInterface overwrites without releasing
+  GetInterface(IYAMLSequence, result);
 end;
 
 function TYAMLValue.AsSet : IYAMLSet;
 begin
   if not IsSet then
     raise Exception.Create('Value is not a set');
-  result := Self as IYAMLSet;
+  result := nil; // GetInterface overwrites without releasing
+  GetInterface(IYAMLSet, result);
 end;
 
 function TYAMLValue.AsString : string;
@@ -714,27 +959,19 @@ begin
     result := FRawValue;
 end;
 
-procedure TYAMLValue.ClearParent;
-begin
-  FParent := nil;
-end;
-
 constructor TYAMLValue.Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue, tag : string);
 begin
   inherited Create;
   FParent := Pointer(parent);
   FValueType := valueType;
   FRawValue := rawValue;
-  FTag := tag;
 
   // Create tag info from string
-  if FTag <> '' then
+  if tag <> '' then
   begin
-    FTagInfo := TYAMLTagInfoFactory.ParseTag(FTag);
+    SetTag(tag);
     ApplyTagConversion;
-  end
-  else
-    FTagInfo := nil; //TYAMLTagInfoFactory.CreateUnresolvedTag();
+  end;
 end;
 
 constructor TYAMLValue.Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string; const tagInfo : IYAMLTagInfo);
@@ -743,24 +980,38 @@ begin
   FParent := Pointer(parent);
   FValueType := valueType;
   FRawValue := rawValue;
-  FTagInfo := tagInfo;
 
   // Set backward compatible string tag
-  if FTagInfo <> nil then
+  if tagInfo <> nil then
   begin
-    FTag := FTagInfo.ToString;
+    SetTagInfo(tagInfo);
     ApplyTagConversion;
-  end
-  else
-  begin
-    FTag := '';
-    FTagInfo := nil; //TYAMLTagInfoFactory.CreateUnresolvedTag();
   end;
 end;
 
 constructor TYAMLValue.CreateNull;
 begin
   Create(nil, TYAMLValueType.vtNull, '','');
+end;
+
+destructor TYAMLValue.Destroy;
+begin
+  if FExtra <> nil then
+  begin
+    FExtra^.Comments.Free;
+    Dispose(FExtra);
+  end;
+  inherited;
+end;
+
+function TYAMLValue.Extra : PYAMLValueExtra;
+begin
+  if FExtra = nil then
+  begin
+    New(FExtra); // initialises the managed fields
+    FExtra^.Comments := nil;
+  end;
+  result := FExtra;
 end;
 
 
@@ -779,7 +1030,10 @@ end;
 
 function TYAMLValue.GetComment: string;
 begin
-  result := FComment;
+  if FExtra <> nil then
+    result := FExtra^.Comment
+  else
+    result := '';
 end;
 
 function TYAMLValue.GetCount : integer;
@@ -808,12 +1062,18 @@ end;
 
 function TYAMLValue.GetTag : string;
 begin
-  result := FTag;
+  if FExtra <> nil then
+    result := FExtra^.Tag
+  else
+    result := '';
 end;
 
 function TYAMLValue.GetTagInfo : IYAMLTagInfo;
 begin
-  result := FTagInfo;
+  if FExtra <> nil then
+    result := FExtra^.TagInfo
+  else
+    result := nil;
 end;
 
 function TYAMLValue.GetValue(const key : string) : IYAMLValue;
@@ -888,10 +1148,10 @@ end;
 function TYAMLValue.IsTaggedAs(const TagName : string) : boolean;
 begin
   // Check both resolved tag and original text for compatibility
-  if FTagInfo <> nil then
-    result := SameText(FTagInfo.ResolvedTag, TagName) or SameText(FTagInfo.OriginalText, TagName)
+  if (FExtra <> nil) and (FExtra^.TagInfo <> nil) then
+    result := SameText(FExtra^.TagInfo.ResolvedTag, TagName) or SameText(FExtra^.TagInfo.OriginalText, TagName)
   else
-    result := SameText(FTag, TagName);
+    result := SameText(GetTag, TagName);
 end;
 
 function TYAMLValue.IsTimeStamp : boolean;
@@ -906,7 +1166,8 @@ end;
 
 procedure TYAMLValue.SetComment(const value: string);
 begin
-  FComment := value;
+  if (value <> '') or (FExtra <> nil) then
+    Extra^.Comment := value;
 end;
 
 function TYAMLValue.ToString : string;
@@ -926,8 +1187,8 @@ begin
   end;
 
   // Add tag information if present
-  if FTag <> '' then
-    result := FTag + ' ' + result;
+  if GetTag <> '' then
+    result := GetTag + ' ' + result;
 end;
 
 function TYAMLValue.TryGetValue(const key : string; out value : IYAMLValue) : boolean;
@@ -939,29 +1200,33 @@ end;
 
 procedure TYAMLValue.SetTag(const tag : string);
 begin
-  FTag := tag;
+  if (tag = '') and (FExtra = nil) then
+    exit;
+  Extra^.Tag := tag;
   if tag <> '' then
-    FTagInfo := TYAMLTagInfoFactory.ParseTag(tag)
+    FExtra^.TagInfo := TYAMLTagInfoFactory.ParseTag(tag)
   else
-    FTagInfo := nil; //TYAMLTagInfoFactory.CreateUnresolvedTag();
+    FExtra^.TagInfo := nil; //TYAMLTagInfoFactory.CreateUnresolvedTag();
 end;
 
 procedure TYAMLValue.SetTagInfo(const tagInfo : IYAMLTagInfo);
 begin
-  FTagInfo := tagInfo;
+  if (tagInfo = nil) and (FExtra = nil) then
+    exit;
+  Extra^.TagInfo := tagInfo;
   if tagInfo <> nil then
-    FTag := tagInfo.ToString
+    FExtra^.Tag := tagInfo.ToString
   else
-  begin
-    FTag := '';
-    FTagInfo := nil;// TYAMLTagInfoFactory.CreateUnresolvedTag();
-  end;
+    FExtra^.Tag := '';
 end;
 
 procedure TYAMLValue.ClearTag;
 begin
-  FTag := '';
-  FTagInfo := nil; //TYAMLTagInfoFactory.CreateUnresolvedTag();
+  if FExtra <> nil then
+  begin
+    FExtra^.Tag := '';
+    FExtra^.TagInfo := nil; //TYAMLTagInfoFactory.CreateUnresolvedTag();
+  end;
 end;
 
 { TYAMLSequence }
@@ -1155,8 +1420,6 @@ var
 begin
   vt := GetNodeValueType;
   inherited Create(parent, vt, '', tag);
-  FItems := TList<IYAMLValue>.Create;
-  FItems.Capacity := 64;
 end;
 
 procedure TYAMLSequence.Clear;
@@ -1171,17 +1434,15 @@ var
 begin
   vt := GetNodeValueType;
   inherited Create(parent, vt, '', tagInfo);
-  FItems := TList<IYAMLValue>.Create;
 end;
 
 
 destructor TYAMLSequence.Destroy;
 var
-  item : IYAMLValue;
+  i : integer;
 begin
-  for item in FItems do
-    (item as IYAMLValuePrivate).ClearParent;
-  FItems.Free;
+  for i := 0 to FItems.Count - 1 do
+    DetachFromParent(FItems.FValues[i]);
   inherited;
 end;
 
@@ -1486,15 +1747,53 @@ begin
   AddOrSetValue(key, result);
 end;
 
+const
+  cIndexThreshold = 8;
+
+function TYAMLMapping.IndexOfKey(const key : string) : integer;
+begin
+  if FIndex <> nil then
+  begin
+    if not FIndex.TryGetValue(key, result) then
+      result := -1;
+    exit;
+  end;
+  for result := 0 to FCount - 1 do
+    if FEntries[result].Key = key then
+      exit;
+  result := -1;
+end;
+
 procedure TYAMLMapping.AddOrSetValue(const key : string; const value : IYAMLValue);
 var
-  oldCount: Integer;
+  idx : integer;
+  i : integer;
 begin
-  // Use count comparison to detect new key - avoids double lookup
-  oldCount := FPairs.Count;
-  FPairs.AddOrSetValue(key, value);
-  if FPairs.Count > oldCount then
-    FKeys.Add(key);
+  idx := IndexOfKey(key);
+  if idx >= 0 then
+  begin
+    FEntries[idx].Value := value;
+    exit;
+  end;
+  if FCount = Length(FEntries) then
+  begin
+    if FCount = 0 then
+      idx := 4
+    else
+      idx := FCount * 2;
+    SetLength(FEntries, idx);
+  end;
+  FEntries[FCount].Key := key;
+  FEntries[FCount].Value := value;
+  if FIndex <> nil then
+    FIndex.Add(key, FCount)
+  else if FCount >= cIndexThreshold then
+  begin
+    FIndex := TDictionary<string, integer>.Create(FCount * 2);
+    for i := 0 to FCount do
+      FIndex.Add(FEntries[i].Key, i);
+  end;
+  Inc(FCount);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : boolean) : IYAMLValue;
@@ -1663,50 +1962,50 @@ begin
 end;
 
 procedure TYAMLMapping.Clear;
+var
+  i : integer;
 begin
-  FKeys.Clear;
-  FPairs.Clear;
-  if FComments <> nil then
-    FComments.Clear;
-  FComment := '';
+  for i := 0 to FCount - 1 do
+    DetachFromParent(FEntries[i].Value);
+  FEntries := nil;
+  FCount := 0;
+  FreeAndNil(FIndex);
+  if FExtra <> nil then
+  begin
+    if FExtra^.Comments <> nil then
+      FExtra^.Comments.Clear;
+    FExtra^.Comment := '';
+  end;
 end;
 
 function TYAMLMapping.Contains(const key: string): boolean;
 begin
-  result := FPairs.ContainsKey(key);
+  result := IndexOfKey(key) >= 0;
 end;
 
 function TYAMLMapping.ContainsKey(const key : string) : boolean;
 begin
-  result := FPairs.ContainsKey(key);
+  result := IndexOfKey(key) >= 0;
 end;
 
 constructor TYAMLMapping.Create(const parent : IYAMLValue; const tag : string);
 begin
   inherited Create(parent, TYAMLValueType.vtMapping, '', tag);
-  FPairs := TDictionary<string, IYAMLValue>.Create(64);
-  FKeys := TList<string>.Create;
-  FKeys.Capacity := 64;
 end;
 
 constructor TYAMLMapping.Create(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo);
 begin
   inherited Create(parent, TYAMLValueType.vtMapping, '', tagInfo);
-  FPairs := TDictionary<string, IYAMLValue>.Create(64);
-  FKeys := TList<string>.Create;
-  FKeys.Capacity := 64;
 end;
 
 
 destructor TYAMLMapping.Destroy;
 var
-  item : IYAMLValue;
+  i : integer;
 begin
-  for item in FPairs.Values do
-    (item as IYAMLValuePrivate).ClearParent;
-
-  FKeys.Free;
-  FPairs.Free;
+  for i := 0 to FCount - 1 do
+    DetachFromParent(FEntries[i].Value);
+  FIndex.Free;
   inherited Destroy;
 end;
 
@@ -1721,12 +2020,21 @@ end;
 
 function TYAMLMapping.GetCount : integer;
 begin
-  result := FPairs.Count;
+  result := FCount;
 end;
 
 function TYAMLMapping.GetKey(Index : integer) : string;
 begin
-  result := FKeys[index]
+  if (Index < 0) or (Index >= FCount) then
+    raise EArgumentOutOfRangeException.Create('Index out of range');
+  result := FEntries[index].Key
+end;
+
+function TYAMLMapping.ValueAt(index : integer) : IYAMLValue;
+begin
+  if (index < 0) or (index >= FCount) then
+    raise EArgumentOutOfRangeException.Create('Index out of range');
+  result := FEntries[index].Value;
 end;
 
 function TYAMLMapping.GetNodes(Index : integer) : IYAMLValue;
@@ -1829,8 +2137,13 @@ begin
 end;
 
 function TYAMLMapping.GetValue(const key : string) : IYAMLValue;
+var
+  idx : integer;
 begin
-  if not FPairs.TryGetValue(key, result) then
+  idx := IndexOfKey(key);
+  if idx >= 0 then
+    result := FEntries[idx].Value
+  else
     result := TYAMLValue.Create(Self, TYAMLValueType.vtNull,'');
 end;
 
@@ -1928,9 +2241,14 @@ begin
 end;
 
 function TYAMLMapping.TryGetValue(const key : string; out value : IYAMLValue) : boolean;
+var
+  idx : integer;
 begin
-  result := FPairs.TryGetValue(key, value);
-  if not result then
+  idx := IndexOfKey(key);
+  result := idx >= 0;
+  if result then
+    value := FEntries[idx].Value
+  else
     value := TYAMLValue.CreateNull;
 end;
 
@@ -2335,16 +2653,13 @@ end;
 procedure TYAMLCollection.AddComment(const value: string);
 begin
   EnsureComments;
-  FComments.Add(value);
+  FExtra^.Comments.Add(value);
 end;
 
 procedure TYAMLCollection.ClearComments;
 begin
-  if FComments <> nil then
-  begin
-    FComments.Clear;
-    FreeAndNil(FComments);
-  end;
+  if FExtra <> nil then
+    FreeAndNil(FExtra^.Comments);
 end;
 
 constructor TYAMLCollection.Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string; const tag : string);
@@ -2357,28 +2672,21 @@ begin
   inherited Create(parent, valueType, rawValue, tagInfo);
 end;
 
-destructor TYAMLCollection.Destroy;
-begin
-  FComments.Free;
-
-  inherited;
-end;
-
 procedure TYAMLCollection.EnsureComments;
 begin
-  if FComments = nil then
-    FComments := TStringList.Create;
+  if Extra^.Comments = nil then
+    FExtra^.Comments := TStringList.Create;
 end;
 
 function TYAMLCollection.GetComments: TStrings;
 begin
   EnsureComments;
-  result := FComments;
+  result := FExtra^.Comments;
 end;
 
 function TYAMLCollection.GetHasComments: boolean;
 begin
-  result := (FComments <> nil) and (FComments.Count > 0);
+  result := (FExtra <> nil) and (FExtra^.Comments <> nil) and (FExtra^.Comments.Count > 0);
 end;
 
 function TYAMLCollection.Query(const AExpression: string): IYAMLSequence;
@@ -2396,10 +2704,10 @@ begin
   if value <> nil then
   begin
     EnsureComments;
-    FComments.Assign(value);
+    FExtra^.Comments.Assign(value);
   end
-  else
-    FreeAndNil(FComments);
+  else if FExtra <> nil then
+    FreeAndNil(FExtra^.Comments);
 end;
 
 { TYAMLVersion }

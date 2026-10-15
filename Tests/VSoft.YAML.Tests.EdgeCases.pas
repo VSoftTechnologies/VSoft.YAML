@@ -56,6 +56,10 @@ type
     procedure Test_ValidYAML_UnicodeEscapeSequences;
     [Test]
     procedure Test_InvalidYAML_CircularReference;
+    [Test]
+    procedure Test_InvalidYAML_MisindentedSequenceItem_Raises;
+    [Test]
+    procedure Test_ValidYAML_TrailingCommentsAndDocumentMarkers;
 
     // Memory and performance stress tests
     [Test]
@@ -575,6 +579,98 @@ begin
       // Expected if circular references aren't supported
       Assert.Pass('Parser correctly handles circular reference');
   end;
+end;
+
+procedure TYAMLEdgeCasesTests.Test_InvalidYAML_MisindentedSequenceItem_Raises;
+begin
+  // A "- item" indented under a mapping fits neither the mapping nor a sequence. The
+  // parser used to stop there and return what it had, silently dropping 'b: 2' and
+  // everything after it.
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('a: 1' + sLineBreak +
+                           '  - x' + sLineBreak +
+                           'b: 2');
+    end,
+    EYAMLParseException
+  );
+
+  // Same, inside a nested mapping
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('top:' + sLineBreak +
+                           '  a: 1' + sLineBreak +
+                           '    - x' + sLineBreak +
+                           '  b: 2' + sLineBreak +
+                           'c: 3');
+    end,
+    EYAMLParseException
+  );
+
+  // After a sibling mapping that follows a sequence
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('list:' + sLineBreak +
+                           '  - 1' + sLineBreak +
+                           'types:' + sLineBreak +
+                           '  a: 1' + sLineBreak +
+                           '  - id: 0' + sLineBreak +
+                           'more: 2');
+    end,
+    EYAMLParseException
+  );
+
+  // The multi-document path must not treat the leftover as a second document
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadAllFromString('a: 1' + sLineBreak +
+                              '  - x' + sLineBreak +
+                              'b: 2');
+    end,
+    EYAMLParseException
+  );
+end;
+
+procedure TYAMLEdgeCasesTests.Test_ValidYAML_TrailingCommentsAndDocumentMarkers;
+var
+  doc : IYAMLDocument;
+  docs : TArray<IYAMLDocument>;
+begin
+  // Comments and blank lines after the root value are fine
+  doc := TYAML.LoadFromString('a: 1' + sLineBreak +
+                              'b: 2' + sLineBreak +
+                              '# trailing comment' + sLineBreak +
+                              sLineBreak);
+  Assert.AreEqual(2, doc.AsMapping.Count);
+  Assert.AreEqual<Int64>(2, doc.AsMapping.Values['b'].AsInteger);
+
+  // An explicit document end marker
+  doc := TYAML.LoadFromString('a: 1' + sLineBreak + '...' + sLineBreak);
+  Assert.AreEqual(1, doc.AsMapping.Count);
+
+  // LoadFromString returns the first document of a multi-document stream
+  doc := TYAML.LoadFromString('a: 1' + sLineBreak + '---' + sLineBreak + 'b: 2');
+  Assert.AreEqual(1, doc.AsMapping.Count);
+  Assert.IsTrue(doc.AsMapping.ContainsKey('a'));
+
+  docs := TYAML.LoadAllFromString('a: 1' + sLineBreak +
+                                  '---' + sLineBreak +
+                                  'b: 2' + sLineBreak +
+                                  '...' + sLineBreak);
+  Assert.AreEqual(2, Integer(Length(docs)));
+  Assert.IsTrue(docs[1].AsMapping.ContainsKey('b'));
+
+  // A properly indented sequence under a key, followed by a sibling key
+  doc := TYAML.LoadFromString('a:' + sLineBreak +
+                              '  - x' + sLineBreak +
+                              '  - y' + sLineBreak +
+                              'b: 2');
+  Assert.AreEqual(2, doc.AsMapping.Values['a'].AsSequence.Count);
+  Assert.AreEqual<Int64>(2, doc.AsMapping.Values['b'].AsInteger);
 end;
 
 // Memory and performance stress tests

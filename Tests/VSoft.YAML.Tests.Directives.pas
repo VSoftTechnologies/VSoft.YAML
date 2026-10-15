@@ -150,14 +150,19 @@ var
   yamlText: string;
   doc: IYAMLDocument;
 begin
-  // Test that default !! tags work without explicit directives
-  yamlText := 
+  // Test that default !! tags work without explicit directives.
+  // (Two items in a sequence: two bare root scalars is not a valid document, and used to
+  // parse only because the parser silently dropped the second line.)
+  yamlText :=
     '---' + sLineBreak +
-    '!!str test' + sLineBreak +
-    '!!int 42';
+    '- !!str test' + sLineBreak +
+    '- !!int 42';
 
   doc := TYAML.LoadFromString(yamlText);
   Assert.IsNotNull(doc.Root, 'Document should be parsed successfully');
+  Assert.AreEqual(2, doc.Root.AsSequence.Count);
+  Assert.AreEqual('test', doc.Root.AsSequence[0].AsString);
+  Assert.AreEqual<Int64>(42, doc.Root.AsSequence[1].AsInteger);
 end;
 
 procedure TYAMLDirectiveTests.TestDefaultTagHandles;
@@ -165,14 +170,16 @@ var
   yamlText: string;
   doc: IYAMLDocument;
 begin
-  // Test that default tag handles are available
-  yamlText := 
+  // Test that default tag handles are available (sequence items - see TestTagResolution)
+  yamlText :=
     '---' + sLineBreak +
-    '!local test' + sLineBreak +
-    '!!str value';
+    '- !local test' + sLineBreak +
+    '- !!str value';
 
   doc := TYAML.LoadFromString(yamlText);
   Assert.IsNotNull(doc.Root, 'Document should be parsed successfully');
+  Assert.AreEqual(2, doc.Root.AsSequence.Count);
+  Assert.AreEqual('value', doc.Root.AsSequence[1].AsString);
 end;
 
 procedure TYAMLDirectiveTests.TestEmitTagDirectives;
