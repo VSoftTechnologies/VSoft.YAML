@@ -63,6 +63,42 @@ type
     function ToString : string;override;
   end;
 
+  /// <summary>
+  ///  The writers' output sink. Text is appended straight into a UTF-16 buffer (no
+  ///  per-piece strings, virtual calls or byte arrays). For string output, full buffers
+  ///  are set aside as chunks and joined once at the end, so each character is copied
+  ///  once (growing one big string re-copies it at every doubling); for stream output
+  ///  the buffer is encoded and written as it fills, never splitting a surrogate pair.
+  /// </summary>
+  TYAMLOutputBuffer = class
+  private
+    FBuffer : string;
+    FLength : integer;
+    FCapacity : integer;
+    FStream : TStream;      // nil for string output
+    FEncoding : TEncoding;
+    FChunks : TArray<string>;      // string output: filled buffers, in order
+    FChunkLengths : TArray<integer>;
+    FChunkCount : integer;
+    FChunkedLength : integer;      // total characters in FChunks
+    procedure MakeRoom(count : integer);
+    procedure WriteChunk(count : integer);
+  public
+    constructor CreateForString(initialCapacity : integer = 65536);
+    constructor CreateForStream(const stream : TStream; const encoding : TEncoding; writeBOM : boolean; chunkChars : integer = 32768);
+    destructor Destroy; override;
+    procedure Write(const value : string); overload; inline;
+    procedure Write(p : PChar; count : integer); overload;
+    procedure WriteChar(ch : Char); inline;
+    procedure WriteSpaces(count : integer);
+    procedure WriteNewLine; inline;
+    procedure WriteLine(const value : string); inline;
+    /// <summary> Stream output: writes out everything buffered. </summary>
+    procedure Flush;
+    /// <summary> String output: returns the text and empties the buffer. </summary>
+    function ExtractString : string;
+  end;
+
 
 implementation
 
@@ -239,6 +275,186 @@ end;
 procedure TYAMLStringWriter.WriteLine(const Value: string);
 begin
   FStringBuilder.AppendLine(Value)
+end;
+
+{ TYAMLOutputBuffer }
+
+constructor TYAMLOutputBuffer.CreateForString(initialCapacity : integer);
+begin
+  inherited Create;
+  if initialCapacity < 16 then
+    initialCapacity := 16;
+  FCapacity := initialCapacity;
+  SetLength(FBuffer, FCapacity);
+end;
+
+constructor TYAMLOutputBuffer.CreateForStream(const stream : TStream; const encoding : TEncoding; writeBOM : boolean; chunkChars : integer);
+var
+  preamble : TBytes;
+begin
+  inherited Create;
+  FStream := stream;
+  FEncoding := encoding;
+  if chunkChars < 64 then
+    chunkChars := 64;
+  FCapacity := chunkChars;
+  SetLength(FBuffer, FCapacity);
+  // same rule as TYAMLStreamWriter: only at the very start of the stream
+  if writeBOM and (stream.Position = 0) then
+  begin
+    preamble := FEncoding.GetPreamble;
+    if Length(preamble) > 0 then
+      FStream.WriteBuffer(preamble[0], Length(preamble));
+  end;
+end;
+
+destructor TYAMLOutputBuffer.Destroy;
+begin
+  if FStream <> nil then
+    Flush;
+  inherited Destroy;
+end;
+
+procedure TYAMLOutputBuffer.WriteChunk(count : integer);
+var
+  bytes : TBytes;
+begin
+  if count <= 0 then
+    exit;
+  bytes := FEncoding.GetBytes(Copy(FBuffer, 1, count));
+  if Length(bytes) > 0 then
+    FStream.WriteBuffer(bytes[0], Length(bytes));
+  // keep whatever was not written (at most a held-back high surrogate)
+  if count < FLength then
+    Move(PChar(Pointer(FBuffer))[count], Pointer(FBuffer)^, (FLength - count) * SizeOf(Char));
+  Dec(FLength, count);
+end;
+
+procedure TYAMLOutputBuffer.MakeRoom(count : integer);
+var
+  keep : integer;
+begin
+  if FStream <> nil then
+  begin
+    // write out what we have, holding back a trailing high surrogate so a pair is
+    // never encoded in two halves
+    keep := 0;
+    if (FLength > 0) and (Ord(PChar(Pointer(FBuffer))[FLength - 1]) >= $D800) and
+       (Ord(PChar(Pointer(FBuffer))[FLength - 1]) <= $DBFF) then
+      keep := 1;
+    WriteChunk(FLength - keep);
+    if FLength + count <= FCapacity then
+      exit;
+  end;
+  if FCapacity < 16 then
+    FCapacity := 16; // after ExtractString
+  if (FStream = nil) and (FLength > 0) then
+  begin
+    // string output: set the full buffer aside and start a fresh one
+    if FChunkCount = Length(FChunks) then
+    begin
+      SetLength(FChunks, FChunkCount * 2 + 8);
+      SetLength(FChunkLengths, FChunkCount * 2 + 8);
+    end;
+    FChunks[FChunkCount] := FBuffer;
+    FChunkLengths[FChunkCount] := FLength;
+    Inc(FChunkCount);
+    Inc(FChunkedLength, FLength);
+    FBuffer := '';
+    FLength := 0;
+    if FCapacity < 1024 * 1024 then
+      FCapacity := FCapacity * 2;
+  end;
+  // (stream output only gets here for a single write larger than a chunk)
+  while FLength + count > FCapacity do
+    FCapacity := FCapacity * 2;
+  SetLength(FBuffer, FCapacity);
+end;
+
+procedure TYAMLOutputBuffer.Write(const value : string);
+begin
+  Write(PChar(Pointer(value)), Length(value));
+end;
+
+procedure TYAMLOutputBuffer.Write(p : PChar; count : integer);
+begin
+  if count <= 0 then
+    exit;
+  if FLength + count > FCapacity then
+    MakeRoom(count);
+  Move(p^, PChar(Pointer(FBuffer))[FLength], count * SizeOf(Char));
+  Inc(FLength, count);
+end;
+
+procedure TYAMLOutputBuffer.WriteChar(ch : Char);
+begin
+  if FLength + 1 > FCapacity then
+    MakeRoom(1);
+  PChar(Pointer(FBuffer))[FLength] := ch;
+  Inc(FLength);
+end;
+
+procedure TYAMLOutputBuffer.WriteSpaces(count : integer);
+var
+  p : PChar;
+  i : integer;
+begin
+  if count <= 0 then
+    exit;
+  if FLength + count > FCapacity then
+    MakeRoom(count);
+  p := @PChar(Pointer(FBuffer))[FLength];
+  for i := 0 to count - 1 do
+    p[i] := ' ';
+  Inc(FLength, count);
+end;
+
+procedure TYAMLOutputBuffer.WriteNewLine;
+begin
+  Write(sLineBreak);
+end;
+
+procedure TYAMLOutputBuffer.WriteLine(const value : string);
+begin
+  Write(value);
+  Write(sLineBreak);
+end;
+
+procedure TYAMLOutputBuffer.Flush;
+begin
+  if FStream <> nil then
+    WriteChunk(FLength);
+end;
+
+function TYAMLOutputBuffer.ExtractString : string;
+var
+  i, pos : integer;
+begin
+  if FChunkCount = 0 then
+  begin
+    SetLength(FBuffer, FLength);
+    result := FBuffer;
+  end
+  else
+  begin
+    SetLength(result, FChunkedLength + FLength);
+    pos := 0;
+    for i := 0 to FChunkCount - 1 do
+    begin
+      Move(Pointer(FChunks[i])^, PChar(Pointer(result))[pos], FChunkLengths[i] * SizeOf(Char));
+      Inc(pos, FChunkLengths[i]);
+      FChunks[i] := '';
+    end;
+    if FLength > 0 then
+      Move(Pointer(FBuffer)^, PChar(Pointer(result))[pos], FLength * SizeOf(Char));
+  end;
+  FBuffer := '';
+  FLength := 0;
+  FCapacity := 0;
+  FChunks := nil;
+  FChunkLengths := nil;
+  FChunkCount := 0;
+  FChunkedLength := 0;
 end;
 
 end.
