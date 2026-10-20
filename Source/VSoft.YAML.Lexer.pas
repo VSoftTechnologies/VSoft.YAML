@@ -830,12 +830,35 @@ var
   dotCount : integer;
   tempChar : Char;
   ch : Char;
+  hasSeparator : boolean;
+
+  // The numeric run is only actually a number when what follows it is a value
+  // terminator. If it is ordinary plain-scalar content (a letter, '$', '%', a
+  // '-', a '.', ...) then this token is a plain scalar that merely starts with
+  // digits (e.g. '4B599A8C9', '10$compilerCodeName$' or '0x1F.png'), so read the
+  // whole thing as an unquoted string - otherwise the numeric prefix would be split
+  // into its own token and the remainder rejoined with a spurious space ('10 Seattle').
+  // The builder holds the run exactly as written, '_' separators included, so such a
+  // scalar keeps them ('001_0466.JPG'); they are only dropped once it is a number.
+  function FinishNumber : string;
+  begin
+    if not IsNumberTerminator(FReader.Current, FReader.Peek, IsAtEnd) then
+      result := ReadUnquotedString(false)
+    else
+    begin
+      result := FStringBuilder.ToString;
+      if hasSeparator then
+        result := StringReplace(result, '_', '', [rfReplaceAll]);
+    end;
+  end;
+
 begin
   if TryReadPlainNumber(result) then
     exit;
 
   FStringBuilder.Reset;
   dotCount := 0;
+  hasSeparator := False;
 
   // Handle leading sign
   if FReader.Current = '-' then
@@ -877,7 +900,7 @@ begin
         FStringBuilder.Append(FReader.Current);
         FReader.Read;
       end;
-      result := FStringBuilder.ToString;
+      result := FinishNumber;
       Exit; // Done reading hex number
     end
     // Check for octal prefix (0o or 0O)
@@ -898,7 +921,7 @@ begin
         FStringBuilder.Append(FReader.Current);
         FReader.Read;
       end;
-      result := FStringBuilder.ToString;
+      result := FinishNumber;
       Exit; // Done reading octal number
     end
     // Check for binary prefix (0b or 0B)
@@ -919,7 +942,7 @@ begin
         FStringBuilder.Append(FReader.Current);
         FReader.Read;
       end;
-      result := FStringBuilder.ToString;
+      result := FinishNumber;
       Exit; // Done reading binary number
     end
     else
@@ -931,14 +954,14 @@ begin
     // If no special prefix, continue reading as regular decimal number
   end;
 
-  // Read remaining integer digits for decimal numbers with integrated dot checking
+  // Read remaining integer digits for decimal numbers with integrated dot checking.
+  // '_' separators are kept for now - FinishNumber strips them if this is a number.
   while TCharClassHelper.IsDigitOrUnderscore(FReader.Current) and not IsAtEnd do
   begin
     tempChar := FReader.Current;
-    if tempChar <> '_' then
-    begin
-      FStringBuilder.Append(tempChar);
-    end;
+    if tempChar = '_' then
+      hasSeparator := True;
+    FStringBuilder.Append(tempChar);
     FReader.Read;
   end;
 
@@ -999,19 +1022,7 @@ begin
     end;
   end;
   
-  // The numeric run is only actually a number when what follows it is a value
-  // terminator. If it is ordinary plain-scalar content (a letter, '$', '%', a
-  // '-', ...) then this token is a plain scalar that merely starts with digits
-  // (e.g. '4B599A8C9' or '10$compilerCodeName$'), so read the whole thing as an
-  // unquoted string - otherwise the numeric prefix would be split into its own
-  // token and the remainder rejoined with a spurious space ('10 Seattle').
-  if not IsNumberTerminator(FReader.Current, FReader.Peek, IsAtEnd) then
-  begin
-    result := ReadUnquotedString(false);
-    Exit;
-  end;
-
-  result := FStringBuilder.ToString;
+  result := FinishNumber;
 end;
 
 function TYAMLLexer.ReadAnchorOrAlias : string;

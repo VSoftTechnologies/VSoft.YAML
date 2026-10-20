@@ -75,6 +75,7 @@ type
     function IsScalarValueJSON(const trimmedValue : string; len : Integer) : TYAMLValueType;
     function IsScalarValueYAML(const trimmedValue : string; len : Integer) : TYAMLValueType;
     function FastIsNumber(const value : string; out isFloat : Boolean) : Boolean;
+    function IsRadixInteger(const value : string; len : Integer) : Boolean;
     procedure SkipNewlines;
     procedure CheckDocumentEnd;
     procedure RegisterAnchor(const anchorName : string; const value : IYAMLValue);
@@ -251,6 +252,32 @@ begin
     end;
 end;
 
+
+// True when value is a '0x' hex, '0o' octal or '0b' binary integer - the prefix followed
+// by one or more digits of that radix and nothing else. A plain scalar that merely starts
+// like one ('0x1F.png', '0b101.txt') is a string.
+function TYAMLParser.IsRadixInteger(const value : string; len : Integer) : Boolean;
+var
+  i : Integer;
+  ch : Char;
+begin
+  result := False;
+  if (len < 3) or (value[1] <> '0') then
+    Exit;
+  for i := 3 to len do
+  begin
+    ch := value[i];
+    case value[2] of
+      'x', 'X' : result := TCharClassHelper.IsHexDigit(ch);
+      'o', 'O' : result := TCharClassHelper.IsOctalDigit(ch);
+      'b', 'B' : result := TCharClassHelper.IsBinaryDigit(ch);
+    else
+      result := False;
+    end;
+    if not result then
+      Exit;
+  end;
+end;
 
 function TYAMLParser.FastIsNumber(const value: string; out isFloat: Boolean): Boolean;
 var
@@ -598,14 +625,10 @@ begin
   end;
 
   // Check for hex, octal, and binary number formats
-  if (len > 2) and (firstChar = '0') then
+  if IsRadixInteger(trimmedValue, len) then
   begin
-    secondChar := trimmedValue[2];
-    if CharInSet(secondChar, ['x','X','o','O','b','B']) then
-    begin
-      result := TYAMLValueType.vtInteger;
-      Exit;
-    end;
+    result := TYAMLValueType.vtInteger;
+    Exit;
   end;
 
   // Try number parsing using fast checker

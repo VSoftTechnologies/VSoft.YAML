@@ -38,6 +38,12 @@ type
     [Test]
     procedure TestNumberPrefixFollowedByTokenIsString;
 
+    [Test]
+    procedure TestFilenameWithDigitSeparatorsIsString;
+
+    [Test]
+    procedure TestRadixNumberPrefixFollowedByContentIsString;
+
   end;
 
 
@@ -245,6 +251,93 @@ begin
     'float prefix before a token must not split the scalar');
   Assert.AreEqual('1$compilerCodeName$', doc.Root.Values['c'].AsString,
     'single-digit prefix before a token must not split the scalar');
+end;
+
+procedure TBasicYAMLTests.TestFilenameWithDigitSeparatorsIsString;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+  resources : IYAMLSequence;
+  flowSeq : IYAMLSequence;
+begin
+  // Issue #7 - Hugo front matter listing image filenames. '001_0466.JPG' begins with
+  // what looks like a number using '_' digit separators, but the '.JPG' means it is
+  // a plain scalar. The lexer dropped the separators while reading the numeric
+  // prefix and then read the remainder onto the same (now separator-less) text,
+  // so the value came back as '0010466.JPG'.
+  yamlText :=
+    '---' + sLineBreak +
+    'title: "Back Yard, 2010"' + sLineBreak +
+    'description: "Our back yard in 2010"' + sLineBreak +
+    'draft: false' + sLineBreak +
+    'albumthumb: misc/back-yard-2010/001_0467.JPG' + sLineBreak +
+    'resources:' + sLineBreak +
+    '- BackYard.jpg' + sLineBreak +
+    '- 001_0466.JPG' + sLineBreak +
+    '- 001_0467.JPG' + sLineBreak +
+    '- 001_0468.JPG' + sLineBreak +
+    '- 001_0469.JPG' + sLineBreak +
+    '- 001_0470.JPG' + sLineBreak +
+    '- 001_0471.JPG' + sLineBreak +
+    'date: 2010-06-28T09:43:40.000-07:00' + sLineBreak +
+    '---';
+
+  doc := TYAML.LoadFromString(yamlText);
+  Assert.AreEqual('misc/back-yard-2010/001_0467.JPG', doc.Root.Values['albumthumb'].AsString);
+
+  resources := doc.Root.Values['resources'].AsSequence;
+  Assert.AreEqual(7, resources.Count);
+  Assert.AreEqual('BackYard.jpg', resources.Items[0].AsString);
+  Assert.IsTrue(resources.Items[1].IsString, '001_0466.JPG must be a string');
+  Assert.AreEqual('001_0466.JPG', resources.Items[1].AsString);
+  Assert.AreEqual('001_0467.JPG', resources.Items[2].AsString);
+  Assert.AreEqual('001_0471.JPG', resources.Items[6].AsString);
+  Assert.IsTrue(doc.Root.Values['date'].IsTimeStamp, 'date should still be a timestamp');
+
+  // Same in other positions: a float-like prefix, a mapping value and a flow sequence.
+  yamlText :=
+    'a: 1_000.5_x' + sLineBreak +
+    'b: 1_0.2.3' + sLineBreak +
+    'c: [001_0466.JPG, 2_0b]' + sLineBreak +
+    'd: 4_200';
+
+  doc := TYAML.LoadFromString(yamlText);
+  Assert.AreEqual('1_000.5_x', doc.Root.Values['a'].AsString);
+  Assert.AreEqual('1_0.2.3', doc.Root.Values['b'].AsString);
+  flowSeq := doc.Root.Values['c'].AsSequence;
+  Assert.AreEqual(2, flowSeq.Count);
+  Assert.AreEqual('001_0466.JPG', flowSeq.Items[0].AsString);
+  Assert.AreEqual('2_0b', flowSeq.Items[1].AsString);
+  // A real number with digit separators is still a number.
+  Assert.IsTrue(doc.Root.Values['d'].IsInteger, '4_200 should still be an integer');
+  Assert.AreEqual<Int64>(4200, doc.Root.Values['d'].AsInteger);
+end;
+
+procedure TBasicYAMLTests.TestRadixNumberPrefixFollowedByContentIsString;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+begin
+  // A hex, octal or binary prefix followed by plain-scalar content is not a number.
+  // The lexer returned the radix digits as a token of their own, and the parser then
+  // rejoined the remainder with a spurious space ('0x1F.png' -> '0x1F .png').
+  yamlText :=
+    'hex: 0x1F.png' + sLineBreak +
+    'oct: 0o17.dat' + sLineBreak +
+    'bin: 0b101.txt' + sLineBreak +
+    'hexWord: 0xFFzz' + sLineBreak +
+    'flow: [0x1F.png, 0xFF]' + sLineBreak +
+    'num: 0x1F';
+
+  doc := TYAML.LoadFromString(yamlText);
+  Assert.AreEqual('0x1F.png', doc.Root.Values['hex'].AsString);
+  Assert.AreEqual('0o17.dat', doc.Root.Values['oct'].AsString);
+  Assert.AreEqual('0b101.txt', doc.Root.Values['bin'].AsString);
+  Assert.AreEqual('0xFFzz', doc.Root.Values['hexWord'].AsString);
+  Assert.AreEqual('0x1F.png', doc.Root.Values['flow'].AsSequence.Items[0].AsString);
+  Assert.AreEqual<Int64>(255, doc.Root.Values['flow'].AsSequence.Items[1].AsInteger);
+  // A real hex number is still a number.
+  Assert.AreEqual<Int64>(31, doc.Root.Values['num'].AsInteger);
 end;
 
 initialization
