@@ -752,7 +752,7 @@ var
   sign: Boolean;
   empty: Boolean;
 begin
-  dig := 0;
+//  dig := 0;
   i := FirstIndex;
   Result := 0;
   if s = '' then

@@ -447,7 +447,7 @@ begin
   {$IFDEF POSIX}
   doc := TYAML.LoadFromFile('./test_comment_sample.yaml');
   {$ELSE}
-  doc := TYAML.LoadFromFile('..\..\testfiles\test_comment_sample.yaml');
+  doc := TYAML.LoadFromFile(ExtractFilePath(ParamStr(0)) + '..\..\TestFiles\test_comment_sample.yaml');
   {$ENDIF}
 
   // Write it back to string

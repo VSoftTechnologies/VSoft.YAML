@@ -413,7 +413,7 @@ begin
   {$IFDEF POSIX}
   doc := TYAML.LoadFromFile('./test_utf8.yaml');
   {$ELSE}
-  doc := TYAML.LoadFromFile('..\..\testfiles\test_utf8.yaml');
+  doc := TYAML.LoadFromFile(ExtractFilePath(ParamStr(0)) + '..\..\TestFiles\test_utf8.yaml');
   {$ENDIF}
   root := doc.AsMapping;
 
