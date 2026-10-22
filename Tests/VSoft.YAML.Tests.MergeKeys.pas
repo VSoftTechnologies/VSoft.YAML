@@ -38,6 +38,8 @@ type
     procedure Test_MergeKey_CircularReference;
     [Test]
     procedure Test_MergeKey_InvalidReference;
+    [Test]
+    procedure Test_MergeKey_CopiesScalarsExactly;
   end;
 
 implementation
@@ -359,6 +361,38 @@ begin
       Assert.IsTrue(True, 'Parser correctly threw exception for invalid reference: ' + E.Message);
     end;
   end;
+end;
+
+procedure TYAMLMergeKeyTests.Test_MergeKey_CopiesScalarsExactly;
+var
+  yamlContent: string;
+  document: IYAMLDocument;
+  child: IYAMLMapping;
+begin
+  // Merged scalars are copies with the original text, type and tag - not values re-made
+  // through Int64 / Double, which raised on the integer and dropped digits of the decimal.
+  yamlContent :=
+    'base: &base' + sLineBreak +
+    '  big: 18446744073709551615' + sLineBreak +
+    '  decimal: 1234567890123456789012345678.9012345678' + sLineBreak +
+    '  flag: yes' + sLineBreak +
+    '  tagged: !!str 42' + sLineBreak +
+    'child:' + sLineBreak +
+    '  <<: *base' + sLineBreak +
+    '  own: 1';
+
+  document := TYAML.LoadFromString(yamlContent);
+  child := document.AsMapping.Items['child'].AsMapping;
+
+  Assert.IsTrue(child.Items['big'].IsInteger, 'big');
+  Assert.AreEqual('18446744073709551615', child.Items['big'].RawValue);
+  Assert.IsTrue(child.Items['decimal'].IsFloat, 'decimal');
+  Assert.AreEqual('1234567890123456789012345678.9012345678', child.Items['decimal'].RawValue);
+  Assert.IsTrue(child.Items['flag'].IsBoolean, 'flag');
+  Assert.AreEqual('yes', child.Items['flag'].RawValue);
+  Assert.IsTrue(child.Items['tagged'].IsString, 'tagged');
+  Assert.AreEqual('!!str', child.Items['tagged'].Tag);
+  Assert.AreEqual(1, Integer(child.Items['own'].AsInteger));
 end;
 
 initialization

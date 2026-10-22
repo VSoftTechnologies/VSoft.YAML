@@ -214,6 +214,7 @@ type
     function AddValue(const value : TDateTime; isUTC : boolean; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
 
     function AddNull(const tag : string = '') : IYAMLValue;
+    function AddNumber(const value : string) : IYAMLValue;
 
     function AddMapping(const tag : string = '') : IYAMLMapping;overload;
     function AddMapping(const tagInfo : IYAMLTagInfo) : IYAMLMapping;overload;
@@ -309,6 +310,7 @@ type
     function AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
 
     function AddOrSetNull(const key : string; const tag : string = '') : IYAMLValue;
+    function AddOrSetNumber(const key : string; const value : string) : IYAMLValue;
 
     function AddOrSetSequence(const key : string; const tag : string = '') : IYAMLSequence;overload;
     function AddOrSetSequence(const key : string; const tagInfo : IYAMLTagInfo) : IYAMLSequence;overload;
@@ -371,6 +373,7 @@ type
     FEmitTagDirectives : boolean;
     FEmitYAMLDirective : boolean;
     FPrettyPrint : boolean;
+    FEscapeNonASCII : boolean;
     FBlockScalarStyle : TYAMLBlockScalarStyle;
     FBlockChompingIndicator : TYAMLBlockChompingIndicator;
   protected
@@ -398,6 +401,8 @@ type
     procedure SetEmitYAMLDirective(value : boolean);
     function GetPrettyPrint : boolean;inline;
     procedure SetPrettyPrint(const value : boolean);
+    function GetEscapeNonASCII : boolean;
+    procedure SetEscapeNonASCII(const value : boolean);
     function GetBlockScalarStyle : TYAMLBlockScalarStyle;
     procedure SetBlockScalarStyle(value : TYAMLBlockScalarStyle);
     function GetBlockChompingIndicator : TYAMLBlockChompingIndicator;
@@ -513,6 +518,23 @@ function YAMLFloatToStr(const value : Double) : string;
 /// </summary>
 function YAMLCanonicalFloatText(const raw : string; out text : string) : boolean;
 
+/// <summary>
+///  True when value is a number in the JSON (RFC 8259 section 6) grammar:
+///  -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)? with nothing before or after. Every such
+///  text is also a YAML 1.2 int (no fraction or exponent) or float, so the writers can emit
+///  it as is. isFloat is set when it has a fraction or an exponent.
+/// </summary>
+function IsJSONNumber(const value : string) : boolean;overload;
+function IsJSONNumber(const value : string; out isFloat : boolean) : boolean;overload;
+
+/// <summary>
+///  Converts YAML integer text of any size to decimal - an optional '-' then digits with no
+///  leading zero, which is also a JSON integer. Takes decimal digits with an optional sign,
+///  or a 0x hex, 0o octal or 0b binary run (the forms the parser reads as integers), and
+///  returns false for anything else.
+/// </summary>
+function YAMLIntegerToDecimalText(const raw : string; out text : string) : boolean;
+
 implementation
 
 uses
@@ -576,6 +598,143 @@ begin
     text := raw
   else
     text := Copy(raw, 1, fracStart + fracLen - 1);
+  result := true;
+end;
+
+function IsJSONNumber(const value : string) : boolean;
+var
+  isFloat : boolean;
+begin
+  result := IsJSONNumber(value, isFloat);
+end;
+
+function IsJSONNumber(const value : string; out isFloat : boolean) : boolean;
+var
+  len, i, digitStart : integer;
+begin
+  result := false;
+  isFloat := false;
+  len := Length(value);
+  i := 1;
+  if (len > 0) and (value[1] = '-') then
+    Inc(i);
+  // int : a lone 0, or digits that do not start with 0
+  if (i > len) or (value[i] < '0') or (value[i] > '9') then
+    exit;
+  if value[i] = '0' then
+    Inc(i)
+  else
+    while (i <= len) and (value[i] >= '0') and (value[i] <= '9') do
+      Inc(i);
+  // frac : '.' and at least one digit
+  if (i <= len) and (value[i] = '.') then
+  begin
+    Inc(i);
+    digitStart := i;
+    while (i <= len) and (value[i] >= '0') and (value[i] <= '9') do
+      Inc(i);
+    if i = digitStart then
+      exit;
+    isFloat := true;
+  end;
+  // exp : 'e' or 'E', an optional sign and at least one digit
+  if (i <= len) and ((value[i] = 'e') or (value[i] = 'E')) then
+  begin
+    Inc(i);
+    if (i <= len) and ((value[i] = '+') or (value[i] = '-')) then
+      Inc(i);
+    digitStart := i;
+    while (i <= len) and (value[i] >= '0') and (value[i] <= '9') do
+      Inc(i);
+    if i = digitStart then
+      exit;
+    isFloat := true;
+  end;
+  result := i > len;
+end;
+
+function YAMLIntegerToDecimalText(const raw : string; out text : string) : boolean;
+var
+  len, i, j, k, radix, digit, carry, count : integer;
+  negative : boolean;
+  digits : TArray<Byte>; // the value in decimal, least significant digit first
+begin
+  result := false;
+  len := Length(raw);
+  if len = 0 then
+    exit;
+  negative := false;
+  radix := 10;
+  i := 1;
+  if (len > 2) and (raw[1] = '0') and CharInSet(raw[2], ['x', 'X', 'o', 'O', 'b', 'B']) then
+  begin
+    case raw[2] of
+      'x', 'X' : radix := 16;
+      'o', 'O' : radix := 8;
+    else
+      radix := 2;
+    end;
+    i := 3;
+  end
+  else if (raw[1] = '-') or (raw[1] = '+') then
+  begin
+    if len = 1 then
+      exit;
+    negative := raw[1] = '-';
+    i := 2;
+  end;
+
+  // two decimal digits per input digit is enough even for hex, as 16 < 100
+  SetLength(digits, 2 * (len - i + 1));
+  count := 0;
+  for j := i to len do
+  begin
+    case raw[j] of
+      '0'..'9' : digit := Ord(raw[j]) - Ord('0');
+      'a'..'f' : digit := Ord(raw[j]) - Ord('a') + 10;
+      'A'..'F' : digit := Ord(raw[j]) - Ord('A') + 10;
+    else
+      digit := radix; // not a digit at all
+    end;
+    if digit >= radix then
+      exit;
+    // value := value * radix + digit, leading zeros leaving it at zero
+    carry := digit;
+    for k := 0 to count - 1 do
+    begin
+      carry := carry + digits[k] * radix;
+      digits[k] := carry mod 10;
+      carry := carry div 10;
+    end;
+    while carry > 0 do
+    begin
+      digits[count] := carry mod 10;
+      carry := carry div 10;
+      Inc(count);
+    end;
+  end;
+
+  if count = 0 then
+    text := '0'
+  else
+  begin
+    if negative then
+    begin
+      SetLength(text, count + 1);
+      text[1] := '-';
+      i := 2;
+    end
+    else
+    begin
+      SetLength(text, count);
+      i := 1;
+    end;
+    for j := count - 1 downto 0 do
+    begin
+      text[i] := Char(Ord('0') + digits[j]);
+      Inc(i);
+    end;
+  end;
   result := true;
 end;
 
@@ -710,10 +869,26 @@ begin
     TYAMLValue(obj).FParent := nil;
 end;
 
+// A number node holding value exactly as given, typed as the parser would type it.
+function CreateNumberValue(const parent : IYAMLValue; const value : string) : IYAMLValue;
+var
+  isFloat : boolean;
+begin
+  if not IsJSONNumber(value, isFloat) then
+    raise EConvertError.CreateFmt('Invalid number "%s" - the text must be a JSON (RFC 8259) number', [value]);
+  if isFloat then
+    result := TYAMLValue.Create(parent, TYAMLValueType.vtFloat, value)
+  else
+    result := TYAMLValue.Create(parent, TYAMLValueType.vtInteger, value);
+end;
+
 { TYAMLValue }
 
 //TODO : handle !yaml! style tags
 procedure TYAMLValue.ApplyTagConversion;
+var
+  decimalText : string;
+  int64Value : Int64;
 begin
   // Apply type conversion based on tag
   if GetTag <> '' then
@@ -723,12 +898,11 @@ begin
     else if IsTaggedAs('!!int') then
     begin
       FValueType := TYAMLValueType.vtInteger;
-      // Validate that the value can be converted to integer
-      try
-        StrToInt(FRawValue);
-      except
+      // !!int is arbitrary size (YAML 1.2.2 section 10.2.1.3), so decimal, 0o octal and 0x hex
+      // (and YAML 1.1 0b binary) of any length are valid - the writers emit them exactly.
+      // Anything else must convert to an Int64.
+      if not (YAMLIntegerToDecimalText(FRawValue, decimalText) or TryStrToInt64(FRawValue, int64Value)) then
         raise Exception.CreateFmt('Invalid integer value "%s" for !!int tag', [FRawValue]);
-      end;
     end
     else if IsTaggedAs('!!float') then
     begin
@@ -854,9 +1028,7 @@ end;
 function TYAMLValue.AsInteger : Int64;
 var
   trimmedValue: string;
-  i: Integer;
-  octalStr: string;
-  binaryStr: string;
+  decimalText : string;
   uInt64Value : UInt64;
 begin
   if not IsInteger then
@@ -869,39 +1041,15 @@ begin
     exit(0);
 
 
-  // Handle hexadecimal numbers (0x or 0X prefix)
+  // Hexadecimal (0x), octal (0o) and binary (0b), converted exactly. As for a decimal, a
+  // value past High(Int64) is an error rather than a wrapped-around number.
   if (Length(trimmedValue) > 2) and (trimmedValue[1] = '0') and
-     ((trimmedValue[2] = 'x') or (trimmedValue[2] = 'X')) then
+     CharInSet(trimmedValue[2], ['x', 'X', 'o', 'O', 'b', 'B']) then
   begin
-    result := StrToInt('$' + Copy(trimmedValue, 3, Length(trimmedValue) - 2));
-  end
-  // Handle octal numbers (0o or 0O prefix)
-  else if (Length(trimmedValue) > 2) and (trimmedValue[1] = '0') and
-          ((trimmedValue[2] = 'o') or (trimmedValue[2] = 'O')) then
-  begin
-    // Convert octal to decimal
-    result := 0;
-    octalStr := Copy(trimmedValue, 3, Length(trimmedValue) - 2);
-    for i := 1 to Length(octalStr) do
-    begin
-      if (octalStr[i] < '0') or (octalStr[i] > '7') then
-        raise Exception.CreateFmt('Invalid octal digit "%s" in value "%s"', [octalStr[i], FRawValue]);
-      result := result * 8 + (Ord(octalStr[i]) - Ord('0'));
-    end;
-  end
-  // Handle binary numbers (0b or 0B prefix)
-  else if (Length(trimmedValue) > 2) and (trimmedValue[1] = '0') and
-          ((trimmedValue[2] = 'b') or (trimmedValue[2] = 'B')) then
-  begin
-    // Convert binary to decimal
-    result := 0;
-    binaryStr := Copy(trimmedValue, 3, Length(trimmedValue) - 2);
-    for i := 1 to Length(binaryStr) do
-    begin
-      if (binaryStr[i] <> '0') and (binaryStr[i] <> '1') then
-        raise Exception.CreateFmt('Invalid binary digit "%s" in value "%s"', [binaryStr[i], FRawValue]);
-      result := result * 2 + (Ord(binaryStr[i]) - Ord('0'));
-    end;
+    if not YAMLIntegerToDecimalText(trimmedValue, decimalText) then
+      raise EConvertError.CreateFmt('Invalid integer value "%s"', [FRawValue]);
+    if not TryStrToInt64(decimalText, result) then
+      raise EConvertError.CreateFmt('Value "%s" is too large for Int64', [trimmedValue]);
   end
   else
   begin
@@ -1389,6 +1537,12 @@ begin
   AddValue(result);
 end;
 
+function TYAMLSequence.AddNumber(const value : string) : IYAMLValue;
+begin
+  result := CreateNumberValue(Self, value);
+  AddValue(result);
+end;
+
 function TYAMLSequence.AddValue(const value : string; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tagInfo);
@@ -1732,6 +1886,12 @@ begin
   AddOrSetValue(key, result);
 end;
 
+function TYAMLMapping.AddOrSetNumber(const key : string; const value : string) : IYAMLValue;
+begin
+  result := CreateNumberValue(Self, value);
+  AddOrSetValue(key, result);
+end;
+
 function TYAMLMapping.AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean) : IYAMLValue;
 begin
   if isUTC then
@@ -1908,19 +2068,14 @@ end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : string; const tag : string) : IYAMLValue;
 begin
-  if value = '' then
-    result := TYAMLValue.Create(Self, TYAMLValueType.vtNull, value, tag)
-  else
-    result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tag);
+  // '' is an empty string, as AddValue('') is on a sequence - AddOrSetNull writes a null
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tag);
   AddOrSetValue(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : string; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
-  if value = '' then
-    result := TYAMLValue.Create(Self, TYAMLValueType.vtNull, value, tagInfo)
-  else
-    result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tagInfo);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tagInfo);
   AddOrSetValue(key, result);
 end;
 
@@ -2165,19 +2320,15 @@ begin
     // Only add if we don't already have this key (don't override existing values)
     if not ContainsKey(key) then
     begin
-      // Create a copy to avoid shared ownership issues
-      case Value.ValueType of
-        TYAMLValueType.vtString : CopiedValue := TYAMLValue.Create(Self, TYAMLValueType.vtString, Value.AsString, value.Tag);
-        TYAMLValueType.vtInteger : CopiedValue := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(Value.AsInteger), value.Tag);
-        TYAMLValueType.vtFloat : CopiedValue := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(Value.AsFloat), value.Tag);
-        TYAMLValueType.vtBoolean : CopiedValue := TYAMLValue.Create(Self, TYAMLValueType.vtBoolean, BoolToStr(Value.AsBoolean, True), value.Tag);
-        TYAMLValueType.vtNull : CopiedValue := TYAMLValue.Create(Self, TYAMLValueType.vtNull, '', '');
+      // Copy scalars to avoid shared ownership issues - the text, type and tag as they are,
+      // since re-making them from AsInteger / AsFloat cannot hold every value
+      if value.IsScalar then
+        copiedValue := TYAMLValue.Create(Self, value.ValueType, value.RawValue, value.TagInfo)
       else
         // For complex types like mappings and sequences, reference the original
         // (this is safe as long as the source mapping outlives the target)
         //TODO : replace this with a deeep copy
         copiedValue := value;
-      end;
 
       AddOrSetValue(key, copiedValue);
     end;
@@ -2387,6 +2538,7 @@ begin
   FEmitTagDirectives := false;
   FEmitYAMLDirective := false;
   FPrettyPrint := true;
+  FEscapeNonASCII := false;
   FBlockScalarStyle := TYAMLBlockScalarStyle.bssNone;
   FBlockChompingIndicator := TYAMLBlockChompingIndicator.bciClip;
 end;
@@ -2410,6 +2562,7 @@ begin
   FEmitTagDirectives := source.EmitTagDirectives;
   FEmitYAMLDirective := source.EmitYAMLDirective;
   FPrettyPrint := source.PrettyPrint;
+  FEscapeNonASCII := source.EscapeNonASCII;
   FBlockScalarStyle := source.BlockScalarStyle;
   FBlockChompingIndicator := source.BlockChompingIndicator;
 end;
@@ -2518,6 +2671,16 @@ end;
 procedure TYAMLEmitOptions.SetPrettyPrint(const value: boolean);
 begin
   FPrettyPrint := value;
+end;
+
+function TYAMLEmitOptions.GetEscapeNonASCII : boolean;
+begin
+  result := FEscapeNonASCII;
+end;
+
+procedure TYAMLEmitOptions.SetEscapeNonASCII(const value : boolean);
+begin
+  FEscapeNonASCII := value;
 end;
 
 procedure TYAMLEmitOptions.SetQuoteStrings(value : boolean);

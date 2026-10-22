@@ -172,6 +172,8 @@ type
     procedure Test_AddOrSetNull_ExplicitNull;
     [Test]
     procedure Test_AddNull_ExplicitNull;
+    [Test]
+    procedure Test_AddOrSetValue_EmptyString_RoundTripsAsEmptyString;
 
     // Numeric value tests
     [Test]
@@ -859,8 +861,7 @@ begin
   doc := TYAML.CreateMapping;
   root := doc.AsMapping;
   
-  // Add a null value somehow - this might need adjustment based on API
-  root.AddOrSetValue('empty_key', ''); // This might represent null
+  root.AddOrSetNull('empty_key');
 
   doc.Options.EmitExplicitNull := True;
 
@@ -1549,6 +1550,24 @@ begin
   reloaded := TYAML.LoadFromString(yamlStr);
   Assert.AreEqual('first', reloaded.AsSequence[0].AsString);
   Assert.IsTrue(reloaded.AsSequence[1].IsNull, 'AddNull should produce a null value');
+end;
+
+procedure TYAMLWriterTests.Test_AddOrSetValue_EmptyString_RoundTripsAsEmptyString;
+var
+  doc: IYAMLDocument;
+  yamlStr: string;
+  reloaded: IYAMLDocument;
+begin
+  // '' is an empty string, not null - AddOrSetNull is the way to write a null.
+  doc := TYAML.CreateMapping;
+  doc.AsMapping.AddOrSetValue('k', '');
+
+  yamlStr := TYAML.WriteToString(doc);
+  Assert.AreEqual('k: ''''', Trim(yamlStr));
+
+  reloaded := TYAML.LoadFromString(yamlStr);
+  Assert.IsTrue(reloaded.AsMapping.Values['k'].IsString, 'AddOrSetValue(key, '''') should produce a string');
+  Assert.AreEqual('', reloaded.AsMapping.Values['k'].AsString);
 end;
 
 // Numeric value tests

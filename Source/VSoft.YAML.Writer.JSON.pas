@@ -17,6 +17,7 @@ type
   private
     FOptions : IYAMLEmitOptions;
     FPrettyPrint : boolean;
+    FMaxPlainChar : Char; // characters past this are \u escaped (#126 with EscapeNonASCII)
     FOut : TYAMLOutputBuffer;
     FIndentLevel : UInt32;
 
@@ -61,6 +62,10 @@ begin
   // cloning options as we may need to modify them depending on methods called
   FOptions := options.Clone;
   FPrettyPrint := FOptions.PrettyPrint;
+  if FOptions.EscapeNonASCII then
+    FMaxPlainChar := #126
+  else
+    FMaxPlainChar := #$FFFF;
   FOut := nil;
   FIndentLevel := 0;
 end;
@@ -80,9 +85,10 @@ begin
   end;
 end;
 
-// Same escaping as TYAMLCharUtils.EscapeStringForJSON: '"', '\' and control characters
-// are escaped, as is every surrogate (a valid pair as two \uXXXX escapes). Runs of
-// characters that need nothing are copied in one go.
+// '"', '\' and control characters are escaped, as is every surrogate (a valid pair as two
+// \uXXXX escapes) - the same as TYAMLCharUtils.EscapeStringForJSON - and, with
+// EscapeNonASCII, every character past #126. Runs of characters that need nothing are
+// copied in one go.
 procedure TJSONWriterImpl.WriteQuoted(const value : string);
 var
   p : PChar;
@@ -97,7 +103,7 @@ begin
   while i < len do
   begin
     ch := p[i];
-    if (ch >= ' ') and (ch <> '"') and (ch <> '\') and ((Ord(ch) < $D800) or (Ord(ch) > $DFFF)) then
+    if (ch >= ' ') and (ch <= FMaxPlainChar) and (ch <> '"') and (ch <> '\') and ((Ord(ch) < $D800) or (Ord(ch) > $DFFF)) then
     begin
       Inc(i);
       continue;
@@ -113,8 +119,9 @@ begin
       #13: FOut.Write('\r');
       #9: FOut.Write('\t');
     else
-      // other control characters and surrogates (paired or not) - a valid pair simply
-      // comes out as two consecutive escapes, one per code unit
+      // other control characters, surrogates (paired or not) and with EscapeNonASCII
+      // everything past #126 - a valid pair simply comes out as two consecutive escapes,
+      // one per code unit
       FOut.Write('\u');
       FOut.Write(IntToHex(Ord(ch), 4));
     end;
@@ -129,7 +136,8 @@ end;
 procedure TJSONWriterImpl.WriteScalar(const value : IYAMLValue);
 var
   floatValue : Double;
-  floatText : string;
+  rawText : string;
+  decimalText : string;
 begin
   case value.ValueType of
     TYAMLValueType.vtNull :
@@ -142,11 +150,25 @@ begin
         FOut.Write('false');
     end;
     TYAMLValueType.vtInteger :
-      FOut.Write(IntToStr(value.AsInteger));
+    begin
+      // Text that is already a JSON number is written as is, so every digit survives - a
+      // UInt64, or an integer read from JSON that is past Int64. The YAML-only forms
+      // (0x1F, 0o17, +5, 007) are converted to decimal, exactly whatever their size.
+      rawText := value.RawValue;
+      if IsJSONNumber(rawText) then
+        FOut.Write(rawText)
+      else if YAMLIntegerToDecimalText(rawText, decimalText) then
+        FOut.Write(decimalText)
+      else
+        FOut.Write(IntToStr(value.AsInteger));
+    end;
     TYAMLValueType.vtFloat :
     begin
-      if YAMLCanonicalFloatText(value.RawValue, floatText) then
-        FOut.Write(floatText)
+      // As for integers - a Currency, an AddOrSetNumber DECIMAL(38,10) or a parsed value
+      // keeps every digit rather than going through Double.
+      rawText := value.RawValue;
+      if IsJSONNumber(rawText) then
+        FOut.Write(rawText)
       else
       begin
         // RFC 8259 has no representation for NaN/Infinity; emit JSON null instead.

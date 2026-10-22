@@ -120,6 +120,17 @@ type
     [Test]
     procedure TestRFC8259_NoBomByDefault;
 
+    // '' is an empty string on every path; AddOrSetNull / AddNull write null
+    [Test]
+    procedure TestWriteEmptyString_IsNotNull;
+
+    // EscapeNonASCII option - ASCII-only output
+    [Test]
+    procedure TestEscapeNonASCII_EscapesEverythingPast126;
+
+    [Test]
+    procedure TestEscapeNonASCII_OffByDefault;
+
   end;
 
 
@@ -130,6 +141,12 @@ uses
   System.StrUtils,
   System.Math,
   System.Classes;
+
+// The JSON escape text for one UTF-16 code unit, e.g. Escaped('00E9') for e-acute.
+function Escaped(const hex : string) : string;
+begin
+  result := '\' + 'u' + hex;
+end;
 
 { TJSONWritingTests }
 
@@ -257,8 +274,7 @@ begin
 
   Assert.Contains(jsonOutput, '"emptyObject":{}');
   Assert.Contains(jsonOutput, '"emptyArray":[]');
-  // Empty string may be converted to null, so check for the key presence
-  Assert.Contains(jsonOutput, '"emptyString":');
+  Assert.Contains(jsonOutput, '"emptyString":""');
 end;
 
 procedure TJSONWritingTests.TestWriteComplexDocument;
@@ -561,7 +577,7 @@ var
 begin
   doc := TYAML.CreateMapping;
   doc.Options.PrettyPrint := false;
-  doc.AsMapping.AddOrSetValue('nullVal', ''); // Will be converted to null
+  doc.AsMapping.AddOrSetNull('nullVal');
   doc.AsMapping.AddOrSetValue('boolVal', true);
   doc.AsMapping.AddOrSetValue('intVal', 42);
   doc.AsMapping.AddOrSetValue('floatVal', 3.14);
@@ -578,6 +594,7 @@ begin
   jsonOutput := TYAML.WriteToJSONString(doc);
   
   // All types should be represented correctly
+  Assert.Contains(jsonOutput, '"nullVal":null');
   Assert.Contains(jsonOutput, '"boolVal":true');
   Assert.Contains(jsonOutput, '"intVal":42');
   Assert.Contains(jsonOutput, '"stringVal":"hello"');
@@ -628,12 +645,13 @@ begin
   doc.Options.PrettyPrint := false;
   jsonOutput := TYAML.WriteToJSONString(doc);
   
-  // All should be converted to standard decimal JSON numbers
+  // YAML-only forms are converted to decimal JSON numbers
   Assert.Contains(jsonOutput, '"binary":10');        // 0b1010 = 10
   Assert.Contains(jsonOutput, '"octal":493');        // 0o755 = 493
   Assert.Contains(jsonOutput, '"hex":255');          // 0xFF = 255
-  Assert.Contains(jsonOutput, '"scientific":12300'); // 1.23e4 = 12300
-  Assert.Contains(jsonOutput, '"negScientific":-0.00456'); // -4.56E-3 = -0.00456
+  // text that already is a JSON (RFC 8259) number is written exactly as it was read
+  Assert.Contains(jsonOutput, '"scientific":1.23e4');
+  Assert.Contains(jsonOutput, '"negScientific":-4.56E-3');
 end;
 
 procedure TJSONWritingTests.TestPrettyPrintFormatting;
@@ -945,6 +963,54 @@ begin
   finally
     stream.Free;
   end;
+end;
+
+procedure TJSONWritingTests.TestWriteEmptyString_IsNotNull;
+var
+  doc : IYAMLDocument;
+  jsonOutput : string;
+begin
+  doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
+  doc.AsMapping.AddOrSetValue('empty', '');
+  doc.AsMapping.S['emptyS'] := '';
+  doc.AsMapping.AddOrSetSequence('list').AddValue('');
+  doc.AsMapping.AddOrSetNull('null');
+
+  Assert.IsTrue(doc.AsMapping.Items['empty'].IsString, 'AddOrSetValue(key, '''') should store a string');
+  jsonOutput := TYAML.WriteToJSONString(doc);
+  Assert.AreEqual('{"empty":"","emptyS":"","list":[""],"null":null}', jsonOutput);
+end;
+
+procedure TJSONWritingTests.TestEscapeNonASCII_EscapesEverythingPast126;
+var
+  doc : IYAMLDocument;
+  jsonOutput : string;
+begin
+  // e-acute, the euro sign, an emoji (a surrogate pair, RFC 8259 section 7) and DEL are
+  // escaped, in keys and values; '~' (#126) is the last character written as itself
+  doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
+  doc.Options.EscapeNonASCII := true;
+  doc.AsMapping.AddOrSetValue('cl' + Char($E9), 'caf' + Char($E9) + ' ' + #$20AC + ' ' + #$D83D#$DE00 + #127 + '~');
+
+  jsonOutput := TYAML.WriteToJSONString(doc);
+  Assert.AreEqual('{"cl' + Escaped('00E9') + '":"caf' + Escaped('00E9') + ' ' + Escaped('20AC') + ' ' +
+                  Escaped('D83D') + Escaped('DE00') + Escaped('007F') + '~"}', jsonOutput);
+end;
+
+procedure TJSONWritingTests.TestEscapeNonASCII_OffByDefault;
+var
+  doc : IYAMLDocument;
+  jsonOutput : string;
+begin
+  doc := TYAML.CreateMapping;
+  doc.Options.PrettyPrint := false;
+  Assert.IsFalse(doc.Options.EscapeNonASCII, 'EscapeNonASCII should default to false');
+  doc.AsMapping.AddOrSetValue('k', 'caf' + Char($E9));
+
+  jsonOutput := TYAML.WriteToJSONString(doc);
+  Assert.AreEqual('{"k":"caf' + Char($E9) + '"}', jsonOutput);
 end;
 
 initialization

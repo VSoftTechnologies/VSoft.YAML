@@ -6,8 +6,8 @@ min client version: 1.0
 
 metadata:
   id: VSoft.YAML
-  version: 2.0.0
-  description: YAML Parser
+  version: 2.1.0
+  description: A YAML 1.2 and JSON parser and emitter library for Delphi.
   authors: [Vincent Parrett]
   projectUrl: https://github.com/VSoftTechnologies/VSoft.YAML
   repositoryUrl: https://github.com/VSoftTechnologies/VSoft.YAML

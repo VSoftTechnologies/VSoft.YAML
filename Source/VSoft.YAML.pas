@@ -256,10 +256,16 @@ type
     function AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean; const tag : string = '') : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
 
-    // Explicitly add a null value. Unlike AddOrSetValue(key, '') - which cannot distinguish an
-    // empty string from nil for a Delphi string parameter and so stores null - this states the
-    // intent to write a null and reads clearly at the call site.
+    // Explicitly add a null value. AddOrSetValue(key, '') stores an empty string - a Delphi
+    // string cannot be nil, so a null has to be asked for by name.
     function AddOrSetNull(const key : string; const tag : string = '') : IYAMLValue;
+
+    // Add a number from its text, which is written exactly as given in JSON and YAML - for
+    // values Int64 and Double cannot hold, e.g. a UInt64 or a SQL DECIMAL(38,10). value must
+    // match the JSON (RFC 8259) number grammar, every match of which is also a YAML 1.2 int or
+    // float; anything else raises EConvertError. As when parsing, the value is an integer
+    // unless the text has a fraction or an exponent.
+    function AddOrSetNumber(const key : string; const value : string) : IYAMLValue;
 
     function AddOrSetSequence(const key : string; const tag : string = '') : IYAMLSequence;overload;
     function AddOrSetSequence(const key : string; const tagInfo : IYAMLTagInfo) : IYAMLSequence;overload;
@@ -362,10 +368,12 @@ type
     function AddValue(const value : TDateTime; isUTC : boolean; const tag : string = '') : IYAMLValue; overload;
     function AddValue(const value : TDateTime; isUTC : boolean; const tagInfo : IYAMLTagInfo) : IYAMLValue; overload;
 
-    // Explicitly add a null value. Unlike AddValue('') - which cannot distinguish an empty
-    // string from nil for a Delphi string parameter and so stores null - this states the
-    // intent to write a null and reads clearly at the call site.
+    // Explicitly add a null value. AddValue('') adds an empty string - a Delphi string cannot
+    // be nil, so a null has to be asked for by name.
     function AddNull(const tag : string = '') : IYAMLValue;
+
+    // Add a number from its text - see IYAMLMapping.AddOrSetNumber.
+    function AddNumber(const value : string) : IYAMLValue;
 
     function AddMapping(const tag : string = '') : IYAMLMapping;overload;
     function AddMapping(const tagInfo : IYAMLTagInfo) : IYAMLMapping;overload;
@@ -429,6 +437,8 @@ type
     procedure SetEmitYAMLDirective(value : boolean);
     function GetPrettyPrint : boolean;
     procedure SetPrettyPrint(const value : boolean);
+    function GetEscapeNonASCII : boolean;
+    procedure SetEscapeNonASCII(const value : boolean);
     function GetBlockScalarStyle : TYAMLBlockScalarStyle;
     procedure SetBlockScalarStyle(value : TYAMLBlockScalarStyle);
     function GetBlockChompingIndicator : TYAMLBlockChompingIndicator;
@@ -460,6 +470,13 @@ type
 
     //JSON only
     property PrettyPrint : boolean read GetPrettyPrint write SetPrettyPrint;
+
+    /// <summary>
+    ///  Escapes every character past #126 - DEL and everything outside ASCII - as \uXXXX, a
+    ///  character outside the BMP as its two surrogate escapes (RFC 8259 section 7), so the
+    ///  output is printable ASCII. Off by default.
+    /// </summary>
+    property EscapeNonASCII : boolean read GetEscapeNonASCII write SetEscapeNonASCII;
 
   end;
 

@@ -314,6 +314,9 @@ begin
 end;
 
 function TYAMLWriterImpl.FormatScalar(const value : IYAMLValue) : string;
+var
+  decimalText : string;
+  isFloat : boolean;
 begin
   case value.ValueType of
     TYAMLValueType.vtNull :
@@ -330,10 +333,31 @@ begin
       else
         result := 'false';
     end;
-    TYAMLValueType.vtInteger : result := IntToStr(value.AsInteger);
+    TYAMLValueType.vtInteger :
+    begin
+      // Text that is a JSON number is also a YAML 1.2 int and is written as is, so a value
+      // past Int64 keeps every digit; the other forms (0x1F, 0o17, +5, 007) are converted to
+      // decimal, exactly whatever their size.
+      result := value.RawValue;
+      if not IsJSONNumber(result) then
+      begin
+        if YAMLIntegerToDecimalText(result, decimalText) then
+          result := decimalText
+        else
+          result := IntToStr(value.AsInteger);
+      end;
+    end;
     TYAMLValueType.vtFloat :
-      if not YAMLCanonicalFloatText(value.RawValue, result) then
+    begin
+      // Likewise a JSON number is a YAML 1.2 float, written as is rather than via Double.
+      result := value.RawValue;
+      if not IsJSONNumber(result) then
         result := YAMLFloatToStr(value.AsFloat);
+      // Without a fraction or exponent ("2" from a whole-number Double or Currency) the text
+      // would be read back as an !!int, so it gets one.
+      if IsJSONNumber(result, isFloat) and not isFloat then
+        result := result + '.0';
+    end;
     TYAMLValueType.vtString :
     begin
       result := value.AsString; // fetched once; each AsString call is an interface call + string copy

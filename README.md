@@ -29,6 +29,8 @@ VSoft.YAML can parse and write JSON (since YAML 1.2 is a superset of JSON):
 - **JSON Parsing** - Full JSON input support with strict validation
 - **JSON Output** - Export to JSON format with compact or pretty-print formatting
 - **Bidirectional Conversion** - Convert between YAML and JSON formats
+- **Exact Numbers** - Numbers are written digit for digit, whatever their size: UInt64, Currency, and decimals added from their text with `AddOrSetNumber`
+- **ASCII-only Output** - Optionally escape every non-ASCII character as `\uXXXX`
 
 ### Parsing & Writing
 - **Multiple Input Sources** - Load from string, file, or stream
@@ -231,6 +233,37 @@ begin
 end;
 ```
 
+### Exact Numbers
+Numbers are written exactly as they were read or added, in JSON and YAML, rather than going through Int64 or Double. For values that no Delphi type holds, such as a SQL `DECIMAL(38,10)`, add the number from its text with `AddOrSetNumber` (on a sequence, `AddNumber`). The text must be a JSON number (`-`, digits, an optional fraction and an optional exponent), or `EConvertError` is raised. Like a parsed number, it is an integer unless it has a fraction or an exponent.
+```pascal
+var
+  doc: IYAMLDocument;
+  row: IYAMLMapping;
+  price: Currency;
+begin
+  doc := TYAML.CreateMapping;
+  row := doc.AsMapping;
+  price := 19.99;
+
+  row.AddOrSetValue('id', UInt64(High(UInt64)));
+  row.AddOrSetCurrencyValue('price', price);
+  row.AddOrSetNumber('total', '1234567890123456789012345678.9012345678');
+  row.AddOrSetValue('note', '');   // an empty string
+  row.AddOrSetNull('discount');    // a null
+
+  doc.Options.PrettyPrint := false;
+  WriteLn(TYAML.WriteToJSONString(doc));
+  // Output: {"id":18446744073709551615,"price":19.99,"total":1234567890123456789012345678.9012345678,"note":"","discount":null}
+end;
+```
+
+### ASCII-only JSON
+Set `EscapeNonASCII` to write every character past `~` (#126) as a `\uXXXX` escape, and a character outside the Basic Multilingual Plane (an emoji, say) as its two surrogate escapes, as RFC 8259 specifies. The output is then printable ASCII. It affects JSON output only.
+```pascal
+  doc.Options.EscapeNonASCII := true;
+  // 'café' is written as "caf\u00E9", and U+1F600 (an emoji) as "\uD83D\uDE00"
+```
+
 ### Core Components
 - **VSoft.YAML.pas** - Main entry point with `TYAML` static factory methods for all operations
 - **VSoft.YAML.Writer.pas** - YAML output writer with multiple formatting options
@@ -241,6 +274,20 @@ end;
 - **Delphi XE2+** -  compatible with Delphi XE2 or later
 - **Win32/Win64** - may work on other platforms (does not use WinAPI.*), but not tested .
 - **No External Dependencies** - Pure Delphi implementation
+
+## Behaviour changes in 2.1.0
+
+These change what existing code produces, so check them when upgrading from 2.0 or earlier.
+
+- **`AddOrSetValue(key, '')` stores an empty string, not null.** JSON gets `""` and YAML `''`, as `AddValue('')` on a sequence and `S[key] := ''` already did. To write a null, call `AddOrSetNull(key)`, or `AddNull` on a sequence.
+- **Numbers are written as they were read or added.** When a number's text is already a valid JSON number, both writers emit it unchanged instead of converting it through Int64 or Double. A parsed `1.23e4` stays `1.23e4` (it was written as `12300`), `1.50` stays `1.50` (was `1.5`), and `-0.0` stays `-0.0`.
+- **Currency keeps all four decimals.** `922337203685477.5807` was written as `922337203685478`.
+- **UInt64 values above `High(Int64)` are written.** They raised `EConvertError`.
+- **Hex, octal and binary integers convert exactly, at any size.** They are written as decimal, so `0xFFFFFFFFFFFFFFFF` comes out as `18446744073709551615`; it raised before. `AsInteger` returns the right value for hex of 32 bits or more (`0xFFFFFFFF` was -1, and `0x100000000` raised), and raises `EConvertError` for any value past `High(Int64)` where octal and binary silently wrapped around.
+- **A whole-number float is written to YAML with `.0`.** `AddOrSetValue(key, 2.0)` writes `2.0`, because `2` would be read back as an integer. JSON output is unchanged (`2`).
+- **`!!int` accepts integers of any size, and the 0o, 0x and 0b forms.** `!!int 3000000000` and `!!int 0o17` were rejected.
+- **Merge keys (`<<`) copy values exactly.** Merging a mapping that holds an integer past Int64 raised a parse error, and merged floats lost digits.
+- **New interface members.** `IYAMLMapping.AddOrSetNumber`, `IYAMLSequence.AddNumber` and `IYAMLEmitOptions.EscapeNonASCII` were added. Only code that implements these interfaces itself needs updating.
 
 ## Installing
 
