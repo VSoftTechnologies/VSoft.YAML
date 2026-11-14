@@ -42,7 +42,8 @@ uses
   VSoft.YAML.Tests.SequenceProperties in 'VSoft.YAML.Tests.SequenceProperties.pas',
   VSoft.YAML.Tests.DateUtils in 'VSoft.YAML.Tests.DateUtils.pas',
   VSoft.YAML.Tests.Performance in 'VSoft.YAML.Tests.Performance.pas',
-  VSoft.YAML.Tests.Numbers in 'VSoft.YAML.Tests.Numbers.pas';
+  VSoft.YAML.Tests.Numbers in 'VSoft.YAML.Tests.Numbers.pas',
+  VSoft.YAML.Tests.PlainScalars in 'VSoft.YAML.Tests.PlainScalars.pas';
 
 { keep comment here to protect the following conditional from being removed by the IDE when adding a unit }
 {$IFNDEF TESTINSIGHT}

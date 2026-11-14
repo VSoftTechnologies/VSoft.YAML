@@ -122,8 +122,6 @@ end;
 function TYAMLWriterImpl.NeedsQuoting(const value : string) : boolean;
 var
   i : integer;
-  intVal : integer;
-  floatVal : Double;
   len : integer;
 begin
   // Always quote if option is set
@@ -139,23 +137,17 @@ begin
   if (value[1] = ' ') or (value[1] = #9) or (value[len] = ' ') or (value[len] = #9) then
     exit(True);
 
-  // Check for special YAML values that need quoting (only compare when the length fits)
-  case len of
-    1 : if value = '~' then exit(True);
-    2 : if (value = 'no') or (value = 'on') then exit(True);
-    3 : if (value = 'yes') or (value = 'off') then exit(True);
-    4 : if (value = 'true') or (value = 'null') then exit(True);
-    5 : if value = 'false' then exit(True);
-  end;
+  // Text the parser would read as something other than a string - null, a boolean, a number
+  // or a timestamp, in any spelling it accepts - is quoted to stay a string. The parser
+  // decides with the same function, so the two cannot disagree.
+  if YAMLResolvePlainScalar(value) <> TYAMLValueType.vtString then
+    exit(True);
 
-  // Check if it looks like a number. The RTL parsers are slow, so only call them when
-  // the first character could start something they accept: digits, sign, '.', the
-  // '$' / 'x' / '0x' hex prefixes Val takes, or the INF / NAN text TextToFloat takes.
-  case value[1] of
-    '0'..'9', '+', '-', '.', '$', 'x', 'X', 'i', 'I', 'n', 'N':
-      if TryStrToInt(value, intVal) or TryStrToFloat(value, floatVal, YAMLFormatSettings) then
-        exit(True);
-  end;
+  // The lexer drops '_' separators from a number before the parser sees it, so '1_000'
+  // reads as 1000. Numbers start with a digit, a sign or '.'.
+  if CharInSet(value[1], ['0'..'9', '+', '-', '.']) and (Pos('_', value) > 0) and
+     (YAMLResolvePlainScalar(StringReplace(value, '_', '', [rfReplaceAll])) <> TYAMLValueType.vtString) then
+    exit(True);
 
   // Indicator characters are only special at the START of a plain scalar. Mid-string they are
   // ordinary content (e.g. a URL's '*' or a Windows path), so quoting them is unnecessary.

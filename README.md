@@ -10,7 +10,7 @@
   - Scalars: null, boolean, integer, float, string, timestampx
   - Collections: sequence (arrays), mapping (objects), set (unique values array)
   - References: alias (anchor references)
-- **Number Formats** - Support for decimal, hexadecimal (0x), octal (0o), and binary (0b) number literals
+- **Number Formats** - Support for decimal, hexadecimal (0x) and octal (0o) number literals
 - **ISO 8601 Timestamps** - Full date/time parsing with timezone support.
 - **Anchor & Alias System** - Complete YAML reference support for data reuse
 
@@ -18,7 +18,7 @@
 VSoft.YAML provides **selective backward compatibility** for common YAML 1.1 features:
 - **Boolean values**: Supports `yes/no/on/off` for easier migration
 - **Modern approach**: Does not support ambiguous single-letter `y/n` booleans
-- **Numeric formats**: Uses YAML 1.2 standards (no `0XX` octal prefix), underscores are allowed
+- **Numeric formats**: Uses YAML 1.2 standards (no `0XX` octal prefix), but binary (`0b`) literals and underscores are allowed
 - **Merge Keys** - Support for YAML merge key (`<<`) operations
 
 For full YAML Feature details see - [YAML Features](/docs/YAML-Features-Implementation.md)
@@ -287,6 +287,8 @@ These change what existing code produces, so check them when upgrading from 2.0 
 - **A whole-number float is written to YAML with `.0`.** `AddOrSetValue(key, 2.0)` writes `2.0`, because `2` would be read back as an integer. JSON output is unchanged (`2`).
 - **`!!int` accepts integers of any size, and the 0o, 0x and 0b forms.** `!!int 3000000000` and `!!int 0o17` were rejected.
 - **Merge keys (`<<`) copy values exactly.** Merging a mapping that holds an integer past Int64 raised a parse error, and merged floats lost digits.
+- **Plain values follow the YAML 1.2 core schema's spellings.** Each word is read in its lower-case, capitalised and upper-case spellings only. `NULL`, `TRUE`, `FALSE` and `No` now read as null and booleans (they read as strings), and other mixes of case such as `nO`, `YeS`, `OfF` and `.nAn` now read as strings (they read as booleans and floats). `.5`, `+.5`, `1.` and `1.e5` are floats, and `0X1F`, `0O17` and `0B101` are strings, because YAML only has the lower-case prefixes.
+- **Strings are quoted whenever they would read back as something else.** The writer left strings such as `True`, `YES`, `.inf`, `0o17`, `1_000` and `2026-10-22` unquoted, so they came back as booleans, numbers or timestamps. It now quotes exactly the text the parser would not read as a string, so every string round trips. Delphi-only number forms such as `$FF`, which YAML reads as strings, are no longer quoted.
 - **New interface members.** `IYAMLMapping.AddOrSetNumber`, `IYAMLSequence.AddNumber` and `IYAMLEmitOptions.EscapeNonASCII` were added. Only code that implements these interfaces itself needs updating.
 
 ## Installing

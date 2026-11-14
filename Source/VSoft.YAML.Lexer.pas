@@ -755,8 +755,9 @@ end;
 // zero before another digit or a radix prefix, followed by a terminator. It is checked in
 // place and copied out in one go. Anything else returns False with the reader untouched,
 // and ReadNumber's general path handles it (including every error case), so results are
-// unchanged. The grammar is exactly what TYAMLParser.FastIsNumber accepts, so the
-// recorded type matches what the parser would have worked out.
+// unchanged. Everything it accepts is a number to YAMLResolvePlainScalar (and to
+// TYAMLParser.FastIsNumber in JSON mode), typed the same way, so the recorded type matches
+// what the parser would have worked out.
 function TYAMLLexer.TryReadPlainNumber(out value : string) : boolean;
 var
   txt : PChar;

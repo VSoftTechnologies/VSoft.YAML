@@ -216,6 +216,7 @@
         <DCCReference Include="VSoft.YAML.Tests.DateUtils.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.Performance.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.Numbers.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.PlainScalars.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

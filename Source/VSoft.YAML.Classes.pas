@@ -535,6 +535,16 @@ function IsJSONNumber(const value : string; out isFloat : boolean) : boolean;ove
 /// </summary>
 function YAMLIntegerToDecimalText(const raw : string; out text : string) : boolean;
 
+/// <summary>
+///  The type the parser gives a plain (unquoted) scalar. That is the YAML 1.2 core schema,
+///  each word in just its three spellings - null Null NULL ~, true True TRUE, false False
+///  FALSE, decimal, 0o octal and 0x hex integers, floats including .nan .NaN .NAN and
+///  [-+]? .inf .Inf .INF - plus the YAML 1.1 forms VSoft.YAML also reads: yes, no, on and off
+///  in the same three spellings, 0b binary integers and ISO 8601 timestamps. Empty text is
+///  null and anything else a string. The writer quotes any string this would not call one.
+/// </summary>
+function YAMLResolvePlainScalar(const value : string) : TYAMLValueType;
+
 implementation
 
 uses
@@ -736,6 +746,265 @@ begin
     end;
   end;
   result := true;
+end;
+
+// YYYY-MM-DD, optionally followed by 'T' or a space and HH:MM or HH:MM:SS, with an optional
+// Z, +HH:MM or +HH zone.
+function IsYAMLTimestamp(const value : string) : boolean;
+var
+  len : integer;
+  year, month, day, hour, min, sec : integer;
+  timeStart : integer;
+  timeEnd : integer;
+begin
+  result := False;
+  len := Length(value);
+
+  // Must be at least 10 characters for YYYY-MM-DD
+  if len < 10 then
+    Exit;
+
+  // Quick validation: YYYY-MM-DD pattern
+  // Characters 1-4 must be digits (year)
+  if not (TCharClassHelper.IsDigit(value[1]) and
+          TCharClassHelper.IsDigit(value[2]) and
+          TCharClassHelper.IsDigit(value[3]) and
+          TCharClassHelper.IsDigit(value[4])) then
+    Exit;
+
+  // Character 5 must be '-'
+  if value[5] <> '-' then
+    Exit;
+
+  // Characters 6-7 must be digits (month)
+  if not (TCharClassHelper.IsDigit(value[6]) and
+          TCharClassHelper.IsDigit(value[7])) then
+    Exit;
+
+  // Character 8 must be '-'
+  if value[8] <> '-' then
+    Exit;
+
+  // Characters 9-10 must be digits (day)
+  if not (TCharClassHelper.IsDigit(value[9]) and
+          TCharClassHelper.IsDigit(value[10])) then
+    Exit;
+
+  // Parse and validate date components
+  year := (Ord(value[1]) - Ord('0')) * 1000 + (Ord(value[2]) - Ord('0')) * 100 +
+          (Ord(value[3]) - Ord('0')) * 10 + (Ord(value[4]) - Ord('0'));
+  month := (Ord(value[6]) - Ord('0')) * 10 + (Ord(value[7]) - Ord('0'));
+  day := (Ord(value[9]) - Ord('0')) * 10 + (Ord(value[10]) - Ord('0'));
+
+  // Basic range validation
+  if not ((year >= 100) and (year <= 2400) and
+          (month >= 1) and (month <= 12) and
+          (day >= 1) and (day <= 31)) then
+    Exit;
+
+  // If exactly 10 characters, valid date-only timestamp
+  if len = 10 then
+  begin
+    result := True;
+    Exit;
+  end;
+
+  // Check for time separator (T or space)
+  if (len < 11) or not ((value[11] = 'T') or (value[11] = ' ')) then
+    Exit;
+
+  timeStart := 12;
+  timeEnd := len;
+
+  // Strip timezone suffix: Z, +HH:MM, -HH:MM
+  if value[len] = 'Z' then
+    Dec(timeEnd)
+  else if (len >= 16) and CharInSet(value[len - 5], ['+', '-']) and (value[len - 2] = ':') then
+    timeEnd := len - 6
+  else if (len >= 13) and CharInSet(value[len - 2], ['+', '-']) then
+    timeEnd := len - 3;
+
+  // Need at least HH:MM (5 chars)
+  if (timeEnd - timeStart + 1) < 5 then
+    Exit;
+
+  // Validate time format: HH:MM or HH:MM:SS
+  // Characters timeStart and timeStart+1 must be digits (hour)
+  if (timeStart + 1 > timeEnd) or
+     not (TCharClassHelper.IsDigit(value[timeStart]) and
+          TCharClassHelper.IsDigit(value[timeStart + 1])) then
+    Exit;
+
+  // Character timeStart+2 must be ':'
+  if (timeStart + 2 > timeEnd) or (value[timeStart + 2] <> ':') then
+    Exit;
+
+  // Characters timeStart+3 and timeStart+4 must be digits (minute)
+  if (timeStart + 4 > timeEnd) or
+     not (TCharClassHelper.IsDigit(value[timeStart + 3]) and
+          TCharClassHelper.IsDigit(value[timeStart + 4])) then
+    Exit;
+
+  // Parse hour and minute
+  hour := (Ord(value[timeStart]) - Ord('0')) * 10 + (Ord(value[timeStart + 1]) - Ord('0'));
+  min := (Ord(value[timeStart + 3]) - Ord('0')) * 10 + (Ord(value[timeStart + 4]) - Ord('0'));
+
+  if not ((hour >= 0) and (hour <= 23) and (min >= 0) and (min <= 59)) then
+    Exit;
+
+  // If we have just HH:MM, we're done
+  if (timeEnd - timeStart + 1) = 5 then
+  begin
+    result := True;
+    Exit;
+  end;
+
+  // Check for seconds if present
+  if (timeEnd - timeStart + 1) >= 8 then
+  begin
+    // Character timeStart+5 must be ':'
+    if value[timeStart + 5] <> ':' then
+      Exit;
+
+    // Characters timeStart+6 and timeStart+7 must be digits (second)
+    if not (TCharClassHelper.IsDigit(value[timeStart + 6]) and
+            TCharClassHelper.IsDigit(value[timeStart + 7])) then
+      Exit;
+
+    // Parse seconds
+    sec := (Ord(value[timeStart + 6]) - Ord('0')) * 10 + (Ord(value[timeStart + 7]) - Ord('0'));
+
+    if (sec >= 0) and (sec <= 59) then
+      result := True;
+  end;
+end;
+
+// True when value is a '0x' hex, '0o' octal or '0b' binary integer - the prefix, in lower
+// case as both YAML 1.2 and 1.1 have it, followed by one or more digits of that radix and
+// nothing else. A plain scalar that merely starts like one ('0x1F.png', '0b101.txt') is a
+// string.
+function IsYAMLRadixInteger(const value : string) : boolean;
+var
+  len, i : integer;
+  ch : Char;
+begin
+  result := False;
+  len := Length(value);
+  if (len < 3) or (value[1] <> '0') then
+    Exit;
+  for i := 3 to len do
+  begin
+    ch := value[i];
+    case value[2] of
+      'x' : result := TCharClassHelper.IsHexDigit(ch);
+      'o' : result := TCharClassHelper.IsOctalDigit(ch);
+      'b' : result := TCharClassHelper.IsBinaryDigit(ch);
+    else
+      result := False;
+    end;
+    if not result then
+      Exit;
+  end;
+end;
+
+// The YAML 1.2 core schema decimal int [-+]?[0-9]+ and float
+// [-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)? - isFloat is set for a float.
+function IsYAMLDecimalNumber(const value : string; out isFloat : boolean) : boolean;
+var
+  len, i, digitStart, digitCount : integer;
+begin
+  result := false;
+  isFloat := false;
+  len := Length(value);
+  i := 1;
+  if (len > 0) and ((value[1] = '+') or (value[1] = '-')) then
+    Inc(i);
+  digitStart := i;
+  while (i <= len) and (value[i] >= '0') and (value[i] <= '9') do
+    Inc(i);
+  digitCount := i - digitStart;
+  if (i <= len) and (value[i] = '.') then
+  begin
+    isFloat := true;
+    Inc(i);
+    digitStart := i;
+    while (i <= len) and (value[i] >= '0') and (value[i] <= '9') do
+      Inc(i);
+    Inc(digitCount, i - digitStart);
+  end;
+  // a digit before or after the point
+  if digitCount = 0 then
+    exit;
+  if (i <= len) and ((value[i] = 'e') or (value[i] = 'E')) then
+  begin
+    isFloat := true;
+    Inc(i);
+    if (i <= len) and ((value[i] = '+') or (value[i] = '-')) then
+      Inc(i);
+    digitStart := i;
+    while (i <= len) and (value[i] >= '0') and (value[i] <= '9') do
+      Inc(i);
+    if i = digitStart then
+      exit;
+  end;
+  result := i > len;
+end;
+
+function YAMLResolvePlainScalar(const value : string) : TYAMLValueType;
+var
+  isFloat : boolean;
+begin
+  if value = '' then
+    exit(TYAMLValueType.vtNull);
+
+  // The words, each in just its three spellings - 'nULL' and 'tRUE' are strings
+  case value[1] of
+    '~' :
+      if Length(value) = 1 then
+        exit(TYAMLValueType.vtNull);
+    'n', 'N' :
+      if (value = 'null') or (value = 'Null') or (value = 'NULL') then
+        exit(TYAMLValueType.vtNull)
+      else if (value = 'no') or (value = 'No') or (value = 'NO') then
+        exit(TYAMLValueType.vtBoolean);
+    't', 'T' :
+      if (value = 'true') or (value = 'True') or (value = 'TRUE') then
+        exit(TYAMLValueType.vtBoolean);
+    'f', 'F' :
+      if (value = 'false') or (value = 'False') or (value = 'FALSE') then
+        exit(TYAMLValueType.vtBoolean);
+    'y', 'Y' :
+      if (value = 'yes') or (value = 'Yes') or (value = 'YES') then
+        exit(TYAMLValueType.vtBoolean);
+    'o', 'O' :
+      if (value = 'on') or (value = 'On') or (value = 'ON') or
+         (value = 'off') or (value = 'Off') or (value = 'OFF') then
+        exit(TYAMLValueType.vtBoolean);
+    '.' :
+      if (value = '.nan') or (value = '.NaN') or (value = '.NAN') or
+         (value = '.inf') or (value = '.Inf') or (value = '.INF') then
+        exit(TYAMLValueType.vtFloat);
+    '+' :
+      if (value = '+.inf') or (value = '+.Inf') or (value = '+.INF') then
+        exit(TYAMLValueType.vtFloat);
+    '-' :
+      if (value = '-.inf') or (value = '-.Inf') or (value = '-.INF') then
+        exit(TYAMLValueType.vtFloat);
+  end;
+
+  if IsYAMLTimestamp(value) then
+    result := TYAMLValueType.vtTimestamp
+  else if IsYAMLRadixInteger(value) then
+    result := TYAMLValueType.vtInteger
+  else if IsYAMLDecimalNumber(value, isFloat) then
+  begin
+    if isFloat then
+      result := TYAMLValueType.vtFloat
+    else
+      result := TYAMLValueType.vtInteger;
+  end
+  else
+    result := TYAMLValueType.vtString;
 end;
 
 function YAMLFloatToStr(const value : Double) : string;

@@ -26,7 +26,7 @@ VSoft.YAML primarily follows the **YAML 1.2** specification (revision 1.2.2)
 VSoft.YAML provides **selective backward compatibility** for common YAML 1.1 features:
 - **Boolean values**: Supports `yes/no/on/off` for easier migration
 - **Modern approach**: Does not support ambiguous single-letter `y/n` booleans
-- **Numeric formats**: Uses YAML 1.2 standards (no , `0XX` octal prefix), underscores allowed
+- **Numeric formats**: Uses YAML 1.2 standards (no `0XX` octal prefix), but binary (`0b`) literals and underscores are allowed
 
 ## Core Data Types
 
@@ -35,9 +35,9 @@ VSoft.YAML provides **selective backward compatibility** for common YAML 1.1 fea
 #### Scalar Types
 | Type | Implementation | Examples |
 |------|---------------|----------|
-| **Null** | `TYAMLValueType.vtNull` | `null`, `~`, empty values |
+| **Null** | `TYAMLValueType.vtNull` | `null`, `Null`, `NULL`, `~`, empty values |
 | **Boolean** | `TYAMLValueType.vtBoolean` | `true`, `false`, `True`, `FALSE` |
-| **Integer** | `TYAMLValueType.vtInteger` | `42`, `-17`, `0x2A`, `0o52`, `0b101010` |
+| **Integer** | `TYAMLValueType.vtInteger` | `42`, `-17`, `0x2A`, `0o52` (YAML 1.1 compatibility: `0b101010`) |
 | **Float** | `TYAMLValueType.vtFloat` | `3.14`, `-1.5e10`, `.inf`, `-.inf`, `.nan` |
 | **String** | `TYAMLValueType.vtString` | `hello`, `"quoted"`, `'single'` |
 | **Timestamp** | `TYAMLValueType.vtTimestamp` | `2024-01-15T10:30:00Z` |
@@ -77,13 +77,18 @@ The following YAML 1.1 types are **not supported** per YAML 1.2 specification:
 canonical_true: true
 canonical_false: false
 uppercase: TRUE
-mixed_case: False
+capitalised: False
 
 # ✅ Also supported (YAML 1.1 legacy for compatibility)
 legacy_yes: yes    # Parsed as boolean true
 legacy_no: no      # Parsed as boolean false  
 legacy_on: on      # Parsed as boolean true
 legacy_off: off    # Parsed as boolean false
+legacy_upper: OFF  # Each word in the same three spellings: off, Off, OFF
+
+# ❌ Any other mix of case is a string, as YAML 1.2 specifies (null, Null, NULL likewise)
+mixed_case: tRUE  # Parsed as string
+mixed_no: nO      # Parsed as string
 
 # ❌ Not supported (YAML 1.1 single-letter)
 old_y: y          # Parsed as string
@@ -96,16 +101,25 @@ old_n: n          # Parsed as string
 decimal: 42
 hex: 0x2A         # Hexadecimal
 octal: 0o52       # Octal with 0o prefix
-binary: 0b101010  # Binary
 float: 3.14159
+leading_point: .5
+trailing_point: 1.
 scientific: 1.5e10
-infinity: .inf
+infinity: .inf    # also .Inf, .INF, and with a + or - sign
 negative_infinity: -.inf
-not_a_number: .nan
+not_a_number: .nan  # also .NaN, .NAN
+
+# ✅ Also supported (YAML 1.1 legacy for compatibility)
+binary: 0b101010  # Parsed as 42 (a string in YAML 1.2)
+with_underscores: 1_000_000  # Parsed as 1000000 (a string in YAML 1.2)
+float_underscores: 1_000.5   # Parsed as 1000.5
+
+# ❌ Strings, not numbers
+upper_prefix: 0X2A  # YAML has only the lower-case 0x, 0o and 0b prefixes
+mixed_nan: .nAn
 
 # ❌ Not supported (YAML 1.1 legacy)
 old_octal: 052    # Would be parsed as 52, not 42
-with_underscores: 1_000_000  # Underscores removed
 sexagesimal: 3:25:45  # Base-60 format removed
 ```
 
