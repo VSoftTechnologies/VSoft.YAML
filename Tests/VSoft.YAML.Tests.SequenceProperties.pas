@@ -649,12 +649,13 @@ begin
   stringValue := sequence.S[1]; // This is actually an integer (42)
   Assert.AreEqual('42', stringValue, 'Integer should convert to string');
 
+  // a numeric string converts; 'Hello World' cannot
   Assert.WillRaise(
     procedure
     begin
       intValue := sequence.I[0]; // This is actually a string ('Hello World')
     end,
-    Exception
+    EConvertError
   );
 end;
 

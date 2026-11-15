@@ -275,6 +275,18 @@ Set `EscapeNonASCII` to write every character past `~` (#126) as a `\uXXXX` esca
 - **Win32/Win64** - may work on other platforms (does not use WinAPI.*), but not tested .
 - **No External Dependencies** - Pure Delphi implementation
 
+## Behaviour changes in 2.3.0
+
+- **Reading a missing key no longer adds it.** `S[]`, `I[]`, `L[]`, `U[]`, `F[]`, `C[]`, `D[]`, `DUtc[]` and `B[]` return `''`, `0` or `False` for a missing key and leave the mapping unchanged, as JsonDataObjects does. `F[]`, `C[]`, `D[]` and `DUtc[]` used to raise on a missing key (and still add it). `A[]` and `O[]` still create the key, as documented, so builder code such as `doc.O['a'].S['b'] := 'x'` keeps working.
+- **The getters convert between scalar types, as their comments say.** On mappings and sequences:
+  - `I[]`, `L[]` and `U[]` accept floats (truncated), booleans (0 or 1) and numeric strings.
+  - `F[]` and `C[]` accept integers, booleans and numeric strings.
+  - `B[]` reads a number as true when it isn't zero, and a string as its YAML boolean value (`true`, `True`, `yes`, `ON`...); any other string is `False`.
+  - `D[]` and `DUtc[]` accept ISO 8601 strings.
+  - A null reads as `''`, `0` or `False`.
+  - Text that is not a number still raises, now `EConvertError` (it was a plain `Exception`).
+- **`C[]` reads Currency exactly.** It went through Double, so `922337203685477.5807` came back as `-922337203685477.5808`.
+
 ## Behaviour changes in 2.1.0
 
 These change what existing code produces, so check them when upgrading from 2.0 or earlier.

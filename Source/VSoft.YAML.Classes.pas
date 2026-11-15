@@ -265,6 +265,8 @@ type
     FCount : integer;
     FIndex : TDictionary<string, integer>;
     function IndexOfKey(const key : string) : integer;
+    // the value for key, or nil when there is none - nothing is created or added
+    function ValueOrNil(const key : string) : IYAMLValue;
   protected
     function ValueAt(index : integer) : IYAMLValue;
     function GetCount : integer;override;
@@ -1151,6 +1153,159 @@ begin
     result := TYAMLValue.Create(parent, TYAMLValueType.vtInteger, value);
 end;
 
+// Conversions for the JsonDataObjects-style getters (I[], F[], B[] ...), which read a scalar
+// of any type as JsonDataObjects does. nil (a missing key) and a null read as the default; a
+// collection, or text that is not a number, raises.
+
+function ScalarToInt64(const value : IYAMLValue) : Int64;
+var
+  text : string;
+begin
+  if value = nil then
+    exit(0);
+  case value.ValueType of
+    TYAMLValueType.vtNull :
+      result := 0;
+    TYAMLValueType.vtFloat :
+      result := Trunc(value.AsFloat);
+    TYAMLValueType.vtBoolean :
+      result := Ord(value.AsBoolean);
+    TYAMLValueType.vtString :
+    begin
+      text := value.AsString;
+      if not TryStrToInt64(text, result) then
+        result := Trunc(StrToFloat(text, YAMLFormatSettings));
+    end;
+    TYAMLValueType.vtTimestamp :
+      result := Trunc(value.AsLocalDateTime);
+  else
+    result := value.AsInteger; // an integer; a collection raises
+  end;
+end;
+
+function ScalarToUInt64(const value : IYAMLValue) : UInt64;
+var
+  decimalText : string;
+  signedValue : Int64;
+begin
+  if value = nil then
+    exit(0);
+  // integer text converts exactly, so a value past High(Int64) can be read - from a numeric
+  // string too
+  if value.IsInteger and YAMLIntegerToDecimalText(Trim(value.RawValue), decimalText) then
+  begin
+    if not TryStrToUInt64(decimalText, result) then
+      raise EConvertError.CreateFmt('Cannot convert "%s" to UInt64', [value.RawValue]);
+    exit;
+  end;
+  if value.IsString and TryStrToUInt64(Trim(value.AsString), result) then
+    exit;
+  signedValue := ScalarToInt64(value);
+  if signedValue < 0 then
+    raise EConvertError.CreateFmt('Cannot convert "%s" to UInt64', [value.RawValue]);
+  result := UInt64(signedValue);
+end;
+
+function ScalarToFloat(const value : IYAMLValue) : Double;
+var
+  decimalText : string;
+begin
+  if value = nil then
+    exit(0);
+  case value.ValueType of
+    TYAMLValueType.vtNull :
+      result := 0;
+    TYAMLValueType.vtInteger :
+      // through the decimal text, so an integer past Int64 converts too
+      if YAMLIntegerToDecimalText(Trim(value.RawValue), decimalText) then
+        result := StrToFloat(decimalText, YAMLFormatSettings)
+      else
+        result := value.AsInteger;
+    TYAMLValueType.vtBoolean :
+      result := Ord(value.AsBoolean);
+    TYAMLValueType.vtString :
+      result := StrToFloat(value.AsString, YAMLFormatSettings);
+    TYAMLValueType.vtTimestamp :
+      result := value.AsLocalDateTime;
+  else
+    result := value.AsFloat; // a float; a collection raises
+  end;
+end;
+
+function ScalarToCurrency(const value : IYAMLValue) : Currency;
+begin
+  if value = nil then
+    exit(0);
+  case value.ValueType of
+    TYAMLValueType.vtNull :
+      result := 0;
+    TYAMLValueType.vtBoolean :
+      result := Ord(value.AsBoolean);
+    TYAMLValueType.vtString :
+      result := StrToCurr(value.AsString, YAMLFormatSettings);
+    TYAMLValueType.vtTimestamp :
+      result := value.AsLocalDateTime;
+  else
+    // integers and floats from their text, not through Double, so all four decimals are
+    // exact; a collection raises
+    result := value.AsCurrency;
+  end;
+end;
+
+function ScalarToBoolean(const value : IYAMLValue) : boolean;
+var
+  text : string;
+begin
+  if value = nil then
+    exit(false);
+  case value.ValueType of
+    TYAMLValueType.vtNull :
+      result := false;
+    TYAMLValueType.vtInteger :
+      if YAMLIntegerToDecimalText(Trim(value.RawValue), text) then
+        result := text <> '0'
+      else
+        result := value.AsInteger <> 0;
+    TYAMLValueType.vtFloat :
+      result := value.AsFloat <> 0;
+    TYAMLValueType.vtString :
+    begin
+      // text that reads as a YAML boolean has that value; any other string is False
+      text := value.AsString;
+      result := (YAMLResolvePlainScalar(text) = TYAMLValueType.vtBoolean) and
+                (SameText(text, 'true') or SameText(text, 'yes') or SameText(text, 'on'));
+    end;
+    TYAMLValueType.vtTimestamp :
+      result := value.AsLocalDateTime <> 0;
+  else
+    result := value.AsBoolean; // a boolean; a collection raises
+  end;
+end;
+
+function ScalarToDateTime(const value : IYAMLValue; utc : boolean) : TDateTime;
+begin
+  if value = nil then
+    exit(0);
+  case value.ValueType of
+    TYAMLValueType.vtNull :
+      result := 0;
+    TYAMLValueType.vtString :
+      if utc then
+        result := TYAMLDateUtils.ISO8601StrToUTCDateTime(value.AsString)
+      else
+        result := TYAMLDateUtils.ISO8601StrToLocalDateTime(value.AsString);
+    TYAMLValueType.vtInteger,
+    TYAMLValueType.vtFloat :
+      result := ScalarToFloat(value);
+  else
+    // a timestamp; anything else raises
+    if utc then
+      result := value.AsUTCDateTime
+    else
+      result := value.AsLocalDateTime;
+  end;
+end;
+
 { TYAMLValue }
 
 //TODO : handle !yaml! style tags
@@ -1882,7 +2037,7 @@ end;
 function TYAMLSequence.GetBool(index: Integer): Boolean;
 begin
   if (index >= 0) and (index < FItems.Count) then
-    result := FItems[index].AsBoolean
+    result := ScalarToBoolean(FItems[index])
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -1895,7 +2050,7 @@ end;
 function TYAMLSequence.GetCurrency(index: Integer): Currency;
 begin
   if (index >= 0) and (index < FItems.Count) then
-    result := FItems[index].AsCurrency
+    result := ScalarToCurrency(FItems[index])
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -1903,7 +2058,7 @@ end;
 function TYAMLSequence.GetDateTime(index: Integer): TDateTime;
 begin
   if (index >= 0) and (index < FItems.Count) then
-    result := FItems[index].AsLocalDateTime
+    result := ScalarToDateTime(FItems[index], false)
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -1911,7 +2066,7 @@ end;
 function TYAMLSequence.GetFloat(index: Integer): Double;
 begin
   if (index >= 0) and (index < FItems.Count) then
-    result := FItems[index].AsFloat
+    result := ScalarToFloat(FItems[index])
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -1919,7 +2074,7 @@ end;
 function TYAMLSequence.GetInt(index: Integer): Integer;
 begin
   if (index >= 0) and (index < FItems.Count) then
-    result := Integer(FItems[index].AsInteger)
+    result := Integer(ScalarToInt64(FItems[index]))
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 
@@ -1946,7 +2101,7 @@ end;
 function TYAMLSequence.GetLong(index: Integer): Int64;
 begin
   if (index >= 0) and (index < FItems.Count) then
-    result := FItems[index].AsInteger
+    result := ScalarToInt64(FItems[index])
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 
@@ -1977,15 +2132,9 @@ end;
 
 
 function TYAMLSequence.GetULong(index: Integer): UInt64;
-var
-  rawStr : string;
 begin
   if (index >= 0) and (index < FItems.Count) then
-  begin
-    rawStr := Trim(FItems[index].AsString);
-    if not TryStrToUInt64(rawStr, result) then
-      raise EConvertError.CreateFmt('Cannot convert "%s" to UInt64', [rawStr]);
-  end
+    result := ScalarToUInt64(FItems[index])
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -1993,7 +2142,7 @@ end;
 function TYAMLSequence.GetUtcDateTime(index: Integer): TDateTime;
 begin
   if (index >= 0) and (index < FItems.Count) then
-    result := FItems[index].AsUTCDateTime
+    result := ScalarToDateTime(FItems[index], true)
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -2475,89 +2624,69 @@ begin
   result := value.AsMapping;
 end;
 
-function TYAMLMapping.GetObjectBool(const key: string): Boolean;
+// The scalar getters read a missing key as the default without adding it, as JsonDataObjects
+// does - only A[] and O[] create what they are asked for.
+
+function TYAMLMapping.ValueOrNil(const key : string) : IYAMLValue;
 var
-  value : IYAMLValue;
+  idx : integer;
 begin
-  if not TryGetValue(key, value ) then
-    value := AddOrSetValue(key, false);
-  result := value.AsBoolean;
+  idx := IndexOfKey(key);
+  if idx >= 0 then
+    result := FEntries[idx].Value
+  else
+    result := nil;
+end;
+
+function TYAMLMapping.GetObjectBool(const key: string): Boolean;
+begin
+  result := ScalarToBoolean(ValueOrNil(key));
 end;
 
 function TYAMLMapping.GetObjectCurrency(const key: string): Currency;
-var
-  value : IYAMLValue;
 begin
-  if not TryGetValue(key, value ) then
-    value := AddOrSetValue(key, 0);
-  result := value.AsFloat;
-
+  result := ScalarToCurrency(ValueOrNil(key));
 end;
 
 function TYAMLMapping.GetObjectDateTime(const key: string): TDateTime;
-var
-  value : IYAMLValue;
 begin
-  if not TryGetValue(key, value ) then
-    value := AddOrSetValue(key, MinDateTime);
-  result := value.AsLocalDateTime;
+  result := ScalarToDateTime(ValueOrNil(key), false);
 end;
 
 function TYAMLMapping.GetObjectFloat(const key: string): Double;
-var
-  value : IYAMLValue;
 begin
-  if not TryGetValue(key, value ) then
-    value := AddOrSetValue(key, 0);
-  result := value.AsFloat;
+  result := ScalarToFloat(ValueOrNil(key));
 end;
 
 function TYAMLMapping.GetObjectInt(const key: string): Integer;
-var
-  value : IYAMLValue;
 begin
-  if not TryGetValue(key, value ) then
-    value := AddOrSetValue(key, 0);
-  result := Integer(value.AsInteger);
+  result := Integer(ScalarToInt64(ValueOrNil(key)));
 end;
 
 function TYAMLMapping.GetObjectLong(const key: string): Int64;
-var
-  value : IYAMLValue;
 begin
-  if not TryGetValue(key, value ) then
-    value := AddOrSetValue(key, 0);
-  result := value.AsInteger;
+  result := ScalarToInt64(ValueOrNil(key));
 end;
 
 function TYAMLMapping.GetObjectString(const key: string): string;
 var
   value : IYAMLValue;
 begin
-  if not TryGetValue(key, value ) then
-    value := AddOrSetValue(key, '');
-  result := value.AsString;
+  value := ValueOrNil(key);
+  if value <> nil then
+    result := value.AsString
+  else
+    result := '';
 end;
 
 function TYAMLMapping.GetObjectULong(const key: string): UInt64;
-var
-  value : IYAMLValue;
-  rawStr : string;
 begin
-  if not TryGetValue(key, value) then
-    value := AddOrSetValue(key, 0);
-  rawStr := Trim(value.AsString);
-  if not TryStrToUInt64(rawStr, result) then
-    raise EConvertError.CreateFmt('Cannot convert "%s" to UInt64', [rawStr]);
+  result := ScalarToUInt64(ValueOrNil(key));
 end;
 
 function TYAMLMapping.GetObjectUtcDateTime(const key: string): TDateTime;
-var
-  value : IYAMLValue;
 begin
-  if not TryGetValue(key, value ) then
-    value := AddOrSetValue(key, MinDateTime);
-  result := value.AsUTCDateTime;
+  result := ScalarToDateTime(ValueOrNil(key), true);
 end;
 
 function TYAMLMapping.GetValue(const key : string) : IYAMLValue;

@@ -217,6 +217,7 @@
         <DCCReference Include="VSoft.YAML.Tests.Performance.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.Numbers.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.PlainScalars.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.MappingProperties.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
