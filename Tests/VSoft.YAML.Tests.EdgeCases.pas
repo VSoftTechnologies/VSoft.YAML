@@ -263,6 +263,25 @@ type
     procedure Test_LoadFromStream_FirstKeyNotDropped;
     [Test]
     procedure Test_LoadFromFile_FirstKeyNotDropped;
+
+    // Loading a .json file must not switch the shared default options (or the
+    // caller's options) to JSON mode for every later load.
+    [Test]
+    procedure Test_LoadFromFile_Json_DoesNotChangeDefaultOptions;
+    [Test]
+    procedure Test_LoadAllFromFile_Json_DoesNotChangeDefaultOptions;
+    [Test]
+    procedure Test_LoadFromFile_Json_DoesNotChangeCallerOptions;
+
+    // YAML 1.2 (7.4.1 / 7.4.2) allows one trailing comma in a flow collection.
+    [Test]
+    procedure Test_FlowSequence_TrailingComma;
+    [Test]
+    procedure Test_FlowMapping_TrailingComma;
+    [Test]
+    procedure Test_FlowCollection_TrailingCommaBeforeCloseOnNextLine;
+    [Test]
+    procedure Test_FlowCollection_EmptyEntry_Raises;
   end;
 
 implementation
@@ -2457,6 +2476,252 @@ begin
     if FileExists(fileName) then
       DeleteFile(fileName);
   end;
+end;
+
+procedure WriteUTF8File(const fileName : string; const content : string);
+var
+  stream : TStringStream;
+begin
+  stream := TStringStream.Create(content, TEncoding.UTF8);
+  try
+    stream.SaveToFile(fileName);
+  finally
+    stream.Free;
+  end;
+end;
+
+procedure TYAMLEdgeCasesTests.Test_LoadFromFile_Json_DoesNotChangeDefaultOptions;
+var
+  tempFileName : string;
+  fileName : string;
+  doc : IYAMLDocument;
+begin
+  // LoadFromFile without options on a .json file used to set JSONMode on the shared
+  // default options, so every later load without options was parsed as JSON and
+  // plain YAML such as "key: value" was rejected.
+  tempFileName := TPath.GetTempFileName;
+  fileName := ChangeFileExt(tempFileName, '.json');
+  try
+    WriteUTF8File(fileName, '{"a": 1}');
+
+    doc := TYAML.LoadFromFile(fileName);
+    Assert.AreEqual<Int64>(1, doc.Root.AsMapping.Values['a'].AsInteger);
+    Assert.IsFalse(TYAML.DefaultParserOptions.JSONMode, 'LoadFromFile switched the default parser options to JSON mode');
+
+    doc := TYAML.LoadFromString('key: value');
+    Assert.AreEqual('value', doc.Root.AsMapping.Values['key'].AsString);
+  finally
+    // keep the other tests isolated should this regress
+    TYAML.DefaultParserOptions.JSONMode := false;
+    DeleteFile(fileName);
+    DeleteFile(tempFileName);
+  end;
+end;
+
+procedure TYAMLEdgeCasesTests.Test_LoadAllFromFile_Json_DoesNotChangeDefaultOptions;
+var
+  tempFileName : string;
+  fileName : string;
+  docs : TArray<IYAMLDocument>;
+begin
+  tempFileName := TPath.GetTempFileName;
+  fileName := ChangeFileExt(tempFileName, '.json');
+  try
+    WriteUTF8File(fileName, '{"a": 1}');
+
+    docs := TYAML.LoadAllFromFile(fileName);
+    Assert.AreEqual<Int64>(1, Length(docs));
+    Assert.AreEqual<Int64>(1, docs[0].Root.AsMapping.Values['a'].AsInteger);
+    Assert.IsFalse(TYAML.DefaultParserOptions.JSONMode, 'LoadAllFromFile switched the default parser options to JSON mode');
+
+    docs := TYAML.LoadAllFromString('key: value');
+    Assert.AreEqual<Int64>(1, Length(docs));
+    Assert.AreEqual('value', docs[0].Root.AsMapping.Values['key'].AsString);
+  finally
+    // keep the other tests isolated should this regress
+    TYAML.DefaultParserOptions.JSONMode := false;
+    DeleteFile(fileName);
+    DeleteFile(tempFileName);
+  end;
+end;
+
+procedure TYAMLEdgeCasesTests.Test_LoadFromFile_Json_DoesNotChangeCallerOptions;
+var
+  tempFileName : string;
+  fileName : string;
+  options : IYAMLParserOptions;
+begin
+  // A .json file is still parsed as strict JSON when the caller's options have
+  // JSONMode off, the caller's other settings still apply, and the caller's
+  // options object is left as it was.
+  tempFileName := TPath.GetTempFileName;
+  fileName := ChangeFileExt(tempFileName, '.json');
+  try
+    options := TYAML.CreateParserOptions;
+    options.DuplicateKeyBehavior := TYAMLDuplicateKeyBehavior.dkError;
+
+    // unquoted key: valid YAML, not valid JSON
+    WriteUTF8File(fileName, '{a: 1}');
+    Assert.WillRaise(
+      procedure
+      begin
+        TYAML.LoadFromFile(fileName, options);
+      end,
+      EYAMLParseException,
+      'a .json file must be parsed in JSON mode');
+    Assert.IsFalse(options.JSONMode, 'LoadFromFile switched the caller''s options to JSON mode');
+
+    Assert.WillRaise(
+      procedure
+      begin
+        TYAML.LoadAllFromFile(fileName, options);
+      end,
+      EYAMLParseException,
+      'a .json file must be parsed in JSON mode');
+    Assert.IsFalse(options.JSONMode, 'LoadAllFromFile switched the caller''s options to JSON mode');
+
+    // the copy used for the load keeps the caller's DuplicateKeyBehavior
+    WriteUTF8File(fileName, '{"a": 1, "a": 2}');
+    Assert.WillRaise(
+      procedure
+      begin
+        TYAML.LoadFromFile(fileName, options);
+      end,
+      EYAMLParseException,
+      'the caller''s DuplicateKeyBehavior must still apply to a .json file');
+    Assert.IsFalse(options.JSONMode, 'LoadFromFile switched the caller''s options to JSON mode');
+  finally
+    DeleteFile(fileName);
+    DeleteFile(tempFileName);
+  end;
+end;
+
+procedure TYAMLEdgeCasesTests.Test_FlowSequence_TrailingComma;
+var
+  doc : IYAMLDocument;
+  seq : IYAMLSequence;
+begin
+  doc := TYAML.LoadFromString('[1, 2, ]');
+  seq := doc.Root.AsSequence;
+  Assert.AreEqual(2, seq.Count);
+  Assert.AreEqual<Int64>(1, seq.Items[0].AsInteger);
+  Assert.AreEqual<Int64>(2, seq.Items[1].AsInteger);
+
+  doc := TYAML.LoadFromString('[a,]');
+  seq := doc.Root.AsSequence;
+  Assert.AreEqual(1, seq.Count);
+  Assert.AreEqual('a', seq.Items[0].AsString);
+
+  doc := TYAML.LoadFromString('items: [x, y, ]' + sLineBreak + 'next: 1');
+  seq := doc.Root.AsMapping.Values['items'].AsSequence;
+  Assert.AreEqual(2, seq.Count);
+  Assert.AreEqual('y', seq.Items[1].AsString);
+  Assert.AreEqual<Int64>(1, doc.Root.AsMapping.Values['next'].AsInteger);
+
+  doc := TYAML.LoadFromString('[[1, 2, ], {a: 1, }, ]');
+  seq := doc.Root.AsSequence;
+  Assert.AreEqual(2, seq.Count);
+  Assert.AreEqual(2, seq.Items[0].AsSequence.Count);
+  Assert.AreEqual(1, seq.Items[1].AsMapping.Count);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_FlowMapping_TrailingComma;
+var
+  doc : IYAMLDocument;
+  map : IYAMLMapping;
+begin
+  doc := TYAML.LoadFromString('{a: 1, }');
+  map := doc.Root.AsMapping;
+  Assert.AreEqual(1, map.Count);
+  Assert.AreEqual<Int64>(1, map.Values['a'].AsInteger);
+
+  doc := TYAML.LoadFromString('{a: 1, b: two,}');
+  map := doc.Root.AsMapping;
+  Assert.AreEqual(2, map.Count);
+  Assert.AreEqual('two', map.Values['b'].AsString);
+
+  doc := TYAML.LoadFromString('outer: {a: 1, }' + sLineBreak + 'next: 1');
+  map := doc.Root.AsMapping;
+  Assert.AreEqual(1, map.Values['outer'].AsMapping.Count);
+  Assert.AreEqual<Int64>(1, map.Values['next'].AsInteger);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_FlowCollection_TrailingCommaBeforeCloseOnNextLine;
+var
+  doc : IYAMLDocument;
+  seq : IYAMLSequence;
+  map : IYAMLMapping;
+begin
+  // The closing bracket on its own (indented) line, with a comment in between.
+  doc := TYAML.LoadFromString(
+    'items: [' + sLineBreak +
+    '    1,' + sLineBreak +
+    '    2,' + sLineBreak +
+    '    # last' + sLineBreak +
+    '  ]' + sLineBreak +
+    'next: 1');
+  seq := doc.Root.AsMapping.Values['items'].AsSequence;
+  Assert.AreEqual(2, seq.Count);
+  Assert.AreEqual<Int64>(2, seq.Items[1].AsInteger);
+  Assert.AreEqual<Int64>(1, doc.Root.AsMapping.Values['next'].AsInteger);
+
+  doc := TYAML.LoadFromString(
+    'outer: {' + sLineBreak +
+    '    a: 1,' + sLineBreak +
+    '    b: 2,' + sLineBreak +
+    '  }' + sLineBreak +
+    'next: 1');
+  map := doc.Root.AsMapping.Values['outer'].AsMapping;
+  Assert.AreEqual(2, map.Count);
+  Assert.AreEqual<Int64>(2, map.Values['b'].AsInteger);
+  Assert.AreEqual<Int64>(1, doc.Root.AsMapping.Values['next'].AsInteger);
+
+  // empty flow collections spanning lines
+  doc := TYAML.LoadFromString('items: [' + sLineBreak + '  ]');
+  Assert.AreEqual(0, doc.Root.AsMapping.Values['items'].AsSequence.Count);
+  doc := TYAML.LoadFromString('outer: {' + sLineBreak + '  }');
+  Assert.AreEqual(0, doc.Root.AsMapping.Values['outer'].AsMapping.Count);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_FlowCollection_EmptyEntry_Raises;
+begin
+  // Only one trailing comma is allowed - an entry may not be empty.
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('[1, , 2]');
+    end,
+    EYAMLParseException);
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('[1, 2, , ]');
+    end,
+    EYAMLParseException);
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('[ , ]');
+    end,
+    EYAMLParseException);
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{a: 1, , b: 2}');
+    end,
+    EYAMLParseException);
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{a: 1, , }');
+    end,
+    EYAMLParseException);
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('{ , }');
+    end,
+    EYAMLParseException);
 end;
 
 initialization

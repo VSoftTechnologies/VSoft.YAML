@@ -275,6 +275,14 @@ Set `EscapeNonASCII` to write every character past `~` (#126) as a `\uXXXX` esca
 - **Win32/Win64** - may work on other platforms (does not use WinAPI.*), but not tested .
 - **No External Dependencies** - Pure Delphi implementation
 
+## Behaviour changes in 2.4.0
+
+- **Loading a `.json` file no longer changes parser options.** `LoadFromFile` and `LoadAllFromFile` still parse a `.json` file as JSON, but they now switch on JSON mode on a copy of the options. Before, they set `JSONMode` on the options you passed in, or on the shared default options when you passed none, so every later load without options was parsed as JSON and plain YAML was rejected.
+- **JSON mode rejects `#` comments.** A line such as `"x": 1 # note` was accepted. JSON has no comments, and `//` and `/* */` were already rejected.
+- **YAML flow collections accept a trailing comma.** `[1, 2, ]` and `{a: 1, }` now parse, as YAML 1.2 allows; they raised an error. An empty entry such as `[1, , 2]` is still an error, and JSON mode still rejects trailing commas.
+- **New interface member.** `IYAMLParserOptions.Clone` was added. Only code that implements `IYAMLParserOptions` itself needs updating.
+
+
 ## Behaviour changes in 2.3.0
 
 - **Reading a missing key no longer adds it.** `S[]`, `I[]`, `L[]`, `U[]`, `F[]`, `C[]`, `D[]`, `DUtc[]` and `B[]` return `''`, `0` or `False` for a missing key and leave the mapping unchanged, as JsonDataObjects does. `F[]`, `C[]`, `D[]` and `DUtc[]` used to raise on a missing key (and still add it). `A[]` and `O[]` still create the key, as documented, so builder code such as `doc.O['a'].S['b'] := 'x'` keeps working.

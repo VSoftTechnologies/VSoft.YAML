@@ -179,6 +179,15 @@ type
     procedure TestRFC8259Parse_RejectsBlockComment;
 
     [Test]
+    procedure TestRFC8259Parse_RejectsHashComment;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsHashCommentOnOwnLine;
+
+    [Test]
+    procedure TestRFC8259Parse_RejectsArrayTrailingComma;
+
+    [Test]
     procedure TestRFC8259Parse_AcceptsSurrogatePairEscape;
 
     [Test]
@@ -1392,6 +1401,81 @@ begin
     end,
     EYAMLParseException,
     '/* */ block comments must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsHashComment;
+var
+  jsonText : string;
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 has no syntax for comments - the YAML '#' comment included.
+  jsonText := '{"x": 1 # c' + sLineBreak + '}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    '# comments must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsHashCommentOnOwnLine;
+var
+  jsonText : string;
+  options : IYAMLParserOptions;
+begin
+  // A '#' comment line before the first token or between members is not JSON either.
+  jsonText := '# c' + sLineBreak + '{"x": 1}';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'a leading # comment line must be rejected in JSON mode');
+
+  jsonText := '{' + sLineBreak + '  "x": 1,' + sLineBreak + '  # c' + sLineBreak + '  "y": 2' + sLineBreak + '}';
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'a # comment line between members must be rejected in JSON mode');
+end;
+
+procedure TJSONParsingTests.TestRFC8259Parse_RejectsArrayTrailingComma;
+var
+  jsonText : string;
+  options : IYAMLParserOptions;
+begin
+  // RFC 8259 §5: no trailing comma after the last array element (YAML allows one).
+  jsonText := '[1, 2, ]';
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'a trailing comma in an array must be rejected in JSON mode');
+
+  jsonText := '[1, 2,' + sLineBreak + ']';
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString(jsonText, options);
+    end,
+    EYAMLParseException,
+    'a trailing comma before a "]" on the next line must be rejected in JSON mode');
 end;
 
 procedure TJSONParsingTests.TestRFC8259Parse_AcceptsSurrogatePairEscape;

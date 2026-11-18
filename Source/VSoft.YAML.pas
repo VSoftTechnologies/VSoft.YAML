@@ -567,6 +567,8 @@ type
     function GetJSONMode : boolean;
     procedure SetJSONMode(value : boolean);
 
+    function Clone : IYAMLParserOptions;
+
     property DuplicateKeyBehavior : TYAMLDuplicateKeyBehavior read GetDuplicateKeyBehavior write SetDuplicateKeyBehavior;
     property JSONMode : boolean read GetJSONMode write SetJSONMode;
   end;
@@ -685,6 +687,24 @@ var
   _defaultWriterOptions : IYAMLEmitOptions;
 
 
+// A .json file is always parsed in JSON mode. The options passed in (or the shared
+// defaults when none are) are never modified - when JSON mode has to be switched on,
+// a copy is used so later loads are not affected.
+function GetFileParserOptions(const fileName : string; const parserOptions : IYAMLParserOptions) : IYAMLParserOptions;
+begin
+  if parserOptions = nil then
+    result := _defaultParserOptions
+  else
+    result := parserOptions;
+
+  if (not result.JSONMode) and SameText('.json', ExtractFileExt(fileName)) then
+  begin
+    result := result.Clone;
+    result.JSONMode := true;
+  end;
+end;
+
+
 { TYAML }
 
 class function TYAML.CreateMapping : IYAMLDocument;
@@ -736,12 +756,7 @@ var
   stream : TStream;
   lOptions : IYAMLParserOptions;
 begin
-  if parserOptions = nil then
-    lOptions := _defaultParserOptions
-  else
-    lOptions := parserOptions;
-  if SameText('.json', ExtractFileExt(fileName)) then
-    lOptions.JSONMode := true;
+  lOptions := GetFileParserOptions(fileName, parserOptions);
   Stream := TFileStream.Create(FileName, fmOpenRead + fmShareDenyWrite);
   try
     result := LoadAllFromStream(Stream, lOptions);
@@ -814,13 +829,7 @@ var
   stream : TStream;
   lOptions : IYAMLParserOptions;
 begin
-  if parserOptions = nil then
-    lOptions := _defaultParserOptions
-  else
-    lOptions := parserOptions;
-
-  if SameText('.json', ExtractFileExt(fileName)) then
-    lOptions.JSONMode := true;
+  lOptions := GetFileParserOptions(fileName, parserOptions);
   Stream := TFileStream.Create(FileName, fmOpenRead + fmShareDenyWrite);
   try
     result := LoadFromStream(Stream, lOptions);

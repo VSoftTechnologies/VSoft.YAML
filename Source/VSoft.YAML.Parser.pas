@@ -74,6 +74,7 @@ type
     function IsScalarValueJSON(const trimmedValue : string; len : Integer) : TYAMLValueType;
     function FastIsNumber(const value : string; out isFloat : Boolean) : Boolean;
     procedure SkipNewlines;
+    procedure SkipFlowWhitespace;
     procedure CheckDocumentEnd;
     procedure RegisterAnchor(const anchorName : string; const value : IYAMLValue);
     function ResolveAlias(const aliasName : string) : IYAMLValue;
@@ -247,6 +248,20 @@ begin
       else
         NextToken;
     end;
+end;
+
+// Inside a flow collection, line breaks, indentation and comments only separate
+// tokens. The lexer still reports an Indent token when a line inside "[...]" or
+// "{...}" is indented further than the enclosing block, so skip those as well.
+procedure TYAMLParser.SkipFlowWhitespace;
+begin
+  while FCurrentToken.TokenKind in [TYAMLTokenKind.NewLine, TYAMLTokenKind.Indent, TYAMLTokenKind.Comment] do
+  begin
+    if FCurrentToken.TokenKind = TYAMLTokenKind.Comment then
+      ProcessComment
+    else
+      NextToken;
+  end;
 end;
 
 
@@ -628,7 +643,7 @@ begin
   AssignPendingCommentsToCollection(result);
   ExpectToken(TYAMLTokenKind.LBracket); // '['
 
-  SkipNewlines;
+  SkipFlowWhitespace;
 
   // Handle empty sequence
   if MatchToken(TYAMLTokenKind.RBracket) then
@@ -658,7 +673,7 @@ begin
 
     if MatchToken(TYAMLTokenKind.Comma) then
     begin
-      SkipNewlines;
+      SkipFlowWhitespace;
       // In JSON mode, check for missing array elements after comma
       if FJSONMode then
       begin
@@ -671,6 +686,10 @@ begin
           RaiseParseError('Missing array element: trailing comma is not allowed in JSON');
         end;
       end;
+      // YAML 1.2 (7.4.1, ns-s-flow-seq-entries): a single trailing comma before the
+      // closing "]" is allowed - [1, 2, ] is the sequence [1, 2].
+      if FCurrentToken.TokenKind = TYAMLTokenKind.RBracket then
+        Break;
       Continue;
     end
     else if FCurrentToken.TokenKind = TYAMLTokenKind.RBracket then
@@ -713,7 +732,7 @@ begin
   AssignPendingCommentsToCollection(result);
   ExpectToken(TYAMLTokenKind.LBrace); // '{'
 
-  SkipNewlines;
+  SkipFlowWhitespace;
 
   // Handle empty mapping
   if MatchToken(TYAMLTokenKind.RBrace) then
@@ -765,7 +784,15 @@ begin
 
     if MatchToken(TYAMLTokenKind.Comma) then
     begin
-      SkipNewlines;
+      SkipFlowWhitespace;
+      // YAML 1.2 (7.4.2, ns-s-flow-map-entries): a single trailing comma before the
+      // closing "}" is allowed - {a: 1, } is the mapping {a: 1}. RFC 8259 does not allow it.
+      if FCurrentToken.TokenKind = TYAMLTokenKind.RBrace then
+      begin
+        if FJSONMode then
+          RaiseParseError('Missing object member: trailing comma is not allowed in JSON');
+        Break;
+      end;
       Continue;
     end
     else if FCurrentToken.TokenKind = TYAMLTokenKind.RBrace then

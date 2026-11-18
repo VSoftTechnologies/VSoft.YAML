@@ -486,9 +486,11 @@ type
     function GetDuplicateKeyBehavior : TYAMLDuplicateKeyBehavior;
     function GetJSONMode : boolean;inline;
     procedure SetJSONMode(value : boolean);
+    function Clone : IYAMLParserOptions;
 
   public
     constructor Create;
+    constructor CreateClone(const source : IYAMLParserOptions);
   end;
 
 const
@@ -3133,10 +3135,22 @@ end;
 
 { TYAMLParserOptions }
 
+function TYAMLParserOptions.Clone : IYAMLParserOptions;
+begin
+  result := TYAMLParserOptions.CreateClone(Self);
+end;
+
 constructor TYAMLParserOptions.Create;
 begin
   FDuplicateKeyBehavior := TYAMLDuplicateKeyBehavior.dkOverwrite;
   FJSONMode := false;
+end;
+
+constructor TYAMLParserOptions.CreateClone(const source : IYAMLParserOptions);
+begin
+  inherited Create;
+  FDuplicateKeyBehavior := source.DuplicateKeyBehavior;
+  FJSONMode := source.JSONMode;
 end;
 
 function TYAMLParserOptions.GetDuplicateKeyBehavior : TYAMLDuplicateKeyBehavior;

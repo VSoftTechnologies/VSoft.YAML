@@ -1587,6 +1587,8 @@ begin
 
     '#':
       begin
+        // RFC 8259 has no comment syntax ('#' like '//' and '/* */').
+        RejectInJSONMode('Comment "#"');
         token.TokenKind := TYAMLTokenKind.Comment;
         value := ReadComment;
       end;
