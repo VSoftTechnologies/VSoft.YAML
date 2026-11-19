@@ -138,7 +138,7 @@ begin
 
   // Test that pre-collection comments are preserved
   Assert.IsTrue(address.HasComments, 'Address mapping should have comments');
-  Assert.AreEqual(2, address.Comments.Count, 'Should have 2 pre-collection comments');
+  Assert.AreEqual(2, Integer(Length(address.Comments)), 'Should have 2 pre-collection comments');
   Assert.AreEqual('Personal information', address.Comments[0], 'First comment not preserved');
   Assert.AreEqual('Contact details follow', address.Comments[1], 'Second comment not preserved');
 end;
@@ -164,7 +164,7 @@ begin
 
   // Test that pre-collection comments are preserved on sequences
   Assert.IsTrue(hobbies.HasComments, 'Hobbies sequence should have comments');
-  Assert.AreEqual(2, hobbies.Comments.Count, 'Should have 2 pre-collection comments');
+  Assert.AreEqual(2, Integer(Length(hobbies.Comments)), 'Should have 2 pre-collection comments');
   Assert.AreEqual('List of favorite hobbies', hobbies.Comments[0], 'First comment not preserved');
   Assert.AreEqual('In order of preference', hobbies.Comments[1], 'Second comment not preserved');
 end;
@@ -191,7 +191,7 @@ begin
 
   // Test multiple pre-collection comments
   Assert.IsTrue(config.HasComments, 'Config mapping should have comments');
-  Assert.AreEqual(4, config.Comments.Count, 'Should have 4 pre-collection comments');
+  Assert.AreEqual(4, Integer(Length(config.Comments)), 'Should have 4 pre-collection comments');
   Assert.AreEqual('Application configuration', config.Comments[0], 'First comment not preserved');
   Assert.AreEqual('These settings control behavior', config.Comments[1], 'Second comment not preserved');
   Assert.AreEqual('Modify with care', config.Comments[2], 'Third comment not preserved');
@@ -226,7 +226,7 @@ begin
   Assert.AreEqual('Current age', person.Items['age'].Comment, 'Age same-line comment not preserved');
   
   Assert.IsTrue(hobbies.HasComments, 'Hobbies sequence should have pre-collection comments');
-  Assert.AreEqual(1, hobbies.Comments.Count, 'Should have 1 pre-collection comment');
+  Assert.AreEqual(1, Integer(Length(hobbies.Comments)), 'Should have 1 pre-collection comment');
   Assert.AreEqual('Person''s hobbies below', hobbies.Comments[0], 'Pre-collection comment not preserved');
   
   Assert.AreEqual('Loves books', hobbies.Items[0].Comment, 'First hobby comment not preserved');
@@ -501,7 +501,7 @@ begin
 
   Assert.IsTrue(root.HasComments,
     'Root mapping should have the document-level comment');
-  Assert.AreEqual(1, root.Comments.Count,
+  Assert.AreEqual(1, Integer(Length(root.Comments)),
     'Root mapping should have exactly 1 comment');
   Assert.AreEqual('comment', root.Comments[0],
     'Comment text should be preserved');

@@ -1,0 +1,4 @@
+# Test data copied byte for byte from upstream: the cases test tabs, line breaks and
+# trailing whitespace, so git must never convert their line endings (the repository
+# default is "* text eol=crlf").
+* -text

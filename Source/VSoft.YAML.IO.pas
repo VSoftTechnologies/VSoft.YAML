@@ -171,6 +171,22 @@ type
     property BufferPosition : integer read FPosition;
     function HasMoreInput : boolean;inline;
 
+    /// <summary> For a scanner that walks Buffer with its own index (and does its own line
+    ///  counting): appends the next block of input to the window. bufferPos is the scanner's
+    ///  index into Buffer - typically BufferLength + 1 - and is moved down by however much
+    ///  text is dropped from the front; text from the mark (MarkAt) on is kept. Buffer and
+    ///  BufferLength must be read again afterwards, as the window may have been reallocated.
+    ///  Returns False at the end of the input. </summary>
+    function FillBuffer(var bufferPos : integer) : boolean;
+
+    /// <summary> As MarkTokenStart, for a scanner's index into Buffer: nothing before it
+    ///  will be referred to again. </summary>
+    procedure MarkAt(bufferPos : integer);inline;
+
+    /// <summary> Chars dropped from before Buffer[1]: Buffer[i] is at absolute index
+    ///  BufferBase + i (the index CopyText and AppendText take). </summary>
+    property BufferBase : integer read FBase;
+
     property Position : integer read GetPosition;
     property Line     : integer read GetLine;
     property Column   : integer read GetColumn;
@@ -434,6 +450,21 @@ end;
 function TBufferedInputReader.HasMoreInput : boolean;
 begin
   result := FSource <> nil;
+end;
+
+function TBufferedInputReader.FillBuffer(var bufferPos : integer) : boolean;
+begin
+  if FSource = nil then
+    exit(false);
+  FPosition := bufferPos;
+  result := FillMore;
+  bufferPos := FPosition;
+  FIsAtEnd := FPosition > FLength;
+end;
+
+procedure TBufferedInputReader.MarkAt(bufferPos : integer);
+begin
+  FMark := FBase + bufferPos;
 end;
 
 procedure TBufferedInputReader.MarkTokenStart;

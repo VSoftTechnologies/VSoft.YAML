@@ -1229,6 +1229,8 @@ var
   yamlContent: string;
   documents: TArray<IYAMLDocument>;
 begin
+  // A %TAG directive applies to its own document only (YAML 1.2, 6.8), so the second
+  // document cannot use the handle without declaring it again.
   yamlContent := '%YAML 1.2' + sLineBreak +
                 '%TAG !local! tag:example.com,2000:app/' + sLineBreak +
                 '---' + sLineBreak +
@@ -1236,17 +1238,31 @@ begin
                 '---' + sLineBreak +
                 'test: !local!custom "value2"';
 
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadAllFromString(yamlContent);
+    end, EYAMLParseException, 'the second document has no %TAG for !local!');
+
+  yamlContent := '%YAML 1.2' + sLineBreak +
+                '%TAG !local! tag:example.com,2000:app/' + sLineBreak +
+                '---' + sLineBreak +
+                'test: !local!custom "value1"' + sLineBreak +
+                '...' + sLineBreak +
+                '%TAG !local! tag:example.com,2000:app/' + sLineBreak +
+                '---' + sLineBreak +
+                'test: !local!custom "value2"';
+
   documents := TYAML.LoadAllFromString(yamlContent);
-  
+
   Assert.AreEqual<Int64>(2, Length(documents), 'Should parse 2 documents');
-  
-  // Both documents should have parsed successfully despite custom tags
+
   Assert.IsTrue(documents[0].IsMapping, 'First document should be mapping');
   Assert.IsTrue(documents[1].IsMapping, 'Second document should be mapping');
-  
-  // The custom tag should be preserved in both documents (directives apply to all documents)
+
   Assert.AreEqual('value1', documents[0].AsMapping.Items['test'].AsString);
   Assert.AreEqual('value2', documents[1].AsMapping.Items['test'].AsString);
+  Assert.AreEqual('tag:example.com,2000:app/custom', documents[1].AsMapping.Items['test'].TagInfo.ResolvedTag);
 end;
 
 procedure TYAMLComprehensiveTests.Test_ParseAll_DirectiveDocumentScope;
@@ -1254,11 +1270,13 @@ var
   yamlContent: string;
   documents: TArray<IYAMLDocument>;
 begin
-  // Test that directives are scoped per document, not stream-wide
+  // Test that directives are scoped per document, not stream-wide. (A directive after a
+  // document must follow its "..." end marker - YAML 1.2, 9.2.)
   yamlContent := '%YAML 1.2' + sLineBreak +
                 '%TAG !local1! tag:example.com,2000:doc1/' + sLineBreak +
                 '---' + sLineBreak +
                 'doc1: !local1!custom "value1"' + sLineBreak +
+                '...' + sLineBreak +
                 '%TAG !local2! tag:example.com,2000:doc2/' + sLineBreak +
                 '---' + sLineBreak +
                 'doc2: !local2!custom "value2"';
@@ -1273,6 +1291,8 @@ begin
   // Each document should only see its own directive scope
   Assert.AreEqual('value1', documents[0].AsMapping.Items['doc1'].AsString);
   Assert.AreEqual('value2', documents[1].AsMapping.Items['doc2'].AsString);
+  Assert.AreEqual(3, Integer(documents[1].TagDirectives.Count), 'the defaults and !local2! only');
+  Assert.AreEqual('!local2!', documents[1].TagDirectives[2].Handle);
 end;
 
 procedure TYAMLComprehensiveTests.Test_Comments_LineComments;

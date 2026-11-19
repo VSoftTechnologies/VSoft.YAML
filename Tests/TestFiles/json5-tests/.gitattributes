@@ -1,0 +1,4 @@
+# Test data copied byte for byte from upstream: the new-lines tests depend on their exact
+# line endings, so git must never convert them (the repository default is
+# "* text eol=crlf").
+* -text

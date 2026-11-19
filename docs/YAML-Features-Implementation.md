@@ -79,7 +79,8 @@ canonical_false: false
 uppercase: TRUE
 capitalised: False
 
-# ✅ Also supported (YAML 1.1 legacy for compatibility)
+# ✅ Also supported (YAML 1.1 legacy for compatibility - while
+#    IYAMLParserOptions.YAML11Compatibility is on, the default; strings when it is off)
 legacy_yes: yes    # Parsed as boolean true
 legacy_no: no      # Parsed as boolean false  
 legacy_on: on      # Parsed as boolean true
@@ -109,7 +110,8 @@ infinity: .inf    # also .Inf, .INF, and with a + or - sign
 negative_infinity: -.inf
 not_a_number: .nan  # also .NaN, .NAN
 
-# ✅ Also supported (YAML 1.1 legacy for compatibility)
+# ✅ Also supported (YAML 1.1 legacy for compatibility - while
+#    IYAMLParserOptions.YAML11Compatibility is on, the default; strings when it is off)
 binary: 0b101010  # Parsed as 42 (a string in YAML 1.2)
 with_underscores: 1_000_000  # Parsed as 1000000 (a string in YAML 1.2)
 float_underscores: 1_000.5   # Parsed as 1000.5
@@ -163,7 +165,7 @@ key2: value2
 # Flow style  
 {key1: value1, key2: value2}
 
-# Complex keys (flow style only)
+# Complex keys - mapping keys are strings, so this one is stored as "[complex, key]"
 ? [complex, key]
 : complex value
 ```
@@ -236,15 +238,18 @@ user: !app!user
 
 **Parsing Behavior:**
 - Directives must appear before document markers (`---`)
-- Multiple directives of same type override previous declarations
+- A second `%YAML` directive, or a second `%TAG` directive for the same handle, in one document is an error
 - Invalid directives generate parsing errors with line/column information
 - Directive effects are scoped to the current document
+- A directive after a document needs that document's `...` end marker first (YAML 1.2)
+- A tag handle other than `!` and `!!` must be declared by a `%TAG` directive of the same document
 
 **Error Handling:**
 ```yaml
-%YAML 1.3        # Error: Unsupported version
+%YAML 1.3        # Read as YAML 1.2 (a later 1.x version)
+%YAML 2.0        # Error: Unsupported version
 %TAG             # Error: Invalid TAG directive syntax  
-%UNKNOWN directive  # Warning: Unknown directive ignored
+%UNKNOWN directive  # Unknown (reserved) directive ignored
 ```
 
 ## Tag System
@@ -546,7 +551,7 @@ VSoft.YAML provides **backward compatibility** by supporting both YAML 1.1 and 1
 |-------|----------|------------------------|
 | `052` | `42` (octal) | `52` (decimal) |
 | `0o52` | Invalid | `42` (octal) ✅ |
-| `1_000` | `1000` | `"1_000"` (string) |
+| `1_000` | `1000` | `1000`, or `"1_000"` (string) with `YAML11Compatibility` off |
 | `3:25:45` | `12345` (base-60) | `"3:25:45"` (string) |
 
 ### ❌ Removed Special Keys
@@ -634,10 +639,12 @@ doc.Options.EmitDocumentMarkers := False; // Suppress markers (overridden for mu
 
 #### Comment Preservation
 ```pascal
-// Access comments through IYAMLCollection.Comments
+// Comments on the lines before a value: IYAMLValue.Comments, one line each
 mapping := doc.Root.AsMapping;
-if mapping.HasComments then
-  WriteLn('Comments: ' + mapping.Comments.Text);
+for line in mapping.Comments do
+  WriteLn('# ' + line);
+// the comment after a value on its line
+WriteLn(mapping.Values['name'].Comment);
 ```
 
 #### Path Querying
@@ -663,15 +670,15 @@ hexValue := yamlValue.AsInteger;  // Handles 0x, 0o, 0b formats
 
 #### YAML 1.1 Legacy Features (Intentionally Removed)
 - Sexagesimal (base-60) numbers
-- Underscores in numbers
-- Old boolean values (`yes`, `no`, `on`, `off`, etc.)
-- Merge keys (`<<`) in core schema
+- Old octal numbers (`052`)
+- Single-letter booleans (`y`, `n`)
 - Value keys (`=`) in mappings
+
+Underscores in numbers, `yes`/`no`/`on`/`off` booleans, `0b` binary numbers, timestamps, merge keys (`<<`) and `? ` sets are read while `IYAMLParserOptions.YAML11Compatibility` is on, as it is by default. With it off, the parser reads strict YAML 1.2.
 
 #### Advanced YAML 1.2 Features (Not Yet Implemented)
 - Schema validation
-- Complex key support in block style (only flow style supported)
-- Multi-byte Unicode escape sequences beyond `\uXXXX` and `\UXXXXXXXX`
+- Keys that are not strings: a collection used as a key is stored under its text in flow style
 
 #### Multiple Document Processing (✅ Implemented)
 - **Multiple document parsing**: `TYAML.LoadAllFromString()` and `TYAML.LoadAllFromFile()` methods

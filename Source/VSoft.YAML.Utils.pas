@@ -52,6 +52,38 @@ type
     procedure Reset;
   end;
 
+  // The ES5.1 IdentifierName characters JSON5 uses for unquoted object keys: a start is a
+  // Unicode letter (Lu Ll Lt Lm Lo Nl), '$' or '_'; after that also Mn Mc Nd Pc, U+200C and
+  // U+200D. A character outside the BMP is passed as its surrogate pair.
+  TJSON5CharUtils = record
+    class function IsIdentifierStart(ch : Char) : boolean;static;
+    class function IsIdentifierPart(ch : Char) : boolean;static;
+    class function IsIdentifierStartPair(high, low : Char) : boolean;static;
+    class function IsIdentifierPartPair(high, low : Char) : boolean;static;
+    // True when value can be written as an unquoted JSON5 key
+    class function IsIdentifierName(const value : string) : boolean;static;
+  end;
+
+  TInternState = record
+    Remaining : integer; // lookups left in this sample (> 0), or strings left to skip (< 0)
+    Hits : integer;
+  end;
+
+  // Recently seen keys and short scalars: repeats (the same keys in every record,
+  // true/false, enum-like values) share one string instead of holding a copy each.
+  // Unique data would pay for hashing with nothing saved, so each kind (keys, values)
+  // keeps its own TInternState, samples its hit rate and switches itself off for a
+  // while when low. Used by the parsers, each holding one as a field.
+  TYAMLStringInterner = record
+  private
+    FCache : array[0..4095] of string;
+  public
+    procedure Intern(var s : string; var state : TInternState);
+    // As Intern, for text not yet in a string: a hit returns the shared string without
+    // allocating, a miss copies the text.
+    function InternChars(p : PChar; len : integer; var state : TInternState) : string;
+  end;
+
 
 {$IFDEF XE5SDOWN}
 function TryStrToUInt64(const S: string; out Value: UInt64): Boolean;
@@ -119,6 +151,203 @@ const
   '                                '
 );
 
+
+{ TYAMLStringInterner }
+
+const
+  cMaxInternLength = 64; // longer strings rarely repeat and cost more to hash
+  cInternSample = 256;    // lookups per hit-rate sample
+  cInternSkip = 16384;    // strings left alone after a sample with few hits
+
+{$IFOPT Q+}{$DEFINE YAML_INTERN_Q}{$Q-}{$ENDIF} // the hash wraps on purpose
+procedure TYAMLStringInterner.Intern(var s : string; var state : TInternState);
+var
+  p : PChar;
+  len, i : integer;
+  h : Cardinal;
+  slot : PString;
+begin
+  if state.Remaining < 0 then
+  begin
+    // switched off; reaching 0 starts a new sample
+    Inc(state.Remaining);
+    exit;
+  end;
+  len := Length(s);
+  if (len = 0) or (len > cMaxInternLength) then
+    exit;
+  if state.Remaining = 0 then
+  begin
+    state.Remaining := cInternSample;
+    state.Hits := 0;
+  end;
+  p := Pointer(s);
+  h := Cardinal(len);
+  for i := 0 to len - 1 do
+    h := (h xor Ord(p[i])) * 16777619; // FNV-1a
+  // direct-mapped: a slot holds the last string that hashed to it
+  slot := @FCache[h and High(FCache)];
+  if slot^ = s then
+  begin
+    s := slot^;
+    Inc(state.Hits);
+  end
+  else
+    slot^ := s;
+  Dec(state.Remaining);
+  if (state.Remaining = 0) and (state.Hits * 8 < cInternSample) then
+    state.Remaining := -cInternSkip; // under 1 in 8 repeated: not worth hashing
+end;
+
+function TYAMLStringInterner.InternChars(p : PChar; len : integer; var state : TInternState) : string;
+var
+  i : integer;
+  h : Cardinal;
+  slot : PString;
+begin
+  if state.Remaining < 0 then
+  begin
+    // switched off; reaching 0 starts a new sample
+    Inc(state.Remaining);
+    SetString(result, p, len);
+    exit;
+  end;
+  if (len = 0) or (len > cMaxInternLength) then
+  begin
+    SetString(result, p, len);
+    exit;
+  end;
+  if state.Remaining = 0 then
+  begin
+    state.Remaining := cInternSample;
+    state.Hits := 0;
+  end;
+  h := Cardinal(len);
+  for i := 0 to len - 1 do
+    h := (h xor Ord(p[i])) * 16777619; // FNV-1a, as Intern
+  slot := @FCache[h and High(FCache)];
+  if (Length(slot^) = len) and CompareMem(Pointer(slot^), p, len * SizeOf(Char)) then
+  begin
+    result := slot^;
+    Inc(state.Hits);
+  end
+  else
+  begin
+    SetString(result, p, len);
+    slot^ := result;
+  end;
+  Dec(state.Remaining);
+  if (state.Remaining = 0) and (state.Hits * 8 < cInternSample) then
+    state.Remaining := -cInternSkip;
+end;
+{$IFDEF YAML_INTERN_Q}{$Q+}{$UNDEF YAML_INTERN_Q}{$ENDIF}
+
+{ TJSON5CharUtils }
+
+function CharCategory(ch : Char) : TUnicodeCategory;inline;
+begin
+{$IF CompilerVersion > 24.0}
+  result := ch.GetUnicodeCategory;
+{$ELSE}
+  result := TCharacter.GetUnicodeCategory(ch);
+{$IFEND}
+end;
+
+function PairCategory(high, low : Char) : TUnicodeCategory;
+var
+  s : string;
+begin
+  SetLength(s, 2);
+  s[1] := high;
+  s[2] := low;
+{$IF CompilerVersion > 24.0}
+  result := Char.GetUnicodeCategory(s, 0); // TCharHelper indexes strings from 0
+{$ELSE}
+  result := TCharacter.GetUnicodeCategory(s, 1);
+{$IFEND}
+end;
+
+function IsStartCategory(category : TUnicodeCategory) : boolean;inline;
+begin
+  result := category in [TUnicodeCategory.ucUppercaseLetter, TUnicodeCategory.ucLowercaseLetter,
+                         TUnicodeCategory.ucTitlecaseLetter, TUnicodeCategory.ucModifierLetter,
+                         TUnicodeCategory.ucOtherLetter, TUnicodeCategory.ucLetterNumber];
+end;
+
+function IsPartCategory(category : TUnicodeCategory) : boolean;inline;
+begin
+  result := IsStartCategory(category) or
+            (category in [TUnicodeCategory.ucNonSpacingMark, TUnicodeCategory.ucCombiningMark,
+                          TUnicodeCategory.ucDecimalNumber, TUnicodeCategory.ucConnectPunctuation]);
+end;
+
+class function TJSON5CharUtils.IsIdentifierStart(ch : Char) : boolean;
+begin
+  if Ord(ch) < 128 then
+    result := CharInSet(ch, ['a'..'z', 'A'..'Z', '$', '_'])
+  else
+    result := IsStartCategory(CharCategory(ch));
+end;
+
+class function TJSON5CharUtils.IsIdentifierPart(ch : Char) : boolean;
+begin
+  if Ord(ch) < 128 then
+    result := CharInSet(ch, ['a'..'z', 'A'..'Z', '0'..'9', '$', '_'])
+  else
+    result := (ch = #$200C) or (ch = #$200D) or IsPartCategory(CharCategory(ch));
+end;
+
+class function TJSON5CharUtils.IsIdentifierStartPair(high, low : Char) : boolean;
+begin
+  result := IsStartCategory(PairCategory(high, low));
+end;
+
+class function TJSON5CharUtils.IsIdentifierPartPair(high, low : Char) : boolean;
+begin
+  result := IsPartCategory(PairCategory(high, low));
+end;
+
+class function TJSON5CharUtils.IsIdentifierName(const value : string) : boolean;
+var
+  i, len : integer;
+  ch : Char;
+  first : boolean;
+begin
+  result := false;
+  len := Length(value);
+  if len = 0 then
+    exit;
+  i := 1;
+  first := true;
+  while i <= len do
+  begin
+    ch := value[i];
+    if (ch >= #$D800) and (ch <= #$DBFF) and (i < len) and (value[i + 1] >= #$DC00) and (value[i + 1] <= #$DFFF) then
+    begin
+      if first then
+      begin
+        if not IsIdentifierStartPair(ch, value[i + 1]) then
+          exit;
+      end
+      else if not IsIdentifierPartPair(ch, value[i + 1]) then
+        exit;
+      Inc(i, 2);
+    end
+    else
+    begin
+      if first then
+      begin
+        if not IsIdentifierStart(ch) then
+          exit;
+      end
+      else if not IsIdentifierPart(ch) then
+        exit;
+      Inc(i);
+    end;
+    first := false;
+  end;
+  result := true;
+end;
 
 { TCharClassHelper }
 

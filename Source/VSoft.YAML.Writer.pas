@@ -61,6 +61,9 @@ type
     procedure IncIndent;inline;
     procedure DecIndent;inline;
     procedure WriteCollectionComments(const collection : IYAMLCollection);
+    // # lines, each at indent - leading comments of scalar entries and end comments (set by
+    // the JSON5 parser), which the YAML parser does not fill
+    procedure WriteCommentLines(const comments : TArray<string>; const indent : string);
 
     // Direct writing helpers
     procedure WriteIndent;inline;
@@ -646,16 +649,36 @@ end;
 procedure TYAMLWriterImpl.WriteCollectionComments(const collection : IYAMLCollection);
 var
   index : integer;
+  comments : TArray<string>;
 begin
   if collection.HasComments then
   begin
-    for index := 0 to collection.Comments.Count - 1 do
+    comments := collection.Comments;
+    for index := 0 to Length(comments) - 1 do
     begin
       WriteIndent;
       FOut.Write('# ');
-      FOut.Write(collection.Comments[index]);
+      FOut.Write(comments[index]);
       FOut.WriteNewLine;
     end;
+  end;
+end;
+
+procedure TYAMLWriterImpl.WriteCommentLines(const comments : TArray<string>; const indent : string);
+var
+  index : integer;
+begin
+  for index := 0 to Length(comments) - 1 do
+  begin
+    FOut.Write(indent);
+    if comments[index] = '' then
+      FOut.Write('#')
+    else
+    begin
+      FOut.Write('# ');
+      FOut.Write(comments[index]);
+    end;
+    FOut.WriteNewLine;
   end;
 end;
 
@@ -692,6 +715,8 @@ begin
     WriteIndent;
     FOut.Write('{}');
     FOut.WriteNewLine;
+    if mapping.HasEndComments then
+      WriteCommentLines(mapping.EndComments, FCurrentIndent);
     Exit;
   end;
 
@@ -776,6 +801,8 @@ begin
 
     else
       begin
+        if value.HasComments then
+          WriteCommentLines(value.Comments, FCurrentIndent);
         // Check if we should use block scalar style for multiline strings
         if ShouldUseBlockScalar(value) then
         begin
@@ -799,6 +826,8 @@ begin
       end;
     end;
   end;
+  if mapping.HasEndComments then
+    WriteCommentLines(mapping.EndComments, FCurrentIndent);
 end;
 
 procedure TYAMLWriterImpl.WriteSequence(const sequence : IYAMLSequence);
@@ -814,6 +843,8 @@ begin
     WriteIndent;
     FOut.Write('[]');
     FOut.WriteNewLine;
+    if sequence.HasEndComments then
+      WriteCommentLines(sequence.EndComments, FCurrentIndent);
     Exit;
   end;
 
@@ -841,6 +872,8 @@ begin
       TYAMLValueType.vtMapping : WriteSequenceMapping(item.AsMapping);
     else
       begin
+        if item.HasComments then
+          WriteCommentLines(item.Comments, FCurrentIndent);
         // Check if we should use block scalar style for multiline strings
         if ShouldUseBlockScalar(item) then
         begin
@@ -862,12 +895,16 @@ begin
       end;
     end;
   end;
+  if sequence.HasEndComments then
+    WriteCommentLines(sequence.EndComments, FCurrentIndent);
 end;
 
 procedure TYAMLWriterImpl.WriteScalar(const value : IYAMLValue);
 var
   formattedValue : string;
 begin
+  if value.HasComments then
+    WriteCommentLines(value.Comments, FCurrentIndent);
   formattedValue := FormatScalar(value);
   WriteIndent;
   FOut.Write(formattedValue);
@@ -1178,11 +1215,16 @@ var
   valueStr : string;
   firstKey : boolean;
 begin
+  if mapping.HasComments then
+    WriteCommentLines(mapping.Comments, FCurrentIndent);
+
   if mapping.Count = 0 then
   begin
     WriteIndent;
     FOut.Write('- {}');
     FOut.WriteNewLine;
+    if mapping.HasEndComments then
+      WriteCommentLines(mapping.EndComments, FCurrentIndent + '  ');
     Exit;
   end;
 
@@ -1245,6 +1287,8 @@ begin
         end;
       else
         begin
+          if value.HasComments then
+            WriteCommentLines(value.Comments, FCurrentIndent);
           // Check if we should use block scalar style for multiline strings
           if ShouldUseBlockScalar(value) then
           begin
@@ -1320,6 +1364,8 @@ begin
         end;
       else
         begin
+          if value.HasComments then
+            WriteCommentLines(value.Comments, FCurrentIndent + '  ');
           // Check if we should use block scalar style for multiline strings
           if ShouldUseBlockScalar(value) then
           begin
@@ -1344,7 +1390,8 @@ begin
       end;
     end;
   end;
-
+  if mapping.HasEndComments then
+    WriteCommentLines(mapping.EndComments, FCurrentIndent + '  ');
 end;
 
 procedure TYAMLWriterImpl.WriteSet(const ASet : IYAMLSet);
@@ -1452,6 +1499,8 @@ begin
       FOut.WriteLine('---');
 
     WriteValue(doc.Root);
+    if doc.HasEndComments then
+      WriteCommentLines(doc.EndComments, '');
     if FOptions.EmitDocumentMarkers then
       FOut.WriteLine('...') ;
 
@@ -1531,6 +1580,8 @@ begin
       FOut.WriteLine('---');
 
     WriteToStream(doc.Root,stream);
+    if doc.HasEndComments then
+      WriteCommentLines(doc.EndComments, '');
 
     if FOptions.EmitDocumentMarkers then
       FOut.WriteLine('...') ;

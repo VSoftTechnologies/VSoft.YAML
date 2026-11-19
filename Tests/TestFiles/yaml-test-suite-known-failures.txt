@@ -1,0 +1,7 @@
+# yaml-test-suite cases VSoft.YAML does not pass yet - see VSoft.YAML.Tests.YAMLSuite.pas.
+# A case listed here must keep failing (remove its line once it passes), and a case not
+# listed must pass. One case a line: its id, how it fails, and its name.
+#   rejected-valid    valid YAML raised a parse error
+#   accepted-invalid  invalid YAML was accepted
+#   wrong-data        parsed, but the documents do not hold the data in in.json
+# 402 of 402 cases pass.

@@ -128,6 +128,19 @@ type
     [TestCase('noMixed', 'nO')]
     [TestCase('nanMixed', '.nAn')]
     procedure Write_StringRoundTrips(const text : string);
+
+    // a date and time separated by a space ends at the end of its line
+    [Test]
+    [TestCase('lf', '#10')]
+    [TestCase('crlf', '#13#10')]
+    [TestCase('cr', '#13')]
+    procedure Parse_SpaceSeparatedTimestamp_EndsAtLineEnd(const lineBreak : string);
+
+    [Test]
+    procedure Parse_SpaceSeparatedTimestamp_Nested;
+
+    [Test]
+    procedure WriteToJSON_BenchmarkFile_IsValidJSON;
   end;
 
 implementation
@@ -135,6 +148,7 @@ implementation
 uses
   System.SysUtils,
   System.TypInfo,
+  System.IOUtils,
   VSoft.YAML.Classes;
 
 function TPlainScalarTests.TypeName(const valueType : TYAMLValueType) : string;
@@ -186,6 +200,69 @@ begin
   reloaded := TYAML.LoadFromString(TYAML.WriteToString(doc));
   Assert.AreEqual('vtString', TypeName(reloaded.AsSequence[0].ValueType), 'flow item type');
   Assert.AreEqual(text, reloaded.AsSequence[0].AsString, 'flow item');
+end;
+
+procedure TPlainScalarTests.Parse_SpaceSeparatedTimestamp_EndsAtLineEnd(const lineBreak : string);
+var
+  lb : string;
+  doc : IYAMLDocument;
+begin
+  // the test case passes the line break as Delphi char codes
+  if lineBreak = '#10' then
+    lb := #10
+  else if lineBreak = '#13' then
+    lb := #13
+  else
+    lb := #13#10;
+
+  // the next key straight after: it used to be read into the timestamp
+  doc := TYAML.LoadFromString('a: 2024-01-15 10:30:00' + lb + 'b: 1' + lb);
+  Assert.AreEqual(2, doc.AsMapping.Count, 'keys');
+  Assert.AreEqual('vtTimestamp', TypeName(doc.AsMapping.Items['a'].ValueType), 'type');
+  Assert.AreEqual('2024-01-15 10:30:00', doc.AsMapping.Items['a'].RawValue, 'text');
+  Assert.AreEqual<Int64>(1, doc.AsMapping.Items['b'].AsInteger, 'next key');
+
+  // a blank line after: it used to end up in the value
+  doc := TYAML.LoadFromString('a: 2024-01-15 10:30:00' + lb + lb + 'b: 1' + lb);
+  Assert.AreEqual('2024-01-15 10:30:00', doc.AsMapping.Items['a'].RawValue, 'text before a blank line');
+  Assert.AreEqual(2, doc.AsMapping.Count, 'keys after a blank line');
+
+  // last in the input
+  doc := TYAML.LoadFromString('a: 2024-01-15 10:30:00' + lb);
+  Assert.AreEqual('2024-01-15 10:30:00', doc.AsMapping.Items['a'].RawValue, 'text at the end');
+end;
+
+procedure TPlainScalarTests.Parse_SpaceSeparatedTimestamp_Nested;
+var
+  doc : IYAMLDocument;
+  inner : IYAMLMapping;
+begin
+  doc := TYAML.LoadFromString(
+    'outer:' + sLineBreak +
+    '  when: 2024-01-15 10:30:00' + sLineBreak +
+    sLineBreak +
+    '  next: x' + sLineBreak +
+    'after: y' + sLineBreak);
+  inner := doc.AsMapping.Items['outer'].AsMapping;
+  Assert.AreEqual('2024-01-15 10:30:00', inner.Items['when'].RawValue);
+  Assert.AreEqual('x', inner.Items['next'].AsString);
+  Assert.AreEqual('y', doc.AsMapping.Items['after'].AsString);
+end;
+
+// benchmark_large.yaml holds such a timestamp; its JSON must read back as JSON
+procedure TPlainScalarTests.WriteToJSON_BenchmarkFile_IsValidJSON;
+var
+  doc, reloaded : IYAMLDocument;
+  options : IYAMLParserOptions;
+  json : string;
+begin
+  doc := TYAML.LoadFromFile(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\..\TestFiles\benchmark_large.yaml'));
+  json := TYAML.WriteToJSONString(doc);
+  options := TYAML.CreateParserOptions;
+  options.JSONMode := true;
+  reloaded := TYAML.LoadFromString(json, options);
+  Assert.AreEqual('2024-01-15 10:30:00',
+    reloaded.AsMapping.Items['special_values'].AsMapping.Items['timestamp_space'].AsString);
 end;
 
 initialization

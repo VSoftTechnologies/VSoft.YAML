@@ -8,7 +8,7 @@
         <AppType>Console</AppType>
         <FrameworkType>None</FrameworkType>
         <ProjectVersion>20.5</ProjectVersion>
-        <Platform Condition="'$(Platform)'==''">Win64</Platform>
+        <Platform Condition="'$(Platform)'==''">Win32</Platform>
         <ProjectName Condition="'$(ProjectName)'==''">VSoft.YAML.Tests</ProjectName>
     </PropertyGroup>
     <PropertyGroup>
@@ -130,8 +130,8 @@
         <DCCReference Include="VSoft.YAML.Tests.ISO8601.pas"/>
         <DCCReference Include="..\Source\VSoft.YAML.Utils.pas"/>
         <DCCReference Include="..\Source\VSoft.YAML.pas"/>
-        <DCCReference Include="..\Source\VSoft.YAML.Lexer.pas"/>
-        <DCCReference Include="..\Source\VSoft.YAML.Parser.pas"/>
+        <DCCReference Include="..\Source\VSoft.YAML.Scanner.pas"/>
+        <DCCReference Include="..\Source\VSoft.YAML.Composer.pas"/>
         <DCCReference Include="..\Source\VSoft.YAML.Classes.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.Basics.pas"/>
         <DCCReference Include="..\Source\VSoft.YAML.Writer.pas"/>
@@ -157,6 +157,14 @@
         <DCCReference Include="VSoft.YAML.Tests.Numbers.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.PlainScalars.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.MappingProperties.pas"/>
+        <DCCReference Include="..\Source\VSoft.YAML.Parser.JSON.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.JSON.Strict.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.JSON5.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.JSON5.Writer.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.JSONSuites.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.YAMLSuite.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.YAML12.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.Nodes.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

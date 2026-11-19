@@ -18,8 +18,8 @@ uses
   VSoft.YAML.Tests.ISO8601 in 'VSoft.YAML.Tests.ISO8601.pas',
   VSoft.YAML.Utils in '..\Source\VSoft.YAML.Utils.pas',
   VSoft.YAML in '..\Source\VSoft.YAML.pas',
-  VSoft.YAML.Lexer in '..\Source\VSoft.YAML.Lexer.pas',
-  VSoft.YAML.Parser in '..\Source\VSoft.YAML.Parser.pas',
+  VSoft.YAML.Scanner in '..\Source\VSoft.YAML.Scanner.pas',
+  VSoft.YAML.Composer in '..\Source\VSoft.YAML.Composer.pas',
   VSoft.YAML.Classes in '..\Source\VSoft.YAML.Classes.pas',
   VSoft.YAML.Tests.Basics in 'VSoft.YAML.Tests.Basics.pas',
   VSoft.YAML.Writer in '..\Source\VSoft.YAML.Writer.pas',
@@ -44,7 +44,15 @@ uses
   VSoft.YAML.Tests.Performance in 'VSoft.YAML.Tests.Performance.pas',
   VSoft.YAML.Tests.Numbers in 'VSoft.YAML.Tests.Numbers.pas',
   VSoft.YAML.Tests.PlainScalars in 'VSoft.YAML.Tests.PlainScalars.pas',
-  VSoft.YAML.Tests.MappingProperties in 'VSoft.YAML.Tests.MappingProperties.pas';
+  VSoft.YAML.Tests.MappingProperties in 'VSoft.YAML.Tests.MappingProperties.pas',
+  VSoft.YAML.Parser.JSON in '..\Source\VSoft.YAML.Parser.JSON.pas',
+  VSoft.YAML.Tests.JSON.Strict in 'VSoft.YAML.Tests.JSON.Strict.pas',
+  VSoft.YAML.Tests.JSON5 in 'VSoft.YAML.Tests.JSON5.pas',
+  VSoft.YAML.Tests.JSON5.Writer in 'VSoft.YAML.Tests.JSON5.Writer.pas',
+  VSoft.YAML.Tests.JSONSuites in 'VSoft.YAML.Tests.JSONSuites.pas',
+  VSoft.YAML.Tests.YAMLSuite in 'VSoft.YAML.Tests.YAMLSuite.pas',
+  VSoft.YAML.Tests.YAML12 in 'VSoft.YAML.Tests.YAML12.pas',
+  VSoft.YAML.Tests.Nodes in 'VSoft.YAML.Tests.Nodes.pas';
 
 { keep comment here to protect the following conditional from being removed by the IDE when adding a unit }
 {$IFNDEF TESTINSIGHT}

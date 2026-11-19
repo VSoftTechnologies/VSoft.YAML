@@ -1,6 +1,6 @@
 # VSoft.YAML
 
-## A YAML 1.2 and JSON parser and emitter library for Delphi XE2+.
+## A YAML 1.2, JSON and JSON5 parser and emitter library for Delphi XE2+.
 
 ## Features
 
@@ -15,13 +15,19 @@
 - **Anchor & Alias System** - Complete YAML reference support for data reuse
 
 ### 🔄 YAML 1.1 Compatibility
-VSoft.YAML provides **selective backward compatibility** for common YAML 1.1 features:
+VSoft.YAML provides **selective backward compatibility** for common YAML 1.1 features. They are on by default, and `IYAMLParserOptions.YAML11Compatibility := false` turns them off to read strict YAML 1.2:
 - **Boolean values**: Supports `yes/no/on/off` for easier migration
 - **Modern approach**: Does not support ambiguous single-letter `y/n` booleans
-- **Numeric formats**: Uses YAML 1.2 standards (no `0XX` octal prefix), but binary (`0b`) literals and underscores are allowed
-- **Merge Keys** - Support for YAML merge key (`<<`) operations
+- **Numeric formats**: Uses YAML 1.2 standards (no `0XX` octal prefix), but binary (`0b`) literals and underscores (`1_000`) are allowed
+- **Timestamps**: ISO 8601 dates and times are read as timestamps
+- **Merge Keys** - Support for YAML merge key (`<<`) operations, with a mapping or a sequence of mappings
+- **Sets** - A block mapping of `? ` keys with no values is read as a set
+
+With `YAML11Compatibility` off, plain scalars resolve by the YAML 1.2 core schema alone (so `yes`, `0b101`, `1_000` and dates are strings), `<<` is an ordinary key, and `? ` keys make a mapping with null values. The option only changes what values mean: the syntax is YAML 1.2's either way.
 
 For full YAML Feature details see - [YAML Features](/docs/YAML-Features-Implementation.md)
+
+**Conformance:** the tests run the official [YAML test suite](https://github.com/yaml/yaml-test-suite), with `YAML11Compatibility` off. All 402 of its cases pass.
 
 ### JSON Support
 
@@ -31,6 +37,13 @@ VSoft.YAML can parse and write JSON (since YAML 1.2 is a superset of JSON):
 - **Bidirectional Conversion** - Convert between YAML and JSON formats
 - **Exact Numbers** - Numbers are written digit for digit, whatever their size: UInt64, Currency, and decimals added from their text with `AddOrSetNumber`
 - **ASCII-only Output** - Optionally escape every non-ASCII character as `\uXXXX`
+
+### JSON5 Support
+
+[JSON5](https://spec.json5.org/) files - JSON with comments, unquoted keys, single quotes, trailing commas, hex numbers, `Infinity` and `NaN` - can be read and written:
+- **JSON5 Parsing** - A dedicated parser for the whole JSON5 1.0.0 grammar, selected with `InputFormat`, or by a `.json5` file extension
+- **JSON5 Output** - `WriteToJSON5String/File/Stream`, with options for unquoted keys, single quotes and trailing commas
+- **Lossless Round Trips** - Values, key order, the original number text (`0x1F`, `+1`, `.5`, `Infinity`) and comments all survive reading and writing a JSON5 file
 
 ### Parsing & Writing
 - **Multiple Input Sources** - Load from string, file, or stream
@@ -264,16 +277,121 @@ Set `EscapeNonASCII` to write every character past `~` (#126) as a `\uXXXX` esca
   // 'café' is written as "caf\u00E9", and U+1F600 (an emoji) as "\uD83D\uDE00"
 ```
 
+### Reading and writing JSON5
+Set `InputFormat` to JSON5 to read JSON5 text. `LoadFromFile` and `LoadAllFromFile` read a `.json5` file as JSON5 without being told (and a `.json` file as JSON) when the options say YAML, the default. Any other setting is kept, so passing JSON5 options reads a `.json` file that has comments or trailing commas, such as a VS Code settings file.
+```pascal
+var
+  options: IYAMLParserOptions;
+  doc: IYAMLDocument;
+begin
+  options := TYAML.CreateParserOptions;
+  options.InputFormat := TYAMLInputFormat.yifJSON5;
+  doc := TYAML.LoadFromString(
+    '// server settings' + sLineBreak +
+    '{' + sLineBreak +
+    '  host: ''localhost'',' + sLineBreak +
+    '  port: 0x1F90, // 8080' + sLineBreak +
+    '  timeout: .5,' + sLineBreak +
+    '}', options);
+
+  WriteLn(doc.AsMapping.Items['port'].AsInteger); // 8080
+
+  WriteLn(TYAML.WriteToJSON5String(doc));
+  // Output:
+  // // server settings
+  // {
+  //   host: "localhost",
+  //   port: 0x1F90, // 8080
+  //   timeout: .5
+  // }
+end;
+```
+Numbers keep the text they were written with, so `0x1F90`, `+1`, `.5`, `5.`, `Infinity` and `NaN` are written back unchanged. `AsInteger` and `AsFloat` read all of them. Written as JSON, the JSON5-only forms are converted (`0x1F90` becomes `8080`, `.5` becomes `0.5`), and `NaN` and `Infinity` become `null`. Written as YAML, they become `.nan` and `.inf`.
+
+The JSON5 writer uses the document's options, or the options passed to it:
+- `JSON5UnquotedKeys` (on by default) writes keys that are identifiers, such as `name`, `$id` or `_x1`, without quotes.
+- `JSON5SingleQuotes` quotes strings and keys with `'`.
+- `JSON5TrailingCommas` puts a comma after the last item of each object and array, when `PrettyPrint` is on.
+- `PrettyPrint`, `IndentSize` and `EscapeNonASCII` work as they do for JSON.
+
+**Comments** are kept where they were:
+- Comments on the lines before a value go to its `Comments`; for an object member, that includes the comments before its key.
+- A comment that starts on the line where a value ends, before or after its comma, goes to the value's `Comment`.
+- Comments before a closing `]` or `}` go to the collection's `EndComments`.
+- Comments after the root value go to the document's `EndComments`.
+
+The `//` or `/* */` markers and the whitespace after `//` are dropped. A block comment is trimmed and kept as one entry per line. The JSON5 writer writes every comment as `//`, except a comment after a value in compact output, which it writes as `/* */`. The YAML writer writes the comments as `#` lines, so a JSON5 file converted to YAML keeps them.
+
+JSON (`JSONMode`) is read by the same parser in its strict RFC 8259 mode, which is 1.5 to 2 times as fast as the YAML parser was at reading JSON.
+
 ### Core Components
 - **VSoft.YAML.pas** - Main entry point with `TYAML` static factory methods for all operations
+- **VSoft.YAML.Scanner.pas** - YAML 1.2 scanner, which splits the input into tokens
+- **VSoft.YAML.Composer.pas** - YAML 1.2 parser, which builds the documents from the tokens
+- **VSoft.YAML.Parser.JSON.pas** - JSON and JSON5 parser
 - **VSoft.YAML.Writer.pas** - YAML output writer with multiple formatting options
-- **VSoft.YAML.Writer.JSON.pas** - JSON output writer with pretty-print support
+- **VSoft.YAML.Writer.JSON.pas** - JSON and JSON5 output writer with pretty-print support
 
 ## Compatibility
 
 - **Delphi XE2+** -  compatible with Delphi XE2 or later
 - **Win32/Win64** - may work on other platforms (does not use WinAPI.*), but not tested .
 - **No External Dependencies** - Pure Delphi implementation
+
+## Behaviour changes in 3.0.0
+
+- **YAML has a new parser.** YAML is read by a new parser written to the YAML 1.2 specification: a scanner (`VSoft.YAML.Scanner`) and a parser that builds the documents (`VSoft.YAML.Composer`). It passes all 402 cases of the [YAML test suite](https://github.com/yaml/yaml-test-suite), where the old one passed 195, and reads YAML 6 to 30% faster. The YAML 1.1 forms VSoft.YAML has always read are kept, behind the new `YAML11Compatibility` option (on by default - see YAML 1.1 Compatibility above). Its error messages differ. The old lexer and parser units, `VSoft.YAML.Lexer` and `VSoft.YAML.Parser`, are gone.
+  - **Now read:**
+    - explicit keys (`? `), and keys that are collections - such a key is stored under its text in flow style, as `[a, b]`;
+    - anchors and tags on keys and on empty values, and aliases as keys;
+    - keys of a flow mapping that span lines;
+    - plain and quoted scalars over several lines, folded as YAML 1.2 says;
+    - the block scalar cases the old parser got wrong: chomping, indentation indicators, more-indented and whitespace-only lines, and a tab in the content.
+  - **Now rejected,** as YAML 1.2 requires:
+    - an implicit key straight after another one, as in `a: b: c`;
+    - a line of a quoted scalar, or of a flow collection inside a block collection, that is not indented more than that block collection - including the line with the closing `]` or `}`;
+    - a tab before a block indicator (`- `, `? `, `: `) or before a key that starts a block mapping;
+    - a `#` comment with no white space before it, as in `"a"#c`;
+    - anything but a comment after `...` on its line, and directives with no `---` after them;
+    - a `%YAML` or `%TAG` directive after a document that has no `...` end marker;
+    - a tag whose handle no `%TAG` directive in its own document declares - a directive applies to the document after it only.
+  - **A more-indented line goes on with the plain scalar before it.** In `a: 1` followed by `  - x`, the value of `a` is `1 - x`. That used to be an error.
+  - **No checks beyond the specification.** The old parser rejected a plain scalar that started like a key with no colon (`foo bar` as a document) or that was mostly punctuation. Those are valid plain scalars. `@` and `` ` `` still cannot start one.
+  - **A single quoted scalar has no escapes.** A `\` in it is kept, and a `\` at the end of a line does not join the lines; only double quoted scalars have escapes.
+  - **Local tags keep their `!`.** The tag of `!mytag value` is `!mytag`, as for a tag added in code, so the YAML writer writes it back as a tag. It was `mytag`, which the writer wrote as part of the value.
+  - **Tag handles are resolved.** A `%TAG` handle gives the tag's `TagInfo.ResolvedTag`, and a tag whose handle resolves to `tag:yaml.org,2002:` is a standard tag. `!!` given another prefix no longer converts the value, so `!!int 1 - 3` under such a directive is a string. `IYAMLTagDirective.Handle` and `Prefix` returned each other's value; they are now the right way round.
+  - **`LoadAll` of an empty stream gives no documents.** A stream that is empty or holds only comments has no documents, so `LoadAllFromString` and the other `LoadAll` methods return an empty array where they returned one null document. `LoadFromString` still returns a null document.
+  - **The end of the input ends a block scalar's last line.** In `k: |` followed by `  a` with no final line break, the value is `a\n`, as if the line break were there.
+  - **Comments go where they are.** A comment on a line of its own is no longer taken as the same-line comment of the value before it, and comments after the root value go to the document's `EndComments`.
+- **JSON has its own parser.** JSON (`JSONMode`, or a `.json` file) is read by the new JSON/JSON5 parser rather than by the YAML parser in a JSON mode. It is 1.5 to 2 times as fast and passes all 318 files of [JSONTestSuite](https://github.com/nst/JSONTestSuite). Its error messages differ, and it rejects some input the old path accepted:
+  - empty input, or input that is only whitespace or a byte order mark (RFC 8259 requires a value);
+  - a NUL character straight after a number;
+  - objects and arrays nested more than 1000 deep.
+- **Block scalar line breaks are line feeds.** The text of a literal (`|`) or folded (`>`) block scalar had the platform's line break between its lines, which is CRLF on Windows. It now has `\n` (LF), as YAML 1.2 requires, whatever line breaks the file uses. Code that compares such text with `sLineBreak`, or splits it on CRLF, needs updating. JSON output of block scalars has `\n` where it had `\r\n`.
+- **Tabs are accepted as separation.** A tab is still an error where it would be indentation, such as before a block mapping key. It is now accepted where YAML 1.2 allows it as separation white space:
+  - on a blank or comment-only line;
+  - before a flow collection that is the document's root, or that is indented past the block it is in;
+  - inside a flow collection, once the line has the indentation the collection needs.
+- **A space-separated timestamp ends at its line.** A plain `2024-01-15 10:30:00` used to run on into the next line: the line break, and any blank lines or the start of the next key after it, ended up in the value. The JSON writer also escapes timestamps now, as it does other strings.
+- **Comments are string arrays, on every value.** `Comments`, and the new `EndComments`, are a `TArray<string>` with one line each, where `Comments` was a `TStrings`. A string list for each commented value cost about 250 bytes and 230 ns, where an array costs about 25 bytes and 40 ns.
+  - Reading the property gives a copy, so change comments with `AddComment` and `ClearComments`, or by setting the property; for end comments, `AddEndComment` and `ClearEndComments`.
+  - Code written for the `TStrings` needs updating: `Comments.Count` becomes `Length(Comments)`, and `Comments.Add(s)` becomes `AddComment(s)`.
+  - `Comments`, `HasComments`, `AddComment`, `ClearComments` and `SetComments` moved from `IYAMLCollection` to `IYAMLValue`; code that calls them on a collection still compiles.
+  - The YAML parser still only sets them on collections.
+- **Documents are smaller and faster to free.** A mapping with more than 8 keys finds them through a small hash table of its own rather than a `TDictionary`, and freeing a collection no longer visits each child to detach it.
+  - On the benchmark files the trees are up to 30% smaller (benchmark_large.yaml, 20 MB: 88 MB down to 63 MB), and freeing a document takes 25 to 60% less time.
+  - A node taken out of a collection - replaced, or removed by `Clear` - no longer reports that collection as its `Parent`. One still referenced after its collection is freed reports nil, as before.
+- **The YAML writer writes more comments.** It writes leading comments on scalar values, the new `EndComments` of collections and documents, and the comments of a mapping that is an item of a sequence. It used to drop those.
+- **Signed hex converts.** `AsInteger`, and the JSON and YAML writers, read a sign before a `0x`, `0o` or `0b` prefix, as in JSON5's `-0x1F`. YAML still reads `-0x1F` as a string.
+- **`AsFloat` reads `Infinity`, `-Infinity` and `NaN`**, as well as YAML's `.inf` and `.nan`.
+- **New interface members.** These were added:
+  - `IYAMLParserOptions.InputFormat`
+  - `IYAMLEmitOptions.JSON5UnquotedKeys`, `JSON5SingleQuotes` and `JSON5TrailingCommas`
+  - `EndComments`, `HasEndComments`, `AddEndComment` and `ClearEndComments` on `IYAMLCollection` and `IYAMLDocument`
+  - `IYAMLParserOptions.YAML11Compatibility`
+
+  Only code that implements these interfaces itself needs updating.
+- **`JSONMode` is now a shortcut for `InputFormat`.** Setting it true selects JSON, and setting it false selects YAML.
 
 ## Behaviour changes in 2.4.0
 

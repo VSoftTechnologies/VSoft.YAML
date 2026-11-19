@@ -147,13 +147,13 @@ var
 begin
   YAMLText :=
     'timestamp1: 2025-05-04' + sLineBreak +
-    'timestamp2: 2023-01-01T08:45:30:' + sLineBreak +
+    'timestamp2: 2023-01-01T08:45:30' + sLineBreak +
     'timestamp3: 2023-12-25T14:30:15+05:30';
 
   doc := TYAML.LoadFromString(YAMLText);
   Assert.IsTrue(doc.Root.Values['timestamp1'].IsTimeStamp);
   Assert.IsTrue(doc.Root.Values['timestamp2'].IsTimeStamp);
-  Assert.IsTrue(doc.Root.Values['timestamp2'].IsTimeStamp);
+  Assert.IsTrue(doc.Root.Values['timestamp3'].IsTimeStamp);
 
 end;
 

@@ -544,13 +544,14 @@ var
   yamlContent: string;
 begin
   // Test 1: Tag with newline before scalar value
-  // Note: Local tags are stored without the ! prefix
+  // A local tag keeps its '!', as one added with AddValue(..., '!local') does, so that it is
+  // written back as a tag.
   yamlContent := 'key1: !mytag' + sLineBreak +
                  '  value1';
   doc := TYAML.LoadFromString(yamlContent);
   root := doc.AsMapping;
   Assert.AreEqual('value1', root.Items['key1'].AsString, 'Value should be parsed correctly after tag with newline');
-  Assert.AreEqual('mytag', root.Items['key1'].Tag, 'Tag should be preserved after newline');
+  Assert.AreEqual('!mytag', root.Items['key1'].Tag, 'Tag should be preserved after newline');
 
   // Test 2: Tag with multiple newlines/indents before value
   yamlContent := 'key2: !customtag' + sLineBreak +
@@ -559,7 +560,7 @@ begin
   doc := TYAML.LoadFromString(yamlContent);
   root := doc.AsMapping;
   Assert.AreEqual('value2', root.Items['key2'].AsString, 'Value should be parsed correctly after tag with blank line');
-  Assert.AreEqual('customtag', root.Items['key2'].Tag, 'Tag should be preserved after blank lines');
+  Assert.AreEqual('!customtag', root.Items['key2'].Tag, 'Tag should be preserved after blank lines');
 
   // Test 3: Tag with comment before value
   yamlContent := 'key3: !tagged # this is a comment' + sLineBreak +
@@ -567,7 +568,7 @@ begin
   doc := TYAML.LoadFromString(yamlContent);
   root := doc.AsMapping;
   Assert.AreEqual('value3', root.Items['key3'].AsString, 'Value should be parsed correctly after tag with comment');
-  Assert.AreEqual('tagged', root.Items['key3'].Tag, 'Tag should be preserved after comment');
+  Assert.AreEqual('!tagged', root.Items['key3'].Tag, 'Tag should be preserved after comment');
 
   // Test 4: Tag on sequence with whitespace
   yamlContent := 'items: !myseq' + sLineBreak +
@@ -576,7 +577,7 @@ begin
   doc := TYAML.LoadFromString(yamlContent);
   root := doc.AsMapping;
   Assert.IsTrue(root.Items['items'].IsSequence, 'Should parse as sequence');
-  Assert.AreEqual('myseq', root.Items['items'].Tag, 'Tag should be preserved on sequence after whitespace');
+  Assert.AreEqual('!myseq', root.Items['items'].Tag, 'Tag should be preserved on sequence after whitespace');
   Assert.AreEqual(2, root.Items['items'].AsSequence.Count, 'Sequence should have 2 items');
 
   // Test 5: Tag on mapping with whitespace
@@ -586,7 +587,7 @@ begin
   doc := TYAML.LoadFromString(yamlContent);
   root := doc.AsMapping;
   Assert.IsTrue(root.Items['config'].IsMapping, 'Should parse as mapping');
-  Assert.AreEqual('mymap', root.Items['config'].Tag, 'Tag should be preserved on mapping after whitespace');
+  Assert.AreEqual('!mymap', root.Items['config'].Tag, 'Tag should be preserved on mapping after whitespace');
   Assert.AreEqual('test', root.Items['config'].AsMapping.Items['name'].AsString, 'Nested mapping should be parsed correctly');
 end;
 

@@ -1,0 +1,4 @@
+# Test data copied byte for byte from upstream: some files are UTF-16 or deliberately
+# malformed, so git must never convert their line endings (the repository default is
+# "* text eol=crlf").
+* -text

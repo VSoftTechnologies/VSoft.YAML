@@ -63,6 +63,13 @@ type
     dkError       // the parser will raise an exception.
   );
 
+  // The syntax the parser reads.
+  TYAMLInputFormat = (
+    yifYAML,      // YAML 1.2 (default)
+    yifJSON,      // strict JSON (RFC 8259)
+    yifJSON5      // JSON5 (https://spec.json5.org/)
+  );
+
   // YAML Tag Type Classification
   TYAMLTagType = (
     ytStandard,    // Built-in YAML 1.2 tags (!!str, !!int, !!bool, etc.)
@@ -109,6 +116,11 @@ type
   ['{EE9C4727-863F-4B7E-9331-A51E78E51068}']
     function GetComment : string;
     procedure SetComment(const value : string);
+    function GetHasComments : boolean;
+    function GetComments : TArray<string>;
+    procedure SetComments(const value : TArray<string>);
+    procedure AddComment(const value : string);
+    procedure ClearComments;
     function GetTag : string;
     function GetTagInfo : IYAMLTagInfo;
     function GetParent : IYAMLValue;
@@ -153,7 +165,20 @@ type
     procedure SetTagInfo(const tagInfo : IYAMLTagInfo);
     procedure ClearTag;
 
+    /// <summary>
+    ///  The comment on the same line as the value, after it (and after its comma in JSON5).
+    /// </summary>
     property Comment : string read GetComment write SetComment;
+
+    /// <summary>
+    ///  Comments on the lines before the value, one line each - for a mapping entry, before
+    ///  its key. The YAML parser sets these on collections only; the JSON5 parser on any
+    ///  value. Reading gives a copy, so change them with AddComment, ClearComments or by
+    ///  setting the property.
+    /// </summary>
+    property Comments : TArray<string> read GetComments write SetComments;
+    property HasComments : boolean read GetHasComments;
+
     property Count : integer read GetCount;
     property Parent : IYAMLValue read GetParent;
     property ValueType : TYAMLValueType read GetValueType;
@@ -166,11 +191,11 @@ type
   IYAMLCollection = interface(IYAMLValue)
   ['{9FAE91CC-6945-4D51-882F-EBA0EEF6F7DB}']
 
-    function GetHasComments : boolean;
-    function GetComments : TStrings;
-    procedure SetComments(const value : TStrings);
-    procedure AddComment(const value : string);
-    procedure ClearComments;
+    function GetHasEndComments : boolean;
+    function GetEndComments : TArray<string>;
+    procedure SetEndComments(const value : TArray<string>);
+    procedure AddEndComment(const value : string);
+    procedure ClearEndComments;
     procedure Clear;
 
     /// <summary>
@@ -190,8 +215,12 @@ type
     /// <exception cref="EYAMLPathError">if AExpression is invalid</exception>
     function QuerySingle(const AExpression : string; out AMatch : IYAMLValue) : boolean;
 
-    property Comments : TStrings read GetComments write SetComments;
-    property HasComments : boolean read GetHasComments;
+    /// <summary>
+    ///  Comments after the last item, before the closing bracket - or inside an empty
+    ///  collection. Set by the JSON5 parser. Reading gives a copy, as for Comments.
+    /// </summary>
+    property EndComments : TArray<string> read GetEndComments write SetEndComments;
+    property HasEndComments : boolean read GetHasEndComments;
   end;
 
   IYAMLMapping = interface(IYAMLCollection)
@@ -443,6 +472,12 @@ type
     procedure SetBlockScalarStyle(value : TYAMLBlockScalarStyle);
     function GetBlockChompingIndicator : TYAMLBlockChompingIndicator;
     procedure SetBlockChompingIndicator(value : TYAMLBlockChompingIndicator);
+    function GetJSON5UnquotedKeys : boolean;
+    procedure SetJSON5UnquotedKeys(value : boolean);
+    function GetJSON5SingleQuotes : boolean;
+    procedure SetJSON5SingleQuotes(value : boolean);
+    function GetJSON5TrailingCommas : boolean;
+    procedure SetJSON5TrailingCommas(value : boolean);
 
     function Clone : IYAMLEmitOptions;
 
@@ -477,6 +512,23 @@ type
     ///  output is printable ASCII. Off by default.
     /// </summary>
     property EscapeNonASCII : boolean read GetEscapeNonASCII write SetEscapeNonASCII;
+
+    //JSON5 only (PrettyPrint, IndentSize and EscapeNonASCII apply as for JSON)
+
+    /// <summary>
+    ///  Writes keys that are ES5 identifier names (name, $id, _x1) without quotes. On by
+    ///  default.
+    /// </summary>
+    property JSON5UnquotedKeys : boolean read GetJSON5UnquotedKeys write SetJSON5UnquotedKeys;
+
+    /// <summary> Quotes strings and keys with ' rather than ". Off by default. </summary>
+    property JSON5SingleQuotes : boolean read GetJSON5SingleQuotes write SetJSON5SingleQuotes;
+
+    /// <summary>
+    ///  Writes a comma after the last item of each non-empty object and array when
+    ///  PrettyPrint is on. Off by default.
+    /// </summary>
+    property JSON5TrailingCommas : boolean read GetJSON5TrailingCommas write SetJSON5TrailingCommas;
 
   end;
 
@@ -513,6 +565,11 @@ type
     function GetIsScalar : boolean;
     function GetIsNull : boolean;
     function GetTagDirectives : TList<IYAMLTagDirective>;
+    function GetHasEndComments : boolean;
+    function GetEndComments : TArray<string>;
+    procedure SetEndComments(const value : TArray<string>);
+    procedure AddEndComment(const value : string);
+    procedure ClearEndComments;
 
     /// <summary>
     ///  Writes to a file using the provided encoding, or UTF8 if not provided
@@ -558,6 +615,13 @@ type
     property TagDirectives : TList<IYAMLTagDirective> read GetTagDirectives;
 
     property Version : IYAMLVersionDirective read GetVersion;
+
+    /// <summary>
+    ///  Comments after the root value (other than its same-line Comment), one line each.
+    ///  Reading gives a copy, as for IYAMLValue.Comments.
+    /// </summary>
+    property EndComments : TArray<string> read GetEndComments write SetEndComments;
+    property HasEndComments : boolean read GetHasEndComments;
   end;
 
   IYAMLParserOptions = interface
@@ -566,11 +630,37 @@ type
     procedure SetDuplicateKeyBehavior(value : TYAMLDuplicateKeyBehavior);
     function GetJSONMode : boolean;
     procedure SetJSONMode(value : boolean);
+    function GetInputFormat : TYAMLInputFormat;
+    procedure SetInputFormat(value : TYAMLInputFormat);
+    function GetYAML11Compatibility : boolean;
+    procedure SetYAML11Compatibility(value : boolean);
 
     function Clone : IYAMLParserOptions;
 
     property DuplicateKeyBehavior : TYAMLDuplicateKeyBehavior read GetDuplicateKeyBehavior write SetDuplicateKeyBehavior;
+
+    /// <summary>
+    ///  The syntax to read - YAML (the default), strict JSON or JSON5. LoadFromFile and
+    ///  LoadAllFromFile read a .json file as JSON and a .json5 file as JSON5 when this is
+    ///  YAML; any other setting is kept, so JSON5 options can read a lenient .json file.
+    /// </summary>
+    property InputFormat : TYAMLInputFormat read GetInputFormat write SetInputFormat;
+
+    /// <summary>
+    ///  Shortcut for InputFormat = JSON. Setting it true selects JSON, setting it false
+    ///  selects YAML.
+    /// </summary>
     property JSONMode : boolean read GetJSONMode write SetJSONMode;
+
+    /// <summary>
+    ///  True (the default) reads YAML as YAML 1.2 plus the YAML 1.1 forms VSoft.YAML has always
+    ///  read: yes/no/on/off booleans, 0b binary integers, '_' digit separators and ISO 8601
+    ///  timestamps as plain scalars, '&lt;&lt;' merge keys, and a block mapping of '? ' keys
+    ///  without values as a set. False reads strict YAML 1.2: plain scalars resolve by the core
+    ///  schema alone (so those words, numbers and dates are strings), '&lt;&lt;' is an ordinary
+    ///  key and '? ' keys make a mapping with null values. The syntax is YAML 1.2's either way.
+    /// </summary>
+    property YAML11Compatibility : boolean read GetYAML11Compatibility write SetYAML11Compatibility;
   end;
 
 
@@ -672,6 +762,25 @@ type
     class procedure WriteToJSONStream(const doc : IYAMLDocument;const stream : TStream);overload;static;
     class procedure WriteToJSONStream(const docs : TArray<IYAMLDocument>; const stream : TStream);overload;static;
     class procedure WriteToJSONStream(const value : IYAMLValue; const stream : TStream; const options : IYAMLEmitOptions = nil);overload;static;
+
+    /// <summary>
+    ///  Writes JSON5 (https://spec.json5.org/). Number text is kept as written (0x1F,
+    ///  Infinity, .5) and non-finite floats are written as NaN, Infinity and -Infinity.
+    ///  Comments are written as // lines, or /* */ after a value in compact output. The
+    ///  JSON5* emit options choose unquoted keys, single quotes and trailing commas; several
+    ///  documents are written as an array.
+    /// </summary>
+    class function WriteToJSON5String(const doc : IYAMLDocument) : string;overload;static;
+    class function WriteToJSON5String(const docs : TArray<IYAMLDocument>) : string;overload;static;
+    class function WriteToJSON5String(const value : IYAMLValue; const options : IYAMLEmitOptions = nil) : string;overload;static;
+
+    class procedure WriteToJSON5File(const doc : IYAMLDocument; const fileName : string);overload;static;
+    class procedure WriteToJSON5File(const docs : TArray<IYAMLDocument>; const fileName : string);overload;static;
+    class procedure WriteToJSON5File(const value : IYAMLValue; const fileName : string; const options : IYAMLEmitOptions = nil);overload;static;
+
+    class procedure WriteToJSON5Stream(const doc : IYAMLDocument; const stream : TStream);overload;static;
+    class procedure WriteToJSON5Stream(const docs : TArray<IYAMLDocument>; const stream : TStream);overload;static;
+    class procedure WriteToJSON5Stream(const value : IYAMLValue; const stream : TStream; const options : IYAMLEmitOptions = nil);overload;static;
   end;
 
 implementation
@@ -679,7 +788,7 @@ implementation
 uses
   System.Math,
   VSoft.YAML.Utils,
-  VSoft.YAML.Parser, VSoft.YAML.Lexer, VSoft.YAML.Writer, VSoft.YAML.Writer.JSON, VSoft.YAML.Classes, VSoft.YAML.IO, VSoft.YAML.TagInfo;
+  VSoft.YAML.Parser.JSON, VSoft.YAML.Composer, VSoft.YAML.Writer, VSoft.YAML.Writer.JSON, VSoft.YAML.Classes, VSoft.YAML.IO, VSoft.YAML.TagInfo;
 
 
 var
@@ -687,20 +796,75 @@ var
   _defaultWriterOptions : IYAMLEmitOptions;
 
 
-// A .json file is always parsed in JSON mode. The options passed in (or the shared
-// defaults when none are) are never modified - when JSON mode has to be switched on,
-// a copy is used so later loads are not affected.
+// When the options say YAML, a .json file is parsed as JSON and a .json5 file as JSON5;
+// an explicit JSON or JSON5 setting is kept (JSON5 reads any .json file too). The options
+// passed in (or the shared defaults when none are) are never modified - when the format
+// has to change, a copy is used so later loads are not affected.
 function GetFileParserOptions(const fileName : string; const parserOptions : IYAMLParserOptions) : IYAMLParserOptions;
+var
+  ext : string;
 begin
   if parserOptions = nil then
     result := _defaultParserOptions
   else
     result := parserOptions;
 
-  if (not result.JSONMode) and SameText('.json', ExtractFileExt(fileName)) then
+  if result.InputFormat <> TYAMLInputFormat.yifYAML then
+    exit;
+  ext := ExtractFileExt(fileName);
+  if SameText('.json', ext) then
   begin
     result := result.Clone;
-    result.JSONMode := true;
+    result.InputFormat := TYAMLInputFormat.yifJSON;
+  end
+  else if SameText('.json5', ext) then
+  begin
+    result := result.Clone;
+    result.InputFormat := TYAMLInputFormat.yifJSON5;
+  end;
+end;
+
+// True when the options call for the JSON parser (strict JSON or JSON5) rather than the
+// YAML parser. json5 says which dialect.
+function UseJSONParser(const options : IYAMLParserOptions; out json5 : boolean) : boolean;
+begin
+  json5 := options.InputFormat = TYAMLInputFormat.yifJSON5;
+  result := json5 or (options.InputFormat = TYAMLInputFormat.yifJSON);
+end;
+
+function ParseJSON(const reader : IInputReader; const options : IYAMLParserOptions; json5 : boolean) : IYAMLDocument;
+var
+  parser : TJSONParserImpl;
+begin
+  parser := TJSONParserImpl.Create(reader, options, json5);
+  try
+    result := parser.Parse;
+  finally
+    parser.Free;
+  end;
+end;
+
+function ParseYAML(const reader : IInputReader; const options : IYAMLParserOptions) : IYAMLDocument;
+var
+  composer : TYAMLComposer;
+begin
+  composer := TYAMLComposer.Create(reader, options);
+  try
+    result := composer.Parse;
+  finally
+    composer.Free;
+  end;
+end;
+
+function ParseAllYAML(const reader : IInputReader; const options : IYAMLParserOptions) : TArray<IYAMLDocument>;
+var
+  composer : TYAMLComposer;
+begin
+  composer := TYAMLComposer.Create(reader, options);
+  try
+    result := composer.ParseAll;
+  finally
+    composer.Free;
   end;
 end;
 
@@ -769,9 +933,8 @@ end;
 class function TYAML.LoadAllFromStream(const stream: TStream; const parserOptions: IYAMLParserOptions): TArray<IYAMLDocument>;
 var
   lOptions : IYAMLParserOptions;
-  lexer : TYAMLLexer;
-  parser : TYAMLParser;
   reader : IInputReader;
+  json5 : boolean;
 begin
   if parserOptions = nil then
     lOptions := _defaultParserOptions
@@ -780,28 +943,21 @@ begin
 
   reader := TInputReaderFactory.CreateFromStream(stream);
 
-  //lexer owns the reader
-  lexer := TYAMLLexer.Create(reader, lOptions);
-  try
-    parser := TYAMLParser.Create(Lexer, lOptions);
-    try
-      result := Parser.ParseAll;
-    finally
-      parser.Free;
-    end;
-  finally
-    lexer.Free;
-    reader := nil;
+  // a JSON text holds a single document
+  if UseJSONParser(lOptions, json5) then
+  begin
+    SetLength(result, 1);
+    result[0] := ParseJSON(reader, lOptions, json5);
+    exit;
   end;
-
+  result := ParseAllYAML(reader, lOptions);
 end;
 
 class function TYAML.LoadAllFromString(const value: string; const parserOptions: IYAMLParserOptions): TArray<IYAMLDocument>;
 var
-  Lexer : TYAMLLexer;
-  Parser : TYAMLParser;
   lOptions : IYAMLParserOptions;
   reader : IInputReader;
+  json5 : boolean;
 begin
   if parserOptions = nil then
     lOptions := _defaultParserOptions
@@ -810,18 +966,14 @@ begin
 
   reader := TInputReaderFactory.CreateFromString(value);
 
-  Lexer := TYAMLLexer.Create(reader, lOptions);
-  try
-    Parser := TYAMLParser.Create(Lexer, lOptions);
-    try
-      result := Parser.ParseAll;
-    finally
-      Parser.Free;
-    end;
-  finally
-    Lexer.Free;
+  // a JSON text holds a single document
+  if UseJSONParser(lOptions, json5) then
+  begin
+    SetLength(result, 1);
+    result[0] := ParseJSON(reader, lOptions, json5);
+    exit;
   end;
-
+  result := ParseAllYAML(reader, lOptions);
 end;
 
 class function TYAML.LoadFromFile(const fileName : string; const parserOptions : IYAMLParserOptions) : IYAMLDocument;
@@ -841,9 +993,8 @@ end;
 class function TYAML.LoadFromStream(const stream : TStream; const parserOptions : IYAMLParserOptions = nil) : IYAMLDocument;
 var
   lOptions : IYAMLParserOptions;
-  lexer : TYAMLLexer;
-  parser : TYAMLParser;
   reader : IInputReader;
+  json5 : boolean;
 begin
   if parserOptions = nil then
     lOptions := _defaultParserOptions
@@ -852,26 +1003,17 @@ begin
 
   reader := TInputReaderFactory.CreateFromStream(stream);
 
-  lexer := TYAMLLexer.Create(reader, lOptions);
-  try
-    parser := TYAMLParser.Create(Lexer, lOptions);
-    try
-      result := Parser.Parse;
-    finally
-      parser.Free;
-    end;
-  finally
-    lexer.Free;
-    reader := nil;
-  end;
+  if UseJSONParser(lOptions, json5) then
+    result := ParseJSON(reader, lOptions, json5)
+  else
+    result := ParseYAML(reader, lOptions);
 end;
 
 class function TYAML.LoadFromString(const value : string; const parserOptions : IYAMLParserOptions) : IYAMLDocument;
 var
-  Lexer : TYAMLLexer;
-  Parser : TYAMLParser;
   lOptions : IYAMLParserOptions;
   reader : IInputReader;
+  json5 : boolean;
 begin
   if parserOptions = nil then
     lOptions := _defaultParserOptions
@@ -880,17 +1022,10 @@ begin
 
   reader := TInputReaderFactory.CreateFromString(value);
 
-  Lexer := TYAMLLexer.Create(reader, lOptions);
-  try
-    Parser := TYAMLParser.Create(Lexer, lOptions);
-    try
-      result := Parser.Parse;
-    finally
-      Parser.Free;
-    end;
-  finally
-    Lexer.Free;
-  end;
+  if UseJSONParser(lOptions, json5) then
+    result := ParseJSON(reader, lOptions, json5)
+  else
+    result := ParseYAML(reader, lOptions);
 end;
 
 class procedure TYAML.WriteToFile(const doc : IYAMLDocument;const fileName : string);
@@ -1141,6 +1276,159 @@ begin
   writer := TJSONWriterImpl.Create(opt);
   try
     result := writer.WriteToString(value);
+  finally
+    writer.Free;
+  end;
+end;
+
+class function TYAML.WriteToJSON5String(const doc : IYAMLDocument) : string;
+var
+  writer : TJSONWriterImpl;
+begin
+  writer := TJSONWriterImpl.Create(doc.Options, true);
+  try
+    result := writer.WriteToString(doc);
+  finally
+    writer.Free;
+  end;
+end;
+
+class function TYAML.WriteToJSON5String(const docs : TArray<IYAMLDocument>) : string;
+var
+  i : integer;
+  writer : TJSONWriterImpl;
+  sb : TStringBuilder;
+begin
+  result := '';
+  if Length(docs) = 0 then
+    Exit;
+
+  // Use the first document's options for all of them
+  writer := TJSONWriterImpl.Create(docs[0].Options, true);
+  sb := TStringBuilder.Create(Length(docs) * 512);
+  try
+    sb.Append('[');
+    for i := 0 to Length(docs) - 1 do
+    begin
+      if i > 0 then
+        sb.Append(',');
+      // a // comment ending the document must not swallow the "," or "]" that follows
+      sb.Append(writer.WriteToString(docs[i]));
+      if docs[i].HasEndComments or (docs[i].Root.Comment <> '') then
+        sb.Append(sLineBreak);
+    end;
+    sb.Append(']');
+    result := sb.ToString;
+  finally
+    sb.Free;
+    writer.Free;
+  end;
+end;
+
+class function TYAML.WriteToJSON5String(const value : IYAMLValue; const options : IYAMLEmitOptions) : string;
+var
+  writer : TJSONWriterImpl;
+  opt : IYAMLEmitOptions;
+begin
+  if options <> nil then
+    opt := options
+  else
+    opt := _defaultWriterOptions;
+  writer := TJSONWriterImpl.Create(opt, true);
+  try
+    result := writer.WriteToString(value);
+  finally
+    writer.Free;
+  end;
+end;
+
+class procedure TYAML.WriteToJSON5File(const doc : IYAMLDocument; const fileName : string);
+var
+  writer : TJSONWriterImpl;
+begin
+  writer := TJSONWriterImpl.Create(doc.Options, true);
+  try
+    writer.WriteToFile(doc, fileName);
+  finally
+    writer.Free;
+  end;
+end;
+
+class procedure TYAML.WriteToJSON5File(const docs : TArray<IYAMLDocument>; const fileName : string);
+var
+  fileStream : TFileStream;
+begin
+  if Length(docs) = 0 then
+    Exit;
+  fileStream := TFileStream.Create(fileName, fmCreate);
+  try
+    WriteToJSON5Stream(docs, fileStream);
+  finally
+    fileStream.Free;
+  end;
+end;
+
+class procedure TYAML.WriteToJSON5File(const value : IYAMLValue; const fileName : string; const options : IYAMLEmitOptions);
+var
+  writer : TJSONWriterImpl;
+  opt : IYAMLEmitOptions;
+begin
+  if options <> nil then
+    opt := options
+  else
+    opt := _defaultWriterOptions;
+  writer := TJSONWriterImpl.Create(opt, true);
+  try
+    writer.WriteToFile(value, fileName);
+  finally
+    writer.Free;
+  end;
+end;
+
+class procedure TYAML.WriteToJSON5Stream(const doc : IYAMLDocument; const stream : TStream);
+var
+  writer : TJSONWriterImpl;
+begin
+  writer := TJSONWriterImpl.Create(doc.Options, true);
+  try
+    writer.WriteToStream(doc, stream);
+  finally
+    writer.Free;
+  end;
+end;
+
+class procedure TYAML.WriteToJSON5Stream(const docs : TArray<IYAMLDocument>; const stream : TStream);
+var
+  text : string;
+  bytes : TBytes;
+  encoding : TEncoding;
+begin
+  if Length(docs) = 0 then
+    Exit;
+  text := WriteToJSON5String(docs);
+  encoding := docs[0].Options.Encoding;
+  bytes := encoding.GetBytes(text);
+  if docs[0].Options.WriteByteOrderMark then
+  begin
+    if Length(encoding.GetPreamble) > 0 then
+      stream.WriteBuffer(encoding.GetPreamble[0], Length(encoding.GetPreamble));
+  end;
+  if Length(bytes) > 0 then
+    stream.WriteBuffer(bytes[0], Length(bytes));
+end;
+
+class procedure TYAML.WriteToJSON5Stream(const value : IYAMLValue; const stream : TStream; const options : IYAMLEmitOptions);
+var
+  writer : TJSONWriterImpl;
+  opt : IYAMLEmitOptions;
+begin
+  if options <> nil then
+    opt := options
+  else
+    opt := _defaultWriterOptions;
+  writer := TJSONWriterImpl.Create(opt, true);
+  try
+    writer.WriteToStream(value, stream);
   finally
     writer.Free;
   end;

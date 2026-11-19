@@ -48,6 +48,20 @@ type
     procedure Test_InvalidYAML_MixedTabsAndSpaces;
     [Test]
     procedure Test_ValidYAML_TabsInQuotedStrings;
+    // YAML 1.2 (6.1): a tab is separation white space after the indentation
+    [Test]
+    procedure Test_ValidYAML_TabBeforeRootFlowCollection;
+    [Test]
+    procedure Test_ValidYAML_TabInFlowCollectionAfterIndentation;
+    [Test]
+    procedure Test_ValidYAML_TabsOnBlankAndCommentLines;
+    [Test]
+    procedure Test_InvalidYAML_TabAsFlowIndentation;
+    [Test]
+    procedure Test_InvalidYAML_TabBeforeBlockKey;
+    // YAML 1.2 (5.4): line breaks in scalar content are line feeds
+    [Test]
+    procedure Test_BlockScalars_LineBreaksAreLineFeeds;
     [Test]
     procedure Test_InvalidYAML_UnterminatedString;
     [Test]
@@ -601,32 +615,42 @@ begin
 end;
 
 procedure TYAMLEdgeCasesTests.Test_InvalidYAML_MisindentedSequenceItem_Raises;
+var
+  doc : IYAMLDocument;
 begin
-  // A "- item" indented under a mapping fits neither the mapping nor a sequence. The
-  // parser used to stop there and return what it had, silently dropping 'b: 2' and
-  // everything after it.
+  // A "- item" at the indentation of a mapping's keys fits neither the mapping nor a
+  // sequence. The parser used to stop there and return what it had, silently dropping
+  // 'b: 2' and everything after it.
   Assert.WillRaise(
     procedure
     begin
       TYAML.LoadFromString('a: 1' + sLineBreak +
-                           '  - x' + sLineBreak +
+                           '- x' + sLineBreak +
                            'b: 2');
     end,
     EYAMLParseException
   );
 
-  // Same, inside a nested mapping
+  // Same, inside a nested mapping - here the item is between the two mappings' indentation
   Assert.WillRaise(
     procedure
     begin
       TYAML.LoadFromString('top:' + sLineBreak +
                            '  a: 1' + sLineBreak +
-                           '    - x' + sLineBreak +
+                           ' - x' + sLineBreak +
                            '  b: 2' + sLineBreak +
                            'c: 3');
     end,
     EYAMLParseException
   );
+
+  // (Indented more than the key, "- x" is not an item at all: the line goes on with the
+  // plain scalar before it - YAML 1.2, 7.3.3.)
+  doc := TYAML.LoadFromString('a: 1' + sLineBreak +
+                              '  - x' + sLineBreak +
+                              'b: 2');
+  Assert.AreEqual('1 - x', doc.AsMapping.Items['a'].AsString);
+  Assert.AreEqual<Int64>(2, doc.AsMapping.Items['b'].AsInteger);
 
   // After a sibling mapping that follows a sequence
   Assert.WillRaise(
@@ -647,7 +671,7 @@ begin
     procedure
     begin
       TYAML.LoadAllFromString('a: 1' + sLineBreak +
-                              '  - x' + sLineBreak +
+                              '- x' + sLineBreak +
                               'b: 2');
     end,
     EYAMLParseException
@@ -928,10 +952,11 @@ var
   doc: IYAMLDocument;
   root: IYAMLMapping;
 begin
-  // Test different line break styles
-  yamlContent := 'unix_breaks: "line1' + #10 + 'line2"' + sLineBreak +
-                'windows_breaks: "line1' + #13#10 + 'line2"' + sLineBreak +
-                'mac_breaks: "line1' + #13 + 'line2"';
+  // Test different line break styles. (A quoted scalar's later lines must be indented
+  // more than the mapping it is in - YAML 1.2, 7.3.)
+  yamlContent := 'unix_breaks: "line1' + #10 + ' line2"' + sLineBreak +
+                'windows_breaks: "line1' + #13#10 + ' line2"' + sLineBreak +
+                'mac_breaks: "line1' + #13 + ' line2"';
 
   doc := TYAML.LoadFromString(yamlContent);
   root := doc.AsMapping;
@@ -2115,6 +2140,113 @@ begin
   );
 end;
 
+procedure TYAMLEdgeCasesTests.Test_ValidYAML_TabBeforeRootFlowCollection;
+var
+  doc : IYAMLDocument;
+begin
+  // the document's root needs no indentation, so the tab is separation
+  doc := TYAML.LoadFromString(#9 + '{a: 1}' + #10);
+  Assert.AreEqual<Int64>(1, doc.AsMapping.Items['a'].AsInteger);
+
+  doc := TYAML.LoadFromString(#9 + '[' + #10 + #9 + '1,' + #10 + #9 + '2' + #10 + #9 + ']' + #10);
+  Assert.AreEqual(2, doc.AsSequence.Count);
+
+  doc := TYAML.LoadFromString('---' + #10 + #9 + '[x]' + #10);
+  Assert.AreEqual('x', doc.AsSequence[0].AsString);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_ValidYAML_TabInFlowCollectionAfterIndentation;
+var
+  doc : IYAMLDocument;
+  items : IYAMLSequence;
+begin
+  // a flow collection that is a mapping value at indent 0 needs one space before a tab
+  // (on every line, the one with the closing bracket too)
+  doc := TYAML.LoadFromString('key: [' + #10 + '  ' + #9 + 'a,' + #10 + '  b' + #10 + ' ]' + #10);
+  items := doc.AsMapping.Items['key'].AsSequence;
+  Assert.AreEqual(2, items.Count);
+  Assert.AreEqual('a', items[0].AsString);
+  Assert.AreEqual('b', items[1].AsString);
+
+  // a value indented past the block it is in may have a tab before a flow collection
+  doc := TYAML.LoadFromString('outer:' + #10 + '  inner:' + #10 + '     ' + #9 + '{x: 1}' + #10);
+  Assert.AreEqual<Int64>(1, doc.AsMapping.Items['outer'].AsMapping.Items['inner'].AsMapping.Items['x'].AsInteger);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_ValidYAML_TabsOnBlankAndCommentLines;
+var
+  doc : IYAMLDocument;
+begin
+  doc := TYAML.LoadFromString('a: 1' + #10 + #9 + #10 + ' ' + #9 + ' ' + #10 + 'b: 2' + #10);
+  Assert.AreEqual(2, doc.AsMapping.Count);
+  Assert.AreEqual<Int64>(2, doc.AsMapping.Items['b'].AsInteger);
+
+  doc := TYAML.LoadFromString('a: 1' + #10 + #9 + '# a comment' + #10 + 'b: 2' + #10);
+  Assert.AreEqual(2, doc.AsMapping.Count);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_InvalidYAML_TabAsFlowIndentation;
+begin
+  // inside "- [" the lines need a space before any tab - here the tab is the indentation
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('- [' + #10 + #9 + 'foo,' + #10 + ' foo' + #10 + ' ]' + #10);
+    end,
+    EYAMLParseException);
+
+  // a mapping value on the next line needs indenting with spaces
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('key:' + #10 + #9 + '[a]' + #10);
+    end,
+    EYAMLParseException);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_InvalidYAML_TabBeforeBlockKey;
+begin
+  Assert.WillRaise(
+    procedure
+    begin
+      TYAML.LoadFromString('foo:' + #10 + '  a: 1' + #10 + '  ' + #9 + 'b: 2' + #10);
+    end,
+    EYAMLParseException);
+end;
+
+procedure TYAMLEdgeCasesTests.Test_BlockScalars_LineBreaksAreLineFeeds;
+var
+  lineBreak : string;
+  i : integer;
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+begin
+  // the same whichever line breaks the input has
+  for i := 0 to 1 do
+  begin
+    if i = 0 then
+      lineBreak := #13#10
+    else
+      lineBreak := #10;
+    doc := TYAML.LoadFromString(
+      'literal: |' + lineBreak +
+      '  line1' + lineBreak +
+      '  line2' + lineBreak +
+      'strip: |-' + lineBreak +
+      '  line1' + lineBreak +
+      '  line2' + lineBreak +
+      'folded: >' + lineBreak +
+      '  one' + lineBreak +
+      '  two' + lineBreak +
+      lineBreak +
+      '  three' + lineBreak);
+    root := doc.AsMapping;
+    Assert.AreEqual('line1' + #10 + 'line2' + #10, root.Items['literal'].AsString, 'literal');
+    Assert.AreEqual('line1' + #10 + 'line2', root.Items['strip'].AsString, 'strip');
+    Assert.AreEqual('one two' + #10 + 'three' + #10, root.Items['folded'].AsString, 'folded');
+  end;
+end;
+
 // Long string line continuation tests
 
 procedure TYAMLEdgeCasesTests.Test_LongString_LineContinuation_DoubleQuoted;
@@ -2152,8 +2284,10 @@ begin
   doc := TYAML.LoadFromString(yamlContent);
   root := doc.AsMapping;
 
-  expectedValue := 'loooooooooooooooooooooooooooooooooooooooooooooooooongstring' +
-                   'loooooooooooooooooooooooooooooooooooooooooooooooooongstring' +
+  // A single quoted scalar has no escapes (YAML 1.2, 7.3.2): the '\' stays, and each line
+  // break folds to a space - only a double quoted scalar can join lines with '\'.
+  expectedValue := 'loooooooooooooooooooooooooooooooooooooooooooooooooongstring\ ' +
+                   'loooooooooooooooooooooooooooooooooooooooooooooooooongstring\ ' +
                    'loooooooooooooooooooooooooooooooooooooooooooooooooongstring';
 
   Assert.AreEqual(expectedValue, root.Items['long_string'].AsString);

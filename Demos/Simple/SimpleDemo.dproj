@@ -117,8 +117,8 @@
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
         <DCCReference Include="..\..\Source\VSoft.YAML.Classes.pas"/>
-        <DCCReference Include="..\..\Source\VSoft.YAML.Lexer.pas"/>
-        <DCCReference Include="..\..\Source\VSoft.YAML.Parser.pas"/>
+        <DCCReference Include="..\..\Source\VSoft.YAML.Scanner.pas"/>
+        <DCCReference Include="..\..\Source\VSoft.YAML.Composer.pas"/>
         <DCCReference Include="..\..\Source\VSoft.YAML.pas"/>
         <DCCReference Include="..\..\Source\VSoft.YAML.Utils.pas"/>
         <DCCReference Include="..\..\Source\VSoft.YAML.Writer.pas"/>

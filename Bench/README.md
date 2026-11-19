@@ -7,8 +7,11 @@ Benchmark, profiling and verification tools for VSoft.YAML. Build any of them wi
 
 - **ProfBench** `[rounds] [iters] [file|*] [dir]`: for each test file, times parse,
   free, YAML output and JSON output (best of `rounds`), and prints an MD5 of both
-  outputs so A/B runs can confirm identical results. It also prints the machine's
-  clock and free memory at the start and end. `dir` defaults to `..\Tests\TestFiles`.
+  outputs so A/B runs can confirm identical results. The JSON files are read as JSON;
+  a second line for each times reading it as JSON5, reading the JSON5 text the writer
+  makes of it, and that write. It also prints the machine's clock and free memory at the
+  start and end. `dir` defaults to `..\Tests\TestFiles`. Baselines recorded with it are
+  in `baselines\`.
 - **LoadMem** `<file>`: loads one file with `LoadFromFile` and prints the process's peak
   memory and the heap the loaded tree keeps (run it once per file).
 - **MemBreak** `<file>`: where a loaded document's memory goes: node counts, object sizes,

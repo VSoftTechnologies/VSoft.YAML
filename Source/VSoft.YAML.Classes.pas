@@ -19,8 +19,9 @@ type
   TYAMLValueExtra = record
     Tag : string;  // Keep for backward compatibility
     TagInfo : IYAMLTagInfo;
-    Comment : string;
-    Comments : TStringList; // collections only
+    Comment : string;       // same line, after the value
+    Comments : TArray<string>; // lines before the value
+    EndComments : TArray<string>; // collections only: before the closing bracket
   end;
 
   // A sequence's items, held in the sequence object itself rather than in a separate
@@ -34,6 +35,8 @@ type
     procedure RaiseOutOfRange;
   public
     procedure Add(const value : IYAMLValue);
+    // sets item index to value; the value it held forgets owner as its parent
+    procedure Replace(index : integer; const value : IYAMLValue; owner : TObject);
     procedure Clear;
     property Count : integer read FCount;
     property Items[index : integer] : IYAMLValue read GetItem write SetItem; default;
@@ -76,6 +79,11 @@ type
   protected
     function GetComment : string;
     procedure SetComment(const value : string);
+    function GetHasComments : boolean;inline;
+    function GetComments : TArray<string>;
+    procedure SetComments(const value : TArray<string>);
+    procedure AddComment(const value : string);
+    procedure ClearComments;
     function GetCount : integer;virtual;
     function GetParent : IYAMLValue;
     function FindRoot : IYAMLValue;
@@ -135,12 +143,11 @@ type
 
   TYAMLCollection = class(TYAMLValue, IYAMLCollection)
   protected
-    procedure EnsureComments;
-    function GetHasComments : boolean;inline;
-    function GetComments : TStrings;
-    procedure SetComments(const value : TStrings);
-    procedure AddComment(const value : string);
-    procedure ClearComments;
+    function GetHasEndComments : boolean;inline;
+    function GetEndComments : TArray<string>;
+    procedure SetEndComments(const value : TArray<string>);
+    procedure AddEndComment(const value : string);
+    procedure ClearEndComments;
     procedure Clear;virtual;abstract;
     function Query(const AExpression : string) : IYAMLSequence;
     function QuerySingle(const AExpression : string; out AMatch : IYAMLValue) : boolean;
@@ -258,13 +265,20 @@ type
 
   TYAMLMapping = class(TYAMLCollection, IYAMLMapping, IYAMLMappingPrivate)
   private
-    // Insertion-ordered entries. Most mappings are small, so lookups are a linear
-    // scan; FIndex (key -> slot) is only built once a mapping grows past
-    // cIndexThreshold keys.
+    // Insertion-ordered entries. Most mappings are small, so lookups are a linear scan (the
+    // parser interns keys, so most comparisons stop at the pointer). From cIndexThreshold
+    // keys on there is an index as well, in one array: an open-addressing table of
+    // slotCount slots (a power of two, at most half full), each entry index + 1 or 0 for an
+    // empty slot, followed by the hashes of the first slotCount div 2 keys.
     FEntries : TArray<TYAMLMappingEntry>;
     FCount : integer;
-    FIndex : TDictionary<string, integer>;
-    function IndexOfKey(const key : string) : integer;
+    FIndex : TArray<Cardinal>;
+    function IndexOfKey(const key : string) : integer;inline;
+    // as IndexOfKey; hash is the key's hash when the mapping is indexed
+    function FindKey(const key : string; out hash : Cardinal) : integer;
+    procedure BuildIndex(slotCount : integer);
+    procedure IndexInsert(index, slotCount : integer);
+    procedure GrowEntries;
     // the value for key, or nil when there is none - nothing is created or added
     function ValueOrNil(const key : string) : IYAMLValue;
   protected
@@ -378,7 +392,16 @@ type
     FEscapeNonASCII : boolean;
     FBlockScalarStyle : TYAMLBlockScalarStyle;
     FBlockChompingIndicator : TYAMLBlockChompingIndicator;
+    FJSON5UnquotedKeys : boolean;
+    FJSON5SingleQuotes : boolean;
+    FJSON5TrailingCommas : boolean;
   protected
+    function GetJSON5UnquotedKeys : boolean;
+    procedure SetJSON5UnquotedKeys(value : boolean);
+    function GetJSON5SingleQuotes : boolean;
+    procedure SetJSON5SingleQuotes(value : boolean);
+    function GetJSON5TrailingCommas : boolean;
+    procedure SetJSON5TrailingCommas(value : boolean);
     function GetFormat : TYAMLOutputFormat;
     procedure SetFormat(value : TYAMLOutputFormat);
     function GetIndentSize : UInt32;
@@ -441,7 +464,7 @@ type
     function GetHandle : string;
     function GetPrefix : string;
   public
-    constructor Create(const prefix : string; const handle : string);
+    constructor Create(const handle : string; const prefix : string);
     function ToString : string;override;
   end;
 
@@ -451,7 +474,13 @@ type
     FOptions : IYAMLEmitOptions;
     FYAMLVersion : IYAMLVersionDirective;
     FTagDirectives : TList<IYAMLTagDirective>;
+    FEndComments : TArray<string>;
   protected
+    function GetHasEndComments : boolean;
+    function GetEndComments : TArray<string>;
+    procedure SetEndComments(const value : TArray<string>);
+    procedure AddEndComment(const value : string);
+    procedure ClearEndComments;
     function GetVersion : IYAMLVersionDirective;
     function GetOptions : IYAMLEmitOptions;
     function GetIsMapping : boolean;
@@ -480,12 +509,17 @@ type
   TYAMLParserOptions = class(TInterfacedObject, IYAMLParserOptions)
   private
     FDuplicateKeyBehavior : TYAMLDuplicateKeyBehavior;
-    FJSONMode : boolean;
+    FInputFormat : TYAMLInputFormat;
+    FYAML11Compatibility : boolean;
   protected
     procedure SetDuplicateKeyBehavior(value : TYAMLDuplicateKeyBehavior);
     function GetDuplicateKeyBehavior : TYAMLDuplicateKeyBehavior;
     function GetJSONMode : boolean;inline;
     procedure SetJSONMode(value : boolean);
+    function GetInputFormat : TYAMLInputFormat;inline;
+    procedure SetInputFormat(value : TYAMLInputFormat);
+    function GetYAML11Compatibility : boolean;
+    procedure SetYAML11Compatibility(value : boolean);
     function Clone : IYAMLParserOptions;
 
   public
@@ -532,10 +566,18 @@ function IsJSONNumber(const value : string) : boolean;overload;
 function IsJSONNumber(const value : string; out isFloat : boolean) : boolean;overload;
 
 /// <summary>
+///  True when value is a number in the JSON5 grammar, with nothing before or after: an
+///  optional + or -, then Infinity, NaN, 0x/0X hex digits, or a decimal with no leading
+///  zero, a '.' that may have digits on only one side, and an optional exponent. The JSON5
+///  writer emits such text as is.
+/// </summary>
+function IsJSON5Number(const value : string) : boolean;
+
+/// <summary>
 ///  Converts YAML integer text of any size to decimal - an optional '-' then digits with no
-///  leading zero, which is also a JSON integer. Takes decimal digits with an optional sign,
-///  or a 0x hex, 0o octal or 0b binary run (the forms the parser reads as integers), and
-///  returns false for anything else.
+///  leading zero, which is also a JSON integer. Takes decimal digits or a 0x hex, 0o octal
+///  or 0b binary run (the forms the parser reads as integers), each with an optional sign
+///  (JSON5 allows -0x1F), and returns false for anything else.
 /// </summary>
 function YAMLIntegerToDecimalText(const raw : string; out text : string) : boolean;
 
@@ -548,6 +590,21 @@ function YAMLIntegerToDecimalText(const raw : string; out text : string) : boole
 ///  null and anything else a string. The writer quotes any string this would not call one.
 /// </summary>
 function YAMLResolvePlainScalar(const value : string) : TYAMLValueType;
+
+/// <summary>
+///  The type a plain scalar has in the YAML 1.2 core schema (10.3.2) alone - null Null NULL ~
+///  and empty, true True TRUE false False FALSE, decimal, 0o octal and 0x hex integers and
+///  floats including .nan and [-+].inf in their three spellings. Anything else is a string,
+///  including the YAML 1.1 forms YAMLResolvePlainScalar also reads. The parser uses it when
+///  YAML11Compatibility is off.
+/// </summary>
+function YAMLResolveCoreScalar(const value : string) : TYAMLValueType;
+
+/// <summary>
+///  Makes parent the parent of value - for the parser, which can build a node before it knows
+///  which collection the node goes in.
+/// </summary>
+procedure YAMLSetParent(const value : IYAMLValue; const parent : IYAMLValue);
 
 implementation
 
@@ -667,6 +724,68 @@ begin
   result := i > len;
 end;
 
+function IsJSON5Number(const value : string) : boolean;
+var
+  len, i, digitStart : integer;
+  hasIntPart : boolean;
+begin
+  result := false;
+  len := Length(value);
+  i := 1;
+  if (len > 0) and ((value[1] = '-') or (value[1] = '+')) then
+    Inc(i);
+  if i > len then
+    exit;
+  case value[i] of
+    'I' : exit(Copy(value, i, len) = 'Infinity');
+    'N' : exit(Copy(value, i, len) = 'NaN');
+  end;
+  // hex : 0x or 0X and at least one hex digit
+  if (value[i] = '0') and (i < len) and ((value[i + 1] = 'x') or (value[i + 1] = 'X')) then
+  begin
+    Inc(i, 2);
+    digitStart := i;
+    while (i <= len) and CharInSet(value[i], ['0'..'9', 'a'..'f', 'A'..'F']) do
+      Inc(i);
+    exit((i > digitStart) and (i > len));
+  end;
+  // int : a lone 0, or digits that do not start with 0 - may be absent before a '.'
+  hasIntPart := (value[i] >= '0') and (value[i] <= '9');
+  if hasIntPart then
+  begin
+    if value[i] = '0' then
+      Inc(i)
+    else
+      while (i <= len) and (value[i] >= '0') and (value[i] <= '9') do
+        Inc(i);
+  end;
+  // frac : '.' then digits, which may be absent after an int part
+  if (i <= len) and (value[i] = '.') then
+  begin
+    Inc(i);
+    digitStart := i;
+    while (i <= len) and (value[i] >= '0') and (value[i] <= '9') do
+      Inc(i);
+    if (not hasIntPart) and (i = digitStart) then
+      exit; // a lone '.'
+  end
+  else if not hasIntPart then
+    exit;
+  // exp : 'e' or 'E', an optional sign and at least one digit
+  if (i <= len) and ((value[i] = 'e') or (value[i] = 'E')) then
+  begin
+    Inc(i);
+    if (i <= len) and ((value[i] = '+') or (value[i] = '-')) then
+      Inc(i);
+    digitStart := i;
+    while (i <= len) and (value[i] >= '0') and (value[i] <= '9') do
+      Inc(i);
+    if i = digitStart then
+      exit;
+  end;
+  result := i > len;
+end;
+
 function YAMLIntegerToDecimalText(const raw : string; out text : string) : boolean;
 var
   len, i, j, k, radix, digit, carry, count : integer;
@@ -680,22 +799,23 @@ begin
   negative := false;
   radix := 10;
   i := 1;
-  if (len > 2) and (raw[1] = '0') and CharInSet(raw[2], ['x', 'X', 'o', 'O', 'b', 'B']) then
-  begin
-    case raw[2] of
-      'x', 'X' : radix := 16;
-      'o', 'O' : radix := 8;
-    else
-      radix := 2;
-    end;
-    i := 3;
-  end
-  else if (raw[1] = '-') or (raw[1] = '+') then
+  if (raw[1] = '-') or (raw[1] = '+') then
   begin
     if len = 1 then
       exit;
     negative := raw[1] = '-';
     i := 2;
+  end;
+  // a radix prefix needs at least one digit after it; JSON5 allows a sign before 0x
+  if (len - i >= 2) and (raw[i] = '0') and CharInSet(raw[i + 1], ['x', 'X', 'o', 'O', 'b', 'B']) then
+  begin
+    case raw[i + 1] of
+      'x', 'X' : radix := 16;
+      'o', 'O' : radix := 8;
+    else
+      radix := 2;
+    end;
+    Inc(i, 2);
   end;
 
   // two decimal digits per input digit is enough even for hex, as 16 < 100
@@ -1011,6 +1131,52 @@ begin
     result := TYAMLValueType.vtString;
 end;
 
+function YAMLResolveCoreScalar(const value : string) : TYAMLValueType;
+var
+  isFloat : boolean;
+begin
+  if value = '' then
+    exit(TYAMLValueType.vtNull);
+
+  case value[1] of
+    '~' :
+      if Length(value) = 1 then
+        exit(TYAMLValueType.vtNull);
+    'n', 'N' :
+      if (value = 'null') or (value = 'Null') or (value = 'NULL') then
+        exit(TYAMLValueType.vtNull);
+    't', 'T' :
+      if (value = 'true') or (value = 'True') or (value = 'TRUE') then
+        exit(TYAMLValueType.vtBoolean);
+    'f', 'F' :
+      if (value = 'false') or (value = 'False') or (value = 'FALSE') then
+        exit(TYAMLValueType.vtBoolean);
+    '.' :
+      if (value = '.nan') or (value = '.NaN') or (value = '.NAN') or
+         (value = '.inf') or (value = '.Inf') or (value = '.INF') then
+        exit(TYAMLValueType.vtFloat);
+    '+' :
+      if (value = '+.inf') or (value = '+.Inf') or (value = '+.INF') then
+        exit(TYAMLValueType.vtFloat);
+    '-' :
+      if (value = '-.inf') or (value = '-.Inf') or (value = '-.INF') then
+        exit(TYAMLValueType.vtFloat);
+  end;
+
+  // 0o octal and 0x hex - not YAML 1.1's 0b binary
+  if (Length(value) > 2) and (value[1] = '0') and ((value[2] = 'o') or (value[2] = 'x')) and IsYAMLRadixInteger(value) then
+    result := TYAMLValueType.vtInteger
+  else if IsYAMLDecimalNumber(value, isFloat) then
+  begin
+    if isFloat then
+      result := TYAMLValueType.vtFloat
+    else
+      result := TYAMLValueType.vtInteger;
+  end
+  else
+    result := TYAMLValueType.vtString;
+end;
+
 function YAMLFloatToStr(const value : Double) : string;
 begin
   if IsNan(value) then
@@ -1057,6 +1223,30 @@ begin
   result := AtomicIncrement(FRefCount);
 end;
 
+var
+  // Collections in the middle of releasing their children (BeginReleasingChildren), in any
+  // thread.
+  _releasingCollections : integer = 0;
+
+// A node still referenced elsewhere when the collection it is in goes must forget its
+// parent. Rather than each collection checking every child as it goes, a child that is
+// released while some collection is releasing its children checks whether its own parent is
+// the one going - which is only ever the case for a child that outlives its parent.
+procedure ForgetDestroyedParent(node : TYAMLNodeBase);
+var
+  parent : Pointer;
+  parentObj : TObject;
+begin
+  parent := TYAMLValue(node).FParent;
+  if parent = nil then
+    exit;
+  // the parent is held as its IYAMLValue; asking it for the object adds no reference
+  if IInterface(parent).QueryInterface(cObjCastGUID, parentObj) <> S_OK then
+    exit;
+  if TYAMLNodeBase(parentObj).FRefCount = cDestroying then
+    TYAMLValue(node).FParent := nil;
+end;
+
 function TYAMLNodeBase._Release : integer;
 begin
   result := AtomicDecrement(FRefCount);
@@ -1065,6 +1255,30 @@ begin
     // so that any refcounting during destruction cannot get back to zero
     FRefCount := cDestroying;
     Destroy;
+  end
+  else if (_releasingCollections > 0) and (result > 0) then
+    ForgetDestroyedParent(Self);
+end;
+
+// A collection's destructor releases its children between these two, so that any that
+// outlive it forget it as their parent (see ForgetDestroyedParent).
+procedure BeginReleasingChildren;inline;
+begin
+  AtomicIncrement(_releasingCollections);
+end;
+
+procedure EndReleasingChildren;inline;
+begin
+  AtomicDecrement(_releasingCollections);
+end;
+
+procedure ReleaseChildren(var children : TArray<IYAMLValue>);
+begin
+  BeginReleasingChildren;
+  try
+    children := nil;
+  finally
+    EndReleasingChildren;
   end;
 end;
 
@@ -1129,8 +1343,21 @@ begin
   FCount := 0;
 end;
 
+procedure YAMLSetParent(const value : IYAMLValue; const parent : IYAMLValue);
+var
+  obj : TObject;
+begin
+  if value = nil then
+    exit;
+  obj := value as TObject;
+  if obj is TYAMLValue then
+    TYAMLValue(obj).FParent := Pointer(parent);
+end;
+
+{$IF defined(AUTOREFCOUNT) or not defined(XE3PLUS)}
 // Children hold a raw pointer to their collection, so one still referenced elsewhere
-// must forget it when the collection goes.
+// must forget it when the collection goes. (With TYAMLNodeBase's own reference counting,
+// ReleaseChildren does this for just the children that outlive their collection.)
 procedure DetachFromParent(const value : IYAMLValue);
 var
   obj : TObject;
@@ -1140,6 +1367,35 @@ begin
   obj := value as TObject;
   if obj is TYAMLValue then
     TYAMLValue(obj).FParent := nil;
+end;
+{$IFEND}
+
+// old is being replaced in owner by value: unless value is the same node, old forgets owner
+// as its parent, so that it never holds a parent that has gone. (Nodes are compared as
+// objects - one node can be held through different interfaces.)
+procedure DetachReplaced(const old, value : IYAMLValue; owner : TObject);
+var
+  obj : TObject;
+  parent : Pointer;
+begin
+  if old = nil then
+    exit;
+  obj := old as TObject;
+  if (value <> nil) and ((value as TObject) = obj) then
+    exit;
+  if not (obj is TYAMLValue) then
+    exit;
+  parent := TYAMLValue(obj).FParent;
+  if (parent <> nil) and ((IYAMLValue(parent) as TObject) = owner) then
+    TYAMLValue(obj).FParent := nil;
+end;
+
+procedure TYAMLValueList.Replace(index : integer; const value : IYAMLValue; owner : TObject);
+begin
+  if Cardinal(index) >= Cardinal(FCount) then
+    RaiseOutOfRange;
+  DetachReplaced(FValues[index], value, owner);
+  FValues[index] := value;
 end;
 
 // A number node holding value exactly as given, typed as the parser would type it.
@@ -1439,7 +1695,7 @@ begin
 
   trimmedValue := Trim(FRawValue);
 
-  // Handle special YAML float values
+  // Handle special YAML float values, and the JSON5 spellings (exact case)
   if SameText(trimmedValue, '.nan') or SameText(trimmedValue, '.NaN') or SameText(trimmedValue, '.NAN') then
     result := NaN
   else if SameText(trimmedValue, '.inf') or SameText(trimmedValue, '.Inf') or SameText(trimmedValue, '.INF') or
@@ -1447,6 +1703,12 @@ begin
     result := Infinity
   else if SameText(trimmedValue, '-.inf') or SameText(trimmedValue, '-.Inf') or SameText(trimmedValue, '-.INF') then
     result := NegInfinity
+  else if (trimmedValue = 'Infinity') or (trimmedValue = '+Infinity') then
+    result := Infinity
+  else if trimmedValue = '-Infinity' then
+    result := NegInfinity
+  else if (trimmedValue = 'NaN') or (trimmedValue = '+NaN') or (trimmedValue = '-NaN') then
+    result := NaN
   else
     result := StrToFloat(trimmedValue, YAMLFormatSettings);
 end;
@@ -1456,6 +1718,7 @@ var
   trimmedValue: string;
   decimalText : string;
   uInt64Value : UInt64;
+  prefixAt : integer;
 begin
   if not IsInteger then
     raise Exception.Create('Value is not an integer');
@@ -1467,10 +1730,15 @@ begin
     exit(0);
 
 
-  // Hexadecimal (0x), octal (0o) and binary (0b), converted exactly. As for a decimal, a
-  // value past High(Int64) is an error rather than a wrapped-around number.
-  if (Length(trimmedValue) > 2) and (trimmedValue[1] = '0') and
-     CharInSet(trimmedValue[2], ['x', 'X', 'o', 'O', 'b', 'B']) then
+  // Hexadecimal (0x), octal (0o) and binary (0b), converted exactly - with an optional sign,
+  // as JSON5 allows -0x1F. As for a decimal, a value past High(Int64) is an error rather
+  // than a wrapped-around number.
+  if CharInSet(trimmedValue[1], ['-', '+']) then
+    prefixAt := 2
+  else
+    prefixAt := 1;
+  if (Length(trimmedValue) > prefixAt + 1) and (trimmedValue[prefixAt] = '0') and
+     CharInSet(trimmedValue[prefixAt + 1], ['x', 'X', 'o', 'O', 'b', 'B']) then
   begin
     if not YAMLIntegerToDecimalText(trimmedValue, decimalText) then
       raise EConvertError.CreateFmt('Invalid integer value "%s"', [FRawValue]);
@@ -1571,21 +1839,58 @@ end;
 destructor TYAMLValue.Destroy;
 begin
   if FExtra <> nil then
-  begin
-    FExtra^.Comments.Free;
     Dispose(FExtra);
-  end;
   inherited;
 end;
 
 function TYAMLValue.Extra : PYAMLValueExtra;
 begin
   if FExtra = nil then
-  begin
     New(FExtra); // initialises the managed fields
-    FExtra^.Comments := nil;
-  end;
   result := FExtra;
+end;
+
+// Comment lines are kept in arrays of exactly their length - a value rarely has more than a
+// few. The getters return copies, so a caller cannot change a node's comments by accident.
+procedure AppendLine(var lines : TArray<string>; const value : string);
+var
+  count : integer;
+begin
+  count := Length(lines);
+  SetLength(lines, count + 1);
+  lines[count] := value;
+end;
+
+function TYAMLValue.GetHasComments : boolean;
+begin
+  result := (FExtra <> nil) and (Length(FExtra^.Comments) > 0);
+end;
+
+function TYAMLValue.GetComments : TArray<string>;
+begin
+  if FExtra <> nil then
+    result := Copy(FExtra^.Comments)
+  else
+    result := nil;
+end;
+
+procedure TYAMLValue.SetComments(const value : TArray<string>);
+begin
+  if Length(value) > 0 then
+    Extra^.Comments := Copy(value)
+  else if FExtra <> nil then
+    FExtra^.Comments := nil;
+end;
+
+procedure TYAMLValue.AddComment(const value : string);
+begin
+  AppendLine(Extra^.Comments, value);
+end;
+
+procedure TYAMLValue.ClearComments;
+begin
+  if FExtra <> nil then
+    FExtra^.Comments := nil;
 end;
 
 
@@ -2003,9 +2308,15 @@ begin
 end;
 
 procedure TYAMLSequence.Clear;
+var
+  i : integer;
 begin
+  // items still referenced elsewhere must not keep this sequence as their parent
+  for i := 0 to FItems.Count - 1 do
+    DetachReplaced(FItems.FValues[i], nil, Self);
   FItems.Clear;
   ClearComments;
+  ClearEndComments;
 end;
 
 constructor TYAMLSequence.Create(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo);
@@ -2018,6 +2329,7 @@ end;
 
 
 destructor TYAMLSequence.Destroy;
+{$IF defined(AUTOREFCOUNT) or not defined(XE3PLUS)}
 var
   i : integer;
 begin
@@ -2025,6 +2337,13 @@ begin
     DetachFromParent(FItems.FValues[i]);
   inherited;
 end;
+{$ELSE}
+begin
+  ReleaseChildren(FItems.FValues);
+  FItems.FCount := 0;
+  inherited;
+end;
+{$IFEND}
 
 
 function TYAMLSequence.GetArray(index: Integer): IYAMLSequence;
@@ -2158,7 +2477,7 @@ end;
 procedure TYAMLSequence.SetArray(index: Integer; const value: IYAMLSequence);
 begin
   if (index >= 0) and (index < FItems.Count) then
-    FItems[index] := value
+    FItems.Replace(index, value, Self)
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -2166,7 +2485,7 @@ end;
 procedure TYAMLSequence.SetBool(index: Integer; const value: Boolean);
 begin
   if (index >= 0) and (index < FItems.Count) then
-    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtBoolean, LowerCase(BoolToStr(value,true)))
+    FItems.Replace(index, TYAMLValue.Create(Self, TYAMLValueType.vtBoolean, LowerCase(BoolToStr(value,true))), Self)
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -2174,7 +2493,7 @@ end;
 procedure TYAMLSequence.SetCurrency(index: Integer; const value: Currency);
 begin
   if (index >= 0) and (index < FItems.Count) then
-    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, CurrToStr(value, YAMLFormatSettings))
+    FItems.Replace(index, TYAMLValue.Create(Self, TYAMLValueType.vtFloat, CurrToStr(value, YAMLFormatSettings)), Self)
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -2182,7 +2501,7 @@ end;
 procedure TYAMLSequence.SetDateTime(index: Integer; const value: TDateTime);
 begin
   if (index >= 0) and (index < FItems.Count) then
-    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.LocalDateToISO8601Str(value))
+    FItems.Replace(index, TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.LocalDateToISO8601Str(value)), Self)
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -2190,7 +2509,7 @@ end;
 procedure TYAMLSequence.SetFloat(index: Integer; const value: double);
 begin
   if (index >= 0) and (index < FItems.Count) then
-    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value))
+    FItems.Replace(index, TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value)), Self)
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -2203,7 +2522,7 @@ end;
 procedure TYAMLSequence.SetString(index: integer; const value: string);
 begin
   if (index >= 0) and (index < FItems.Count) then
-    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtString, value)
+    FItems.Replace(index, TYAMLValue.Create(Self, TYAMLValueType.vtString, value), Self)
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -2211,7 +2530,7 @@ end;
 procedure TYAMLSequence.SetLong(index: Integer; const value: Int64);
 begin
   if (index >= 0) and (index < FItems.Count) then
-    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(value))
+    FItems.Replace(index, TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(value)), Self)
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -2220,7 +2539,7 @@ end;
 procedure TYAMLSequence.SetObject(index: Integer; const value: IYAMLMapping);
 begin
   if (index >= 0) and (index < FItems.Count) then
-    FItems[index] := value
+    FItems.Replace(index, value, Self)
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -2228,7 +2547,7 @@ end;
 procedure TYAMLSequence.SetULong(index: Integer; const value: UInt64);
 begin
   if (index >= 0) and (index < FItems.Count) then
-    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, UIntToStr(value))
+    FItems.Replace(index, TYAMLValue.Create(Self, TYAMLValueType.vtInteger, UIntToStr(value)), Self)
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -2236,7 +2555,7 @@ end;
 procedure TYAMLSequence.SetUtcDateTime(index: Integer; const value: TDateTime);
 begin
   if (index >= 0) and (index < FItems.Count) then
-    FItems[index] := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.UTCDateToISO8601Str(value))
+    FItems.Replace(index, TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.UTCDateToISO8601Str(value)), Self)
   else
     raise EArgumentOutOfRangeException.Create('Index > ' + IntToStr(FItems.Count));
 end;
@@ -2330,50 +2649,147 @@ end;
 const
   cIndexThreshold = 8;
 
-function TYAMLMapping.IndexOfKey(const key : string) : integer;
+{$IFOPT Q+}{$DEFINE YAML_KEYHASH_Q}{$Q-}{$ENDIF} // the hash wraps on purpose
+function KeyHash(const key : string) : Cardinal;
+var
+  i : integer;
+  p : PChar;
+begin
+  // FNV-1a, as the string interner
+  result := 2166136261;
+  p := PChar(Pointer(key));
+  for i := 0 to Length(key) - 1 do
+    result := (result xor Ord(p[i])) * 16777619;
+end;
+{$IFDEF YAML_KEYHASH_Q}{$Q+}{$UNDEF YAML_KEYHASH_Q}{$ENDIF}
+
+function TYAMLMapping.FindKey(const key : string; out hash : Cardinal) : integer;
+var
+  slotCount, mask, slot : integer;
+  entry : Cardinal;
 begin
   if FIndex <> nil then
   begin
-    if not FIndex.TryGetValue(key, result) then
-      result := -1;
-    exit;
+    hash := KeyHash(key);
+    slotCount := (Length(FIndex) div 3) * 2;
+    mask := slotCount - 1;
+    slot := integer(hash and Cardinal(mask));
+    while true do
+    begin
+      entry := FIndex[slot];
+      if entry = 0 then
+        exit(-1);
+      result := integer(entry) - 1;
+      if (FIndex[slotCount + result] = hash) and (FEntries[result].Key = key) then
+        exit;
+      slot := (slot + 1) and mask;
+    end;
   end;
+  hash := 0;
   for result := 0 to FCount - 1 do
     if FEntries[result].Key = key then
       exit;
   result := -1;
 end;
 
+function TYAMLMapping.IndexOfKey(const key : string) : integer;
+var
+  hash : Cardinal;
+begin
+  result := FindKey(key, hash);
+end;
+
+// Puts entry index into the index's table, by the hash the index holds for it.
+procedure TYAMLMapping.IndexInsert(index, slotCount : integer);
+var
+  mask, slot : integer;
+begin
+  mask := slotCount - 1;
+  slot := integer(FIndex[slotCount + index] and Cardinal(mask));
+  while FIndex[slot] <> 0 do
+    slot := (slot + 1) and mask;
+  FIndex[slot] := Cardinal(index + 1);
+end;
+
+// (Re)builds the index with slotCount slots for the first FCount keys. Their hashes come from
+// the index being replaced where it has them, and are worked out for the rest.
+procedure TYAMLMapping.BuildIndex(slotCount : integer);
+var
+  old : TArray<Cardinal>;
+  oldSlotCount, known, i : integer;
+begin
+  old := FIndex;
+  oldSlotCount := (Length(old) div 3) * 2;
+  known := oldSlotCount div 2;
+  FIndex := nil;
+  SetLength(FIndex, slotCount + slotCount div 2); // all 0
+  for i := 0 to FCount - 1 do
+  begin
+    if i < known then
+      FIndex[slotCount + i] := old[oldSlotCount + i]
+    else
+      FIndex[slotCount + i] := KeyHash(FEntries[i].Key);
+    IndexInsert(i, slotCount);
+  end;
+end;
+
+// Doubles the entries' capacity. The first time (4 to 8) the entries go to a new array of
+// just that size: growing a small array in place has the memory manager leave room for it to
+// grow again, which for the many small mappings of a document adds up to a lot. A larger
+// array grows in place, where that room saves copying it each time it doubles.
+procedure TYAMLMapping.GrowEntries;
+var
+  grown : TArray<TYAMLMappingEntry>;
+begin
+  if Length(FEntries) = 0 then
+    SetLength(FEntries, 4)
+  else if Length(FEntries) = 4 then
+  begin
+    SetLength(grown, 8);
+    // the references move as they are: the old array is cleared rather than released
+    Move(FEntries[0], grown[0], FCount * SizeOf(TYAMLMappingEntry));
+    FillChar(FEntries[0], FCount * SizeOf(TYAMLMappingEntry), 0);
+    FEntries := grown;
+  end
+  else
+    SetLength(FEntries, Length(FEntries) * 2);
+end;
+
 procedure TYAMLMapping.AddOrSetValue(const key : string; const value : IYAMLValue);
 var
-  idx : integer;
-  i : integer;
+  idx, slotCount : integer;
+  hash : Cardinal;
 begin
-  idx := IndexOfKey(key);
+  idx := FindKey(key, hash);
   if idx >= 0 then
   begin
+    DetachReplaced(FEntries[idx].Value, value, Self);
     FEntries[idx].Value := value;
     exit;
   end;
   if FCount = Length(FEntries) then
-  begin
-    if FCount = 0 then
-      idx := 4
-    else
-      idx := FCount * 2;
-    SetLength(FEntries, idx);
-  end;
+    GrowEntries;
   FEntries[FCount].Key := key;
   FEntries[FCount].Value := value;
-  if FIndex <> nil then
-    FIndex.Add(key, FCount)
-  else if FCount >= cIndexThreshold then
-  begin
-    FIndex := TDictionary<string, integer>.Create(FCount * 2);
-    for i := 0 to FCount do
-      FIndex.Add(FEntries[i].Key, i);
-  end;
   Inc(FCount);
+  if FIndex <> nil then
+  begin
+    slotCount := (Length(FIndex) div 3) * 2;
+    if FCount * 2 > slotCount then
+      BuildIndex(slotCount * 2)
+    else
+    begin
+      FIndex[slotCount + FCount - 1] := hash;
+      IndexInsert(FCount - 1, slotCount);
+    end;
+  end
+  else if FCount > cIndexThreshold then
+  begin
+    slotCount := 16;
+    while slotCount < FCount * 2 do
+      slotCount := slotCount * 2;
+    BuildIndex(slotCount);
+  end;
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : boolean) : IYAMLValue;
@@ -2540,15 +2956,16 @@ procedure TYAMLMapping.Clear;
 var
   i : integer;
 begin
+  // values still referenced elsewhere must not keep this mapping as their parent
   for i := 0 to FCount - 1 do
-    DetachFromParent(FEntries[i].Value);
+    DetachReplaced(FEntries[i].Value, nil, Self);
   FEntries := nil;
+  FIndex := nil;
   FCount := 0;
-  FreeAndNil(FIndex);
   if FExtra <> nil then
   begin
-    if FExtra^.Comments <> nil then
-      FExtra^.Comments.Clear;
+    FExtra^.Comments := nil;
+    FExtra^.EndComments := nil;
     FExtra^.Comment := '';
   end;
 end;
@@ -2575,14 +2992,25 @@ end;
 
 
 destructor TYAMLMapping.Destroy;
+{$IF defined(AUTOREFCOUNT) or not defined(XE3PLUS)}
 var
   i : integer;
 begin
   for i := 0 to FCount - 1 do
     DetachFromParent(FEntries[i].Value);
-  FIndex.Free;
   inherited Destroy;
 end;
+{$ELSE}
+begin
+  BeginReleasingChildren;
+  try
+    FEntries := nil;
+  finally
+    EndReleasingChildren;
+  end;
+  inherited Destroy;
+end;
+{$IFEND}
 
 function TYAMLMapping.GetArray(const key: string): IYAMLSequence;
 var
@@ -2842,6 +3270,31 @@ begin
   inherited;
 end;
 
+function TYAMLDocument.GetEndComments : TArray<string>;
+begin
+  result := Copy(FEndComments);
+end;
+
+procedure TYAMLDocument.SetEndComments(const value : TArray<string>);
+begin
+  FEndComments := Copy(value);
+end;
+
+procedure TYAMLDocument.AddEndComment(const value : string);
+begin
+  AppendLine(FEndComments, value);
+end;
+
+procedure TYAMLDocument.ClearEndComments;
+begin
+  FEndComments := nil;
+end;
+
+function TYAMLDocument.GetHasEndComments : boolean;
+begin
+  result := Length(FEndComments) > 0;
+end;
+
 constructor TYAMLDocument.Create;
 begin
   FRoot := TYAMLSequence.Create(nil,'');
@@ -2941,6 +3394,9 @@ begin
   FEscapeNonASCII := false;
   FBlockScalarStyle := TYAMLBlockScalarStyle.bssNone;
   FBlockChompingIndicator := TYAMLBlockChompingIndicator.bciClip;
+  FJSON5UnquotedKeys := true;
+  FJSON5SingleQuotes := false;
+  FJSON5TrailingCommas := false;
 end;
 
 constructor TYAMLEmitOptions.CreateClone(const source: IYAMLEmitOptions);
@@ -2965,6 +3421,39 @@ begin
   FEscapeNonASCII := source.EscapeNonASCII;
   FBlockScalarStyle := source.BlockScalarStyle;
   FBlockChompingIndicator := source.BlockChompingIndicator;
+  FJSON5UnquotedKeys := source.JSON5UnquotedKeys;
+  FJSON5SingleQuotes := source.JSON5SingleQuotes;
+  FJSON5TrailingCommas := source.JSON5TrailingCommas;
+end;
+
+function TYAMLEmitOptions.GetJSON5SingleQuotes : boolean;
+begin
+  result := FJSON5SingleQuotes;
+end;
+
+function TYAMLEmitOptions.GetJSON5TrailingCommas : boolean;
+begin
+  result := FJSON5TrailingCommas;
+end;
+
+function TYAMLEmitOptions.GetJSON5UnquotedKeys : boolean;
+begin
+  result := FJSON5UnquotedKeys;
+end;
+
+procedure TYAMLEmitOptions.SetJSON5SingleQuotes(value : boolean);
+begin
+  FJSON5SingleQuotes := value;
+end;
+
+procedure TYAMLEmitOptions.SetJSON5TrailingCommas(value : boolean);
+begin
+  FJSON5TrailingCommas := value;
+end;
+
+procedure TYAMLEmitOptions.SetJSON5UnquotedKeys(value : boolean);
+begin
+  FJSON5UnquotedKeys := value;
 end;
 
 destructor TYAMLEmitOptions.Destroy;
@@ -3143,14 +3632,26 @@ end;
 constructor TYAMLParserOptions.Create;
 begin
   FDuplicateKeyBehavior := TYAMLDuplicateKeyBehavior.dkOverwrite;
-  FJSONMode := false;
+  FInputFormat := TYAMLInputFormat.yifYAML;
+  FYAML11Compatibility := true;
 end;
 
 constructor TYAMLParserOptions.CreateClone(const source : IYAMLParserOptions);
 begin
   inherited Create;
   FDuplicateKeyBehavior := source.DuplicateKeyBehavior;
-  FJSONMode := source.JSONMode;
+  FInputFormat := source.InputFormat;
+  FYAML11Compatibility := source.YAML11Compatibility;
+end;
+
+function TYAMLParserOptions.GetYAML11Compatibility : boolean;
+begin
+  result := FYAML11Compatibility;
+end;
+
+procedure TYAMLParserOptions.SetYAML11Compatibility(value : boolean);
+begin
+  FYAML11Compatibility := value;
 end;
 
 function TYAMLParserOptions.GetDuplicateKeyBehavior : TYAMLDuplicateKeyBehavior;
@@ -3158,9 +3659,14 @@ begin
   result := FDuplicateKeyBehavior;
 end;
 
+function TYAMLParserOptions.GetInputFormat : TYAMLInputFormat;
+begin
+  result := FInputFormat;
+end;
+
 function TYAMLParserOptions.GetJSONMode: boolean;
 begin
-  result := FJSONMode;
+  result := FInputFormat = TYAMLInputFormat.yifJSON;
 end;
 
 procedure TYAMLParserOptions.SetDuplicateKeyBehavior(value : TYAMLDuplicateKeyBehavior);
@@ -3168,9 +3674,17 @@ begin
   FDuplicateKeyBehavior := value;
 end;
 
+procedure TYAMLParserOptions.SetInputFormat(value : TYAMLInputFormat);
+begin
+  FInputFormat := value;
+end;
+
 procedure TYAMLParserOptions.SetJSONMode(value: boolean);
 begin
-  FJSONMode := value;
+  if value then
+    FInputFormat := TYAMLInputFormat.yifJSON
+  else
+    FInputFormat := TYAMLInputFormat.yifYAML;
 end;
 
 { TYAMLSet }
@@ -3225,16 +3739,15 @@ end;
 
 { TYAMLCollection }
 
-procedure TYAMLCollection.AddComment(const value: string);
-begin
-  EnsureComments;
-  FExtra^.Comments.Add(value);
-end;
-
-procedure TYAMLCollection.ClearComments;
+procedure TYAMLCollection.ClearEndComments;
 begin
   if FExtra <> nil then
-    FreeAndNil(FExtra^.Comments);
+    FExtra^.EndComments := nil;
+end;
+
+procedure TYAMLCollection.AddEndComment(const value : string);
+begin
+  AppendLine(Extra^.EndComments, value);
 end;
 
 constructor TYAMLCollection.Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string; const tag : string);
@@ -3247,21 +3760,17 @@ begin
   inherited Create(parent, valueType, rawValue, tagInfo);
 end;
 
-procedure TYAMLCollection.EnsureComments;
+function TYAMLCollection.GetEndComments : TArray<string>;
 begin
-  if Extra^.Comments = nil then
-    FExtra^.Comments := TStringList.Create;
+  if FExtra <> nil then
+    result := Copy(FExtra^.EndComments)
+  else
+    result := nil;
 end;
 
-function TYAMLCollection.GetComments: TStrings;
+function TYAMLCollection.GetHasEndComments : boolean;
 begin
-  EnsureComments;
-  result := FExtra^.Comments;
-end;
-
-function TYAMLCollection.GetHasComments: boolean;
-begin
-  result := (FExtra <> nil) and (FExtra^.Comments <> nil) and (FExtra^.Comments.Count > 0);
+  result := (FExtra <> nil) and (Length(FExtra^.EndComments) > 0);
 end;
 
 function TYAMLCollection.Query(const AExpression: string): IYAMLSequence;
@@ -3274,15 +3783,12 @@ begin
   result := TYAMLPathProcessor.QuerySingle(Self, AExpression, AMatch);
 end;
 
-procedure TYAMLCollection.SetComments(const value: TStrings);
+procedure TYAMLCollection.SetEndComments(const value : TArray<string>);
 begin
-  if value <> nil then
-  begin
-    EnsureComments;
-    FExtra^.Comments.Assign(value);
-  end
-  else if FExtra <> nil then
-    FreeAndNil(FExtra^.Comments);
+  if Length(value) > 0 then
+    Extra^.EndComments := Copy(value)
+  else
+    ClearEndComments;
 end;
 
 { TYAMLVersion }
@@ -3327,10 +3833,10 @@ end;
 
 { TYAMLTagDirective }
 
-constructor TYAMLTagDirective.Create(const prefix, handle: string);
+constructor TYAMLTagDirective.Create(const handle, prefix: string);
 begin
-  FPrefix := prefix;
   FHandle := handle;
+  FPrefix := prefix;
 end;
 
 function TYAMLTagDirective.GetHandle: string;
@@ -3345,7 +3851,7 @@ end;
 
 function TYAMLTagDirective.ToString: string;
 begin
-  result := FPrefix + ' ' + FHandle;
+  result := FHandle + ' ' + FPrefix;
 end;
 
 

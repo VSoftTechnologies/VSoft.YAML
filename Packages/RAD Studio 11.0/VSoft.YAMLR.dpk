@@ -35,12 +35,13 @@ requires
 
 contains
   VSoft.YAML.Classes in '..\..\Source\VSoft.YAML.Classes.pas',
-  VSoft.YAML.Lexer in '..\..\Source\VSoft.YAML.Lexer.pas',
-  VSoft.YAML.Parser in '..\..\Source\VSoft.YAML.Parser.pas',
   VSoft.YAML in '..\..\Source\VSoft.YAML.pas',
   VSoft.YAML.Utils in '..\..\Source\VSoft.YAML.Utils.pas',
   VSoft.YAML.Writer in '..\..\Source\VSoft.YAML.Writer.pas',
   VSoft.YAML.Writer.JSON in '..\..\Source\VSoft.YAML.Writer.JSON.pas',
+  VSoft.YAML.Parser.JSON in '..\..\Source\VSoft.YAML.Parser.JSON.pas',
+  VSoft.YAML.Scanner in '..\..\Source\VSoft.YAML.Scanner.pas',
+  VSoft.YAML.Composer in '..\..\Source\VSoft.YAML.Composer.pas',
   VSoft.YAML.Path in '..\..\Source\VSoft.YAML.Path.pas',
   VSoft.YAML.IO in '..\..\Source\VSoft.YAML.IO.pas',
   VSoft.YAML.StreamReader in '..\..\Source\VSoft.YAML.StreamReader.pas',
