@@ -249,17 +249,24 @@ end;
 procedure TTestDateToISO8601.TestWithTimezoneToLocal;
 var
   sWithTimeZone : string;
-  dtLocal : TDateTime;
+  dtUTC, dtLocal : TDateTime;
+  localOffset : Integer;
 begin
   sWithTimeZone := '2021-03-25T17:26:21-05:00';
-  dtLocal := TYAMLDateUtils.ISO8601StrToLocalDateTime(sWithTimeZone);
-  Assert.AreEqual(2021,YearOf(dtLocal));
-  Assert.AreEqual(3,MonthOf(dtLocal));
-  Assert.AreEqual(26,DayOf(dtLocal));
-  Assert.AreEqual(9,HourOf(dtLocal));
-  Assert.AreEqual(26,MinuteOf(dtLocal));
-  Assert.AreEqual(21,SecondOf(dtLocal));
 
+  // 17:26:21 at -05:00 is 22:26:21 UTC, in whatever time zone this runs
+  dtUTC := TYAMLDateUtils.ISO8601StrToUTCDateTime(sWithTimeZone);
+  Assert.AreEqual(2021,YearOf(dtUTC));
+  Assert.AreEqual(3,MonthOf(dtUTC));
+  Assert.AreEqual(25,DayOf(dtUTC));
+  Assert.AreEqual(22,HourOf(dtUTC));
+  Assert.AreEqual(26,MinuteOf(dtUTC));
+  Assert.AreEqual(21,SecondOf(dtUTC));
+
+  // the local time is that instant plus the offset of the local time zone on that date
+  dtLocal := TYAMLDateUtils.ISO8601StrToLocalDateTime(sWithTimeZone);
+  localOffset := Trunc(TTimeZone.Local.GetUTCOffset(dtLocal).TotalMinutes);
+  Assert.AreEqual(dtUTC + localOffset / (24 * 60), dtLocal, 1 / (24 * 60 * 60), 'local time should be the UTC time plus the local offset');
 end;
 
 procedure TTestDateToISO8601.TestLocalTimeFlag;

@@ -2506,7 +2506,14 @@ begin
 
   sUpdatedOut := root.S['updated_at'];
 
-  Assert.AreEqual('2021-03-26T09:26:21+11:00', sUpdatedOut);
+  // It is written as a local time with the offset of the local time zone, so the text depends on
+  // where this runs (+11:00 in Sydney, where this was first seen). What does not: its shape, and
+  // that it is the instant the text started as.
+  Assert.AreEqual(25, Length(sUpdatedOut), 'expected YYYY-MM-DDTHH:MM:SS+HH:MM');
+  Assert.AreEqual('T', string(sUpdatedOut[11]));
+  Assert.IsTrue((sUpdatedOut[20] = '+') or (sUpdatedOut[20] = '-'), 'expected a UTC offset');
+  Assert.AreEqual(EncodeDateTime(2021, 3, 25, 22, 26, 21, 0), TYAMLDateUtils.ISO8601StrToUTCDateTime(sUpdatedOut), 1 / (24 * 60 * 60),
+    'reading the text back should give the same instant: 22:26:21 UTC');
 
 
 end;
