@@ -112,6 +112,17 @@ const
   cMaxNestingDepth = 1000;
   cCoreTagPrefix = 'tag:yaml.org,2002:';
 
+// The message of E without the ' at line N, column M' its constructor added.
+function MessageWithoutPosition(const E : EYAMLParseException) : string;
+var
+  suffix : string;
+begin
+  result := E.Message;
+  suffix := Format(' at line %d, column %d', [E.Line, E.Column]);
+  if EndsStr(suffix, result) then
+    SetLength(result, Length(result) - Length(suffix));
+end;
+
 function PercentDecode(const value : string) : string;
 var
   bytes : TBytes;
@@ -1334,7 +1345,8 @@ begin
         doc := ParseDocument;
       except
         on E : EYAMLParseException do
-          raise EYAMLParseException.Create(Format('Error in document %d: %s', [documents.Count + 1, E.Message], YAMLFormatSettings),
+          // the new exception adds the position to its message, so it is taken off the old one
+          raise EYAMLParseException.Create(Format('Error in document %d: %s', [documents.Count + 1, MessageWithoutPosition(E)], YAMLFormatSettings),
             E.Line, E.Column);
         on E : Exception do
           raise EYAMLParseException.Create(Format('Error in document %d: Unexpected parsing error: %s', [documents.Count + 1, E.Message], YAMLFormatSettings),

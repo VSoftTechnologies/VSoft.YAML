@@ -295,11 +295,13 @@ type
     [Test]
     procedure Test_BlockScalar_NoTrailingLinefeed;
     [Test]
-    procedure Test_BlockScalar_ChompingClip_Default;
+    procedure Test_BlockScalar_Chomping_OneFinalLineBreak;
     [Test]
-    procedure Test_BlockScalar_ChompingStrip;
+    procedure Test_BlockScalar_Chomping_NoFinalLineBreak;
     [Test]
-    procedure Test_BlockScalar_ChompingKeep;
+    procedure Test_BlockScalar_Chomping_SeveralFinalLineBreaks;
+    [Test]
+    procedure Test_BlockScalar_ChompingOption_IsIgnored;
 
     [Test]
     procedure Test_FlowFormat_QuotedKeysAndValues_RoundTrip;
@@ -2632,32 +2634,25 @@ begin
   doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssLiteral;
   root := doc.AsMapping;
 
-  // Text with multiple trailing linefeeds
-  // Note: With clip chomping (default), extra trailing newlines are removed
+  // Text with multiple trailing linefeeds: written with keep (|+), so all of them read back
   multilineText := 'Line 1' + sLineBreak + 'Line 2' + sLineBreak + sLineBreak + sLineBreak;
   root.AddOrSetValue('content', multilineText);
 
   yamlStr := TYAML.WriteToString(doc);
+  Assert.Contains(yamlStr, 'content: |+');
 
   // Parse the generated YAML back
   loadedDoc := TYAML.LoadFromString(yamlStr);
   loadedValue := loadedDoc.Root.Values['content'].AsString;
 
-  // With clip chomping, multiple trailing newlines should be reduced to one
+  // the same text, but with LF line breaks: a block scalar holds no CR
+  Assert.AreEqual(StringReplace(multilineText, #13#10, #10, [rfReplaceAll]), loadedValue);
   originalLines := TStringList.Create;
   loadedLines := TStringList.Create;
   try
     originalLines.Text := multilineText;
     loadedLines.Text := loadedValue;
-
-    // Clip chomping preserves one trailing newline, removes extras
-    // So loaded should have fewer lines than original if original had multiple trailing newlines
-    Assert.IsTrue(loadedLines.Count <= originalLines.Count,
-      'Clip chomping should not add extra lines');
-
-    // First two lines should match
-    Assert.AreEqual('Line 1', loadedLines[0], 'First line should match');
-    Assert.AreEqual('Line 2', loadedLines[1], 'Second line should match');
+    Assert.AreEqual(originalLines.Count, loadedLines.Count, 'Line count should match');
   finally
     originalLines.Free;
     loadedLines.Free;
@@ -2709,92 +2704,82 @@ begin
   end;
 end;
 
-procedure TYAMLWriterTests.Test_BlockScalar_ChompingClip_Default;
+// The chomping indicator comes from the text: one final line break is clip (no indicator),
+// none is strip (-) and more is keep (+). Each reads back as the same text.
+
+procedure TYAMLWriterTests.Test_BlockScalar_Chomping_OneFinalLineBreak;
 var
   doc : IYAMLDocument;
-  root : IYAMLMapping;
   multilineText : string;
   yamlStr : string;
 begin
   doc := TYAML.CreateMapping;
   doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssLiteral;
-  // BlockChompingIndicator defaults to bciClip
-  root := doc.AsMapping;
-
-  multilineText := 'Line 1' + sLineBreak + 'Line 2';
-  root.AddOrSetValue('content', multilineText);
+  multilineText := 'Line 1' + #10 + 'Line 2' + #10;
+  doc.AsMapping.AddOrSetValue('content', multilineText);
 
   yamlStr := TYAML.WriteToString(doc);
 
-  // Clip (default) should have no indicator after the |
-  Assert.Contains(yamlStr, 'content: |', 'Should use literal block indicator');
-  // Should NOT have |- or |+
-  Assert.IsFalse(Pos('|-', yamlStr) > 0, 'Should not have strip indicator');
-  Assert.IsFalse(Pos('|+', yamlStr) > 0, 'Should not have keep indicator');
+  Assert.AreEqual('content: |' + sLineBreak + '  Line 1' + sLineBreak + '  Line 2' + sLineBreak, yamlStr);
+  Assert.AreEqual(multilineText, TYAML.LoadFromString(yamlStr).AsMapping.S['content']);
 end;
 
-procedure TYAMLWriterTests.Test_BlockScalar_ChompingStrip;
+procedure TYAMLWriterTests.Test_BlockScalar_Chomping_NoFinalLineBreak;
 var
   doc : IYAMLDocument;
-  root : IYAMLMapping;
   multilineText : string;
   yamlStr : string;
-  loadedDoc : IYAMLDocument;
-  loadedValue : string;
 begin
   doc := TYAML.CreateMapping;
   doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssLiteral;
+  multilineText := 'Line 1' + #10 + 'Line 2';
+  doc.AsMapping.AddOrSetValue('content', multilineText);
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.AreEqual('content: |-' + sLineBreak + '  Line 1' + sLineBreak + '  Line 2' + sLineBreak, yamlStr);
+  Assert.AreEqual(multilineText, TYAML.LoadFromString(yamlStr).AsMapping.S['content']);
+end;
+
+procedure TYAMLWriterTests.Test_BlockScalar_Chomping_SeveralFinalLineBreaks;
+var
+  doc : IYAMLDocument;
+  multilineText : string;
+  yamlStr : string;
+begin
+  doc := TYAML.CreateMapping;
+  doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssLiteral;
+  multilineText := 'Line 1' + #10 + 'Line 2' + #10 + #10;
+  doc.AsMapping.AddOrSetValue('content', multilineText);
+  doc.AsMapping.AddOrSetValue('next', 'x');
+
+  yamlStr := TYAML.WriteToString(doc);
+
+  Assert.AreEqual('content: |+' + sLineBreak + '  Line 1' + sLineBreak + '  Line 2' + sLineBreak + sLineBreak +
+                  'next: x' + sLineBreak, yamlStr);
+  Assert.AreEqual(multilineText, TYAML.LoadFromString(yamlStr).AsMapping.S['content']);
+end;
+
+procedure TYAMLWriterTests.Test_BlockScalar_ChompingOption_IsIgnored;
+var
+  doc : IYAMLDocument;
+  multilineText : string;
+  yamlStr : string;
+begin
+  // the deprecated option no longer changes the indicator - no other one reads back the same
+  doc := TYAML.CreateMapping;
+  doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssLiteral;
+  {$WARN SYMBOL_DEPRECATED OFF}
   doc.Options.BlockChompingIndicator := TYAMLBlockChompingIndicator.bciStrip;
-  root := doc.AsMapping;
-
-  multilineText := 'Line 1' + sLineBreak + 'Line 2' + sLineBreak;
-  root.AddOrSetValue('content', multilineText);
-
-  yamlStr := TYAML.WriteToString(doc);
-
-  // Strip should have |- indicator
-  Assert.Contains(yamlStr, 'content: |-', 'Should use literal block with strip indicator');
-
-  // Round-trip: strip removes all trailing newlines
-  loadedDoc := TYAML.LoadFromString(yamlStr);
-  loadedValue := loadedDoc.Root.Values['content'].AsString;
-
-  // With strip, the trailing newline should be removed
-  Assert.IsFalse(EndsStr(#10, loadedValue) or EndsStr(#13, loadedValue),
-    'Strip chomping should remove trailing newlines');
-  Assert.Contains(loadedValue, 'Line 1', 'Should contain Line 1');
-  Assert.Contains(loadedValue, 'Line 2', 'Should contain Line 2');
-end;
-
-procedure TYAMLWriterTests.Test_BlockScalar_ChompingKeep;
-var
-  doc : IYAMLDocument;
-  root : IYAMLMapping;
-  multilineText : string;
-  yamlStr : string;
-  loadedDoc : IYAMLDocument;
-  loadedValue : string;
-begin
-  doc := TYAML.CreateMapping;
-  doc.Options.BlockScalarStyle := TYAMLBlockScalarStyle.bssLiteral;
-  doc.Options.BlockChompingIndicator := TYAMLBlockChompingIndicator.bciKeep;
-  root := doc.AsMapping;
-
-  multilineText := 'Line 1' + sLineBreak + 'Line 2' + sLineBreak + sLineBreak;
-  root.AddOrSetValue('content', multilineText);
+  Assert.IsTrue(doc.Options.BlockChompingIndicator = TYAMLBlockChompingIndicator.bciStrip, 'it is still kept');
+  {$WARN SYMBOL_DEPRECATED DEFAULT}
+  multilineText := 'Line 1' + #10 + 'Line 2' + #10;
+  doc.AsMapping.AddOrSetValue('content', multilineText);
 
   yamlStr := TYAML.WriteToString(doc);
 
-  // Keep should have |+ indicator
-  Assert.Contains(yamlStr, 'content: |+', 'Should use literal block with keep indicator');
-
-  // Round-trip: keep preserves all trailing newlines
-  loadedDoc := TYAML.LoadFromString(yamlStr);
-  loadedValue := loadedDoc.Root.Values['content'].AsString;
-
-  // With keep, trailing newlines should be preserved
-  Assert.Contains(loadedValue, 'Line 1', 'Should contain Line 1');
-  Assert.Contains(loadedValue, 'Line 2', 'Should contain Line 2');
+  Assert.Contains(yamlStr, 'content: |' + sLineBreak);
+  Assert.AreEqual(multilineText, TYAML.LoadFromString(yamlStr).AsMapping.S['content']);
 end;
 
 procedure TYAMLWriterTests.Test_DocumentOptions_EmitYAMLDirective;

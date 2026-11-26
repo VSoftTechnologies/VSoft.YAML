@@ -54,7 +54,10 @@ uses
   VSoft.YAML.Tests.YAML12 in 'VSoft.YAML.Tests.YAML12.pas',
   VSoft.YAML.Tests.Nodes in 'VSoft.YAML.Tests.Nodes.pas',
   VSoft.YAML.Tests.Editing in 'VSoft.YAML.Tests.Editing.pas',
-  VSoft.YAML.Tests.PathMatches in 'VSoft.YAML.Tests.PathMatches.pas';
+  VSoft.YAML.Tests.PathMatches in 'VSoft.YAML.Tests.PathMatches.pas',
+  VSoft.YAML.Tests.WriterOutput in 'VSoft.YAML.Tests.WriterOutput.pas',
+  VSoft.YAML.Tests.PathRFC9535 in 'VSoft.YAML.Tests.PathRFC9535.pas',
+  VSoft.YAML.Tests.Documents in 'VSoft.YAML.Tests.Documents.pas';
 
 { keep comment here to protect the following conditional from being removed by the IDE when adding a unit }
 {$IFNDEF TESTINSIGHT}

@@ -66,6 +66,25 @@ begin
   result := TPath.Combine(TestFilesDir, 'yaml-test-suite-known-failures.txt');
 end;
 
+// The text of a UTF-8 file, without its byte order mark if it has one. (XE2's
+// TFile.ReadAllText(name, TEncoding.UTF8) drops the first three bytes whether or not they
+// are a byte order mark.)
+function ReadUTF8File(const fileName : string) : string;
+var
+  bytes, preamble : TBytes;
+  start : integer;
+begin
+  bytes := TFile.ReadAllBytes(fileName);
+  preamble := TEncoding.UTF8.GetPreamble;
+  start := 0;
+  if (Length(bytes) >= Length(preamble)) and CompareMem(@bytes[0], @preamble[0], Length(preamble)) then
+    start := Length(preamble);
+  if start >= Length(bytes) then
+    result := ''
+  else
+    result := TEncoding.UTF8.GetString(bytes, start, Length(bytes) - start);
+end;
+
 // in.json holds one JSON value per document, one after the other
 function SplitJSONTexts(const text : string) : TArray<string>;
 var
@@ -295,7 +314,7 @@ begin
   result.Id := StringReplace(Copy(dir, Length(SuiteDir) + 2, MaxInt), '\', '/', [rfReplaceAll]);
   result.Name := '';
   if FileExists(TPath.Combine(dir, '===')) then
-    result.Name := Trim(TFile.ReadAllText(TPath.Combine(dir, '==='), TEncoding.UTF8));
+    result.Name := Trim(ReadUTF8File(TPath.Combine(dir, '===')));
   result.Kind := '';
   result.Detail := '';
 
@@ -332,7 +351,7 @@ begin
   end
   else if FileExists(TPath.Combine(dir, 'in.json')) then
   begin
-    jsonTexts := SplitJSONTexts(TFile.ReadAllText(TPath.Combine(dir, 'in.json'), TEncoding.UTF8));
+    jsonTexts := SplitJSONTexts(ReadUTF8File(TPath.Combine(dir, 'in.json')));
     if Length(jsonTexts) <> Length(docs) then
     begin
       result.Kind := 'wrong-data';

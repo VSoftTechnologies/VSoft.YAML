@@ -167,6 +167,9 @@
         <DCCReference Include="VSoft.YAML.Tests.Nodes.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.Editing.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.PathMatches.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.WriterOutput.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.PathRFC9535.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.Documents.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

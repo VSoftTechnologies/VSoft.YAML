@@ -322,6 +322,25 @@ begin
   CheckRejects(StringOfChar('[', 1001) + StringOfChar(']', 1001));
 end;
 
+// The text of a UTF-8 file, without its byte order mark if it has one. (XE2's
+// TFile.ReadAllText(name, TEncoding.UTF8) drops the first three bytes whether or not they
+// are a byte order mark.)
+function ReadUTF8File(const fileName : string) : string;
+var
+  bytes, preamble : TBytes;
+  start : integer;
+begin
+  bytes := TFile.ReadAllBytes(fileName);
+  preamble := TEncoding.UTF8.GetPreamble;
+  start := 0;
+  if (Length(bytes) >= Length(preamble)) and CompareMem(@bytes[0], @preamble[0], Length(preamble)) then
+    start := Length(preamble);
+  if start >= Length(bytes) then
+    result := ''
+  else
+    result := TEncoding.UTF8.GetString(bytes, start, Length(bytes) - start);
+end;
+
 // JSON is YAML, so reading a JSON file as YAML must give the same document as reading it
 // as JSON - the two parsers check each other. (load_test.json is not used: it is indented
 // with tabs inside a flow mapping, which YAML allows but the YAML parser rejects - one of
@@ -333,7 +352,7 @@ var
   jsonDoc, yamlDoc : IYAMLDocument;
   writeOptions : IYAMLEmitOptions;
 begin
-  text := TFile.ReadAllText(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\..\TestFiles\' + fileName), TEncoding.UTF8);
+  text := ReadUTF8File(TPath.Combine(ExtractFilePath(ParamStr(0)), '..\..\TestFiles\' + fileName));
   options := TYAML.CreateParserOptions;
   options.JSONMode := true;
   jsonDoc := TYAML.LoadFromString(text, options);

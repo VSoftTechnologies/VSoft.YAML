@@ -118,11 +118,16 @@ $.items[0,-1]          # First and last elements
 ```
 
 #### Array Slicing
+Slices work as [RFC 9535](https://www.rfc-editor.org/rfc/rfc9535#section-2.3.4) defines them: a negative start or end counts from the end, the step can be negative to go backwards, and a step of 0 selects nothing.
 ```
 $.items[1:4]           # Elements from index 1 to 3 (4 exclusive)
 $.items[2:]            # Elements from index 2 to end
 $.items[:3]            # Elements from start to index 2 (3 exclusive)
 $.items[1:10:2]        # Elements from 1 to 9 with step 2 (1,3,5,7,9)
+$.items[0:-1]          # All elements but the last
+$.items[-2:]           # The last two elements
+$.items[::-1]          # All elements, last first
+$.items[5:1:-2]        # Elements 5 and 3
 ```
 
 ### 3. Wildcard Operator
@@ -147,12 +152,16 @@ $["*"]                 # All properties (double-quoted wildcard)
 
 ### 4. Recursive Descent
 
-The `..` operator recursively searches through all levels of the document:
+The `..` operator recursively searches through all levels of the document. The selector after it - a name, `*` or a bracketed selector - is applied to the node, then to each of its descendants in document order, as [RFC 9535](https://www.rfc-editor.org/rfc/rfc9535#section-2.5.2) defines. A node's own matches come before those inside it, and the search goes on inside a match.
 
 ```
 $..name                # All 'name' properties at any level
 $..items[0]            # First element of any 'items' array
 $.store..price         # All 'price' properties under 'store'
+$..*                   # Every value and item below the root
+$..[0]                 # The first item of every sequence
+$..['name']            # As $..name
+$..[?(@.price > 10)]   # Every item or property value, at any level, with a price over 10
 ```
 
 ## Filter Expressions
@@ -170,15 +179,19 @@ $.array[?(condition)]
 - `@` - References the current item being evaluated
 - `@.property` - Access property of current item
 - `@.nested.property` - Access nested properties of current item
+- `@[0]`, `@.tags[-1]` - Access items of the current item
 
 #### Root Reference
 - `$` - References the root document
-- `$.property` - Access root document properties in filter
+- `$.property`, `$[0]` - Access root document properties and items in filter
 
 #### Literals
-- `"string"` or `'string'` - String literals
-- `123`, `45.67` - Numeric literals
-- `true`, `false` - Boolean literals
+- `"string"` or `'string'` - String literals; a string ends at the quote it started with, so `"it's"` is a string
+- `123`, `-5`, `45.67`, `1e3` - Numeric literals; a number is an integer unless it has a fraction or an exponent
+- `true`, `false` - Boolean literals (in any case)
+- `null` - The null literal. `null` is equal only to null - not to `''`
+- A word without quotes, such as `fred`, is a string
+- `[literal, literal, ...]` - A list of literals, for `in` and `nin`
 
 ### Comparison Operators
 
@@ -191,14 +204,14 @@ $.array[?(condition)]
 - `<=` - Less than or equal
 
 #### String Operations
-- `contains` - String contains substring
-- `=~` - Regular expression match (planned)
+- `contains` - Text contains a substring, or a sequence contains an item equal to the right operand: `@.name contains 'pp'`, `@.tags contains 'sale'`
+- `=~` - Regular expression match: `@.name =~ /app.*/i`. The pattern must match the whole value, as in Jayway JsonPath, so `/app/` does not match `apple` - write `/.*app.*/` to look for it anywhere. A `\/` in the pattern is a `/`. The flags are `i` (ignore case), `m` (multi-line), `s` (`.` matches line breaks) and `x` (ignore white space in the pattern). The pattern can also be a string: `@.name =~ 'app.*'`. Only scalars match; null and collections never do. An invalid pattern raises `EYAMLPathError` when the expression is parsed.
 
 #### Collection Operations
-- `size` - Compare collection size
+- `size` - Compare the number of items of a collection, or of characters of a scalar's text: `@.orders size 0`, `@.reviews size > 5`. `size` alone compares with `==`; `==`, `!=`, `>`, `>=`, `<` and `<=` can follow it.
 - `empty` - Check if collection is empty
-- `in` - Check if value is in collection (planned)
-- `nin` - Check if value is not in collection (planned)
+- `in` - The value is equal to an item of a list: `@.size in ['S', 'M']`, or `@.colour in $.allowed` for a sequence in the document. When the right operand is not a sequence, `in` is false.
+- `nin` - The value is equal to no item of the list: `not in`
 
 ### Logical Operators
 
@@ -344,7 +357,7 @@ inStockElectronics := doc.Query('$.store.electronics[?(@.inStock == true)]'); //
 
 // Status filtering
 activeCustomers := doc.Query('$.customers[?(@.active == true)]');        // Active customers
-inStockItems := doc.Query('$.store..inStock[?(@ == true)]');            // All in-stock items
+inStockItems := doc.Query('$.store..[?(@.inStock == true)]');           // All in-stock items
 
 // Collection size filtering  
 customersWithOrders := doc.Query('$.customers[?(@.orders size > 0)]');   // Customers with orders

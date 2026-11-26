@@ -434,10 +434,9 @@ users: !!seq
 ```
 
 **Output behavior:**
-- **Necessary tags**: Tags that affect type interpretation are preserved
-- **Redundant tags**: Default type tags may be omitted for cleaner output
-- **Custom tags**: Non-standard tags are always preserved in output
-- **Format consistency**: Tag output respects document formatting (Block/Flow/Mixed)
+- **Every tag is written**: a node's tag is written in front of it wherever the node is - a mapping value, a sequence or set item, the root, and in flow output - so the output reads back with the same tags
+- **Collections**: the tag of a block collection goes on the line of its key or `-` (`key: !tag`, `- !tag`), or on a line of its own before a root collection
+- **EmitTags**: set `EmitTags` to false to write no tags at all
 
 ### 📋 Tag Best Practices
 
@@ -501,6 +500,7 @@ person:
 - **Quote control**: Smart string quoting based on content
 - **Document markers**: Optional `---` and `...` markers
 - **Tag emission**: Control explicit type tag output
+- **Line length**: `MaxLineLength` folds long plain and quoted strings at spaces in block output (0, the default, never folds)
 
 ## Advanced Features
 
@@ -526,7 +526,7 @@ authors := doc.Query('$..author');
 ### ✅ Memory Management  
 - **Interface-based**: Automatic reference counting
 - **No manual cleanup**: Managed memory lifecycle
-- **Thread-safe access**: Immutable value semantics
+- **Not thread-safe**: Documents can be changed, and nothing in them is locked. Do not change a document while another thread uses it; protect a document that threads share with a lock of your own.
 
 ## YAML 1.1 vs 1.2 Differences
 
@@ -618,14 +618,14 @@ SetLength(documents, 2);
 documents[0] := doc1;
 documents[1] := doc2;
 
-yamlOutput := TYAML.WriteAllToString(documents);
+yamlOutput := TYAML.WriteToString(documents);
 // Output will automatically include document markers (---)
 ```
 
 **Key Features:**
-- **Automatic document markers**: `WriteAllToString()` automatically adds `---` markers when multiple documents are present
-- **Document separation**: Each document maintains its own options and structure
-- **File operations**: `LoadAllFromFile()` and `WriteAllToFile()` methods support file-based multi-document operations
+- **Automatic document markers**: `WriteToString(documents)` adds `---` markers when there is more than one document. It writes with a copy of the first document's options, so those options are not changed.
+- **Document separation**: Each document maintains its own structure; all are written with the first document's options
+- **File and stream operations**: `LoadAllFromFile()`, `WriteToFile(documents, fileName)` and `WriteToStream(documents, stream)` work with several documents
 - **Mixed document types**: Support for documents with different root types (mapping, sequence, set)
 
 #### Document Markers Configuration
@@ -682,7 +682,7 @@ Underscores in numbers, `yes`/`no`/`on`/`off` booleans, `0b` binary numbers, tim
 
 #### Multiple Document Processing (✅ Implemented)
 - **Multiple document parsing**: `TYAML.LoadAllFromString()` and `TYAML.LoadAllFromFile()` methods
-- **Multiple document writing**: `TYAML.WriteAllToString()` and `TYAML.WriteAllToFile()` methods  
+- **Multiple document writing**: the `TYAML.WriteToString()`, `WriteToFile()` and `WriteToStream()` overloads that take an array of documents
 - **Document boundary handling**: Automatic `---` markers between documents
 - **Document marker control**: Configurable via `EmitDocumentMarkers` option
 
@@ -707,7 +707,7 @@ VSoft.YAML provides **comprehensive YAML 1.2 compliance with selective 1.1 compa
 ✅ **Complete YAML directive support** (`%YAML` version and `%TAG` custom handles)  
 ✅ **Full tag system implementation** (Standard, Local, Custom, Verbatim, Global tags)  
 ✅ **Rich tag-aware programmatic API** (Tag creation, modification, and validation)  
-✅ **Multiple document support** (`LoadAllFromString/File`, `WriteAllToString/File`)  
+✅ **Multiple document support** (`LoadAllFromString/File`, and `WriteToString/File/Stream` with an array of documents)  
 ✅ **Predictable type conversion and parsing**  
 ✅ **Rich interface-based API with type safety**  
 ✅ **Advanced querying capabilities via JSONPath**  

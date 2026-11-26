@@ -19,7 +19,8 @@ uses
   VSoft.YAML.IO,
   VSoft.YAML,
   VSoft.YAML.Classes,
-  System.SysUtils;
+  System.SysUtils,
+  System.RegularExpressions;
 
 {$SCOPEDENUMS ON}
 
@@ -54,28 +55,44 @@ type
     TFilterOperandType = (
       fotCurrentItem,    // @
       fotRootItem,       // $
-      fotLiteral,        // string, number, boolean
-      fotPath            // property path like @.price or $.store.book[0]
+      fotLiteral,        // string, number, boolean, null
+      fotPath,           // property path like @.price or $.store.book[0]
+      fotList            // a list of literals, as in ['a', 'b'] (for in and nin)
     );
-    
+
+    TFilterLiteralKind = (
+      flkString,
+      flkNumber,
+      flkBoolean,
+      flkNull
+    );
+
     TFilterOperand = record
       OperandType: TFilterOperandType;
+      LiteralKind: TFilterLiteralKind; // For literals
       StringValue: string;    // For literals and paths
       NumericValue: Double;   // For numeric literals
+      NumericText: string;    // For numeric literals: the number as written
       BoolValue: Boolean;     // For boolean literals
       Path: string;           // For property paths
+      ListValue: IYAMLSequence; // For lists
       IsTruthinessCheck: Boolean; // For auto-generated truthiness checks
       IsNumericLiteral: Boolean; // True if this was parsed as a numeric literal
     end;
-    
+
     // Forward declarations
     TFilterExpression = class;
-    
+
     TFilterComparison = class(TObject)
     public
       LeftOperand: TFilterOperand;
       Operator: TFilterOperator;
       RightOperand: TFilterOperand;
+      // size: the comparison of the size with the right operand (== when none is written)
+      SizeOperator: TFilterOperator;
+      // =~ with a regex or string literal: the pattern, compiled once, to match whole values
+      HasRegex: Boolean;
+      Regex: TRegEx;
       destructor Destroy; override;
     end;
     
@@ -121,7 +138,9 @@ type
       Indices : TArray<integer>;          // For IndexList - negative counts from the end
       case Byte of
         0 : (Index : integer);             // For ChildIndex - negative counts from the end
-        1 : (Start, Stop, Step : integer); // For Slice
+        // For Slice, as RFC 9535 2.3.4: start and stop are left out unless HasStart and
+        // HasStop, and step is 1 unless it is given
+        1 : (Start, Stop, Step : integer; HasStart, HasStop : boolean);
         2 : (FilterExpression : TFilterExpression); // For Filter
     end;
   private
@@ -146,6 +165,8 @@ type
     procedure AddOperator(const AOperator : TOperator);
     procedure AddMatch(const AMatch : IYAMLValue; const AParent : IYAMLCollection; const AKey : string; AIndex : integer; const APath : string);
     procedure ParseDotOperator(const reader : IInputReader);
+    // a member name after '.' or '..', up to the next '.', '[' or the end
+    procedure ParseMemberName(const reader : IInputReader);
     procedure ParseBracketOperator(const reader : IInputReader);
 
     function InternalMatch(const root : IYAMLValue; const AMatchSingle : boolean) : IYAMLSequence;
@@ -169,10 +190,19 @@ type
     function ParseComparisonExpression(const reader : IInputReader) : TFilterComparison;
     function ParseOperand(const reader : IInputReader) : TFilterOperand;
     function ParseFilterOperator(const reader : IInputReader) : TFilterOperator;
+    // ==, !=, >, >=, < or <= at the reader, read when there is one
+    class function ParseComparisonOperator(const reader : IInputReader; out AOperator : TFilterOperator) : boolean; static;
+    // /pattern/flags at the reader, compiled to match whole values
+    class function ParseRegexLiteral(const reader : IInputReader) : TRegEx; static;
+    class function CompileRegex(const APattern : string; const AOptions : TRegExOptions) : TRegEx; static;
+    // [literal, literal, ...] at the reader
+    function ParseListLiteral(const reader : IInputReader) : IYAMLSequence;
     function EvaluateFilterExpression(const Expr : TFilterExpression; const Context : TFilterContext) : Boolean;
     function EvaluateComparison(const Comp : TFilterComparison; const Context : TFilterContext) : Boolean;
     function ResolveOperand(const Operand : TFilterOperand; const Context : TFilterContext) : IYAMLValue;
     function CompareYAMLValues(const Left, Right : IYAMLValue; const Op : TFilterOperator) : Boolean;
+    // true when collection, a sequence or a set, has an item equal to value
+    function SequenceHas(const collection, value : IYAMLValue) : Boolean;
   {$ENDREGION 'Internal Declarations'}
   public
     /// <summary>
@@ -273,12 +303,14 @@ resourcestring
   RS_YAML_PATH_INVALID_FILTER_OPERATOR = 'Invalid filter operator in YAML path.';
   RS_YAML_PATH_MISSING_FILTER_PARENTHESIS = 'Missing closing parenthesis in filter expression.';
   RS_YAML_PATH_INVALID_OPERAND = 'Invalid operand in filter expression.';
+  RS_YAML_PATH_INVALID_REGEX = 'Invalid regular expression in filter expression: %s';
 
 implementation
 
 uses
   System.Character,
   System.Classes,
+  System.Math,
   System.StrUtils;
 
 // A name in an RFC 9535 normalized path (section 2.7) goes in single quotes: ' and \ are
@@ -433,20 +465,27 @@ begin
     raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_ROOT);
   reader.Read;
 
-  while (reader.Current <> #0) do
-  begin
-    SkipWhitespace(reader);
-    case reader.Current of
-      '.' : ParseDotOperator(reader);
-      '[' : ParseBracketOperator(reader);
-      '$' : raise EYAMLPathError.Create(RS_YAML_PATH_DUPLICATE_ROOT);
-    else
-      raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_OPERATOR);
+  try
+    while (reader.Current <> #0) do
+    begin
+      SkipWhitespace(reader);
+      case reader.Current of
+        '.' : ParseDotOperator(reader);
+        '[' : ParseBracketOperator(reader);
+        '$' : raise EYAMLPathError.Create(RS_YAML_PATH_DUPLICATE_ROOT);
+      else
+        raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_OPERATOR);
+      end;
     end;
-  end;
 
-  if (FOperatorCount > 0) and (FOperators[FOperatorCount - 1].OperatorType = TOperatorType.RecursiveDescent) then
-    raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_RECURSIVE_DESCENT);
+    if (FOperatorCount > 0) and (FOperators[FOperatorCount - 1].OperatorType = TOperatorType.RecursiveDescent) then
+      raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_RECURSIVE_DESCENT);
+  except
+    // the caller gets no processor to clean up, so the filters parsed so far are freed here
+    FInitialized := True;
+    Cleanup;
+    raise;
+  end;
 
   FInitialized := True;
 end;
@@ -837,6 +876,8 @@ begin
 
     op.Init(TOperatorType.Filter);
     op.FilterExpression := ParseFilterExpression(reader);
+    // added before the checks below, so that Cleanup frees the expression if one raises
+    AddOperator(op);
 
     SkipWhitespace(reader);
     if (reader.Current <> ')') then
@@ -847,7 +888,6 @@ begin
     if (reader.Current <> ']') then
       raise EYAMLPathError.Create(RS_YAML_PATH_MISSING_CLOSE_BRACKET);
 
-    AddOperator(op);
     reader.Read
   end
   else if IsQuote(reader.Current) then
@@ -979,6 +1019,7 @@ begin
         // [start :end :step]
         op.Init(TOperatorType.Slice);
         op.Start := index;
+        op.HasStart := True;
       end;
     end;
 
@@ -990,6 +1031,7 @@ begin
       if ParseInteger(reader, index) then
       begin
         op.Stop := index;
+        op.HasStop := True;
       end
       else
       begin
@@ -1065,9 +1107,7 @@ end;
 
 procedure TYAMLPathProcessor.ParseDotOperator(const reader : IInputReader);
 var
-  startPos : integer;
   op : TOperator;
-  name : string;
 begin
   // Initial '.' has already been parsed
   Assert(reader.Current = '.');
@@ -1076,9 +1116,25 @@ begin
   case reader.Current of
     '.' :
     begin
-      // ..
+      // .. - the descendant segment: the selector after it (a name, * or a bracketed
+      // selector) is applied to the node and to each of its descendants
+      reader.Read;
       op.Init(TOperatorType.RecursiveDescent);
       AddOperator(op);
+      case reader.Current of
+        #0, '.', '$' :
+          raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_RECURSIVE_DESCENT);
+        '[' :
+          ParseBracketOperator(reader);
+        '*' :
+        begin
+          op.Init(TOperatorType.Wildcard);
+          AddOperator(op);
+          reader.Read;
+        end;
+      else
+        ParseMemberName(reader);
+      end;
     end;
     '*' :
     begin
@@ -1089,23 +1145,28 @@ begin
     end;
   else
     // .ident
-    startPos := reader.Position;
-    // Scan for start of next operator
-    repeat
-    begin
-      name := name + reader.Current;
-      reader.Read;
-    end
-    until (CharInSet(reader.Current, [#0, '.', '[', '$']));
+    ParseMemberName(reader);
+  end;
+end;
 
-    if (reader.Position = startPos) then
-      raise EYAMLPathError.Create(RS_YAML_PATH_MISSING_MEMBER_NAME);
-
-    op.Init(TOperatorType.ChildName);
-    op.Name := name;
-    AddOperator(op);
+procedure TYAMLPathProcessor.ParseMemberName(const reader : IInputReader);
+var
+  op : TOperator;
+  name : string;
+begin
+  // Scan for start of next operator
+  while not CharInSet(reader.Current, [#0, '.', '[', '$']) do
+  begin
+    name := name + reader.Current;
+    reader.Read;
   end;
 
+  if (name = '') then
+    raise EYAMLPathError.Create(RS_YAML_PATH_MISSING_MEMBER_NAME);
+
+  op.Init(TOperatorType.ChildName);
+  op.Name := name;
+  AddOperator(op);
 end;
 
 
@@ -1168,6 +1229,8 @@ var
   nextOp : POperator;
   sequence : IYAMLSequence;
   mapping : IYAMLMapping;
+  count, lower, upper : integer;
+  position : Int64; // a large step cannot overflow it
 begin
   Assert(Assigned(AOp));
   if (FSingleMatch) and (FMatchCount <> 0) then
@@ -1194,32 +1257,24 @@ begin
 
     TOperatorType.RecursiveDescent :
       begin
+        // RFC 9535 2.5.2: the selector after '..' is applied to this node, then to each of
+        // its descendants in document order - each child, followed by its own descendants
         nextOp := AOp.Next;
         Assert(Assigned(nextOp));
+        VisitOperator(nextOp, ARoot, ARootPath);
         if ARoot.IsSequence then
         begin
           sequence := ARoot.AsSequence;
           for index := 0 to sequence.Count - 1 do
-          begin
-            if (nextOp.OperatorType = TOperatorType.ChildIndex)
-              and (NormalizeIndex(nextOp.Index, sequence.Count) = index)
-            then
-              VisitOperator(nextOp, ARoot, ARootPath)
-            else
-              VisitOperator(AOp, sequence.Items[index], PathTo(ARootPath, '', index));
-          end;
-        end;
-
-        if ARoot.IsMapping then
+            VisitOperator(AOp, sequence.Items[index], PathTo(ARootPath, '', index));
+        end
+        else if ARoot.IsMapping then
         begin
           mapping := ARoot.AsMapping;
           for index := 0 to mapping.Count - 1 do
           begin
             name := mapping.Keys[index];
-            if(nextOp.OperatorType = TOperatorType.ChildName) and (nextOp.Name = name) then
-              VisitOperator(nextOp, ARoot, ARootPath)
-            else
-              VisitOperator(AOp, mapping.Values[name], PathTo(ARootPath, name, -1));
+            VisitOperator(AOp, mapping.Values[name], PathTo(ARootPath, name, -1));
           end;
         end;
       end;
@@ -1261,42 +1316,47 @@ begin
       if ARoot.IsSequence then
       begin
         sequence := ARoot.AsSequence;
-        
-        // DEBUG: Log the parsing values
-        // For [7:] we expect: Start=7, Stop=-1, Step=1
-        
-        if (AOp.Start < 0) then
-        begin
-          startIndex := sequence.Count + AOp.Start;
-          if (AOp.Stop = -1) then
-            stopIndex := sequence.Count
-          else
-            stopIndex := sequence.Count + AOp.Stop;
-        end
-        else
-        begin
-          startIndex := AOp.Start;
-          stopIndex := AOp.Stop;
-          // If Stop was not set (should be -1 for unbounded), set it to sequence length
-          if (stopIndex = -1) or (stopIndex <= startIndex) then
-            stopIndex := sequence.Count;
-        end;
-
-        if (stopIndex > sequence.Count) then
-          stopIndex := sequence.Count;
-        if (startIndex < 0) then
-          startIndex := 0;
-
-        index := startIndex;
+        // RFC 9535 2.3.4.2.2: negative start and end count from the end, the defaults depend
+        // on the direction of the step, and a step of 0 selects nothing
+        count := sequence.Count;
         stepValue := AOp.Step;
-        if (stepValue <= 0) then
-          stepValue := 1;
-        
-        
-        while (index < stopIndex) and (index < sequence.Count) do
+        if stepValue > 0 then
         begin
-          Select(AOp.Next, sequence.Items[index], sequence, ARootPath, '', index);
-          Inc(index, stepValue);
+          if AOp.HasStart then
+            startIndex := NormalizeIndex(AOp.Start, count)
+          else
+            startIndex := 0;
+          if AOp.HasStop then
+            stopIndex := NormalizeIndex(AOp.Stop, count)
+          else
+            stopIndex := count;
+          lower := Min(Max(startIndex, 0), count);
+          upper := Min(Max(stopIndex, 0), count);
+          position := lower;
+          while position < upper do
+          begin
+            Select(AOp.Next, sequence.Items[integer(position)], sequence, ARootPath, '', integer(position));
+            Inc(position, stepValue);
+          end;
+        end
+        else if stepValue < 0 then
+        begin
+          if AOp.HasStart then
+            startIndex := NormalizeIndex(AOp.Start, count)
+          else
+            startIndex := count - 1;
+          if AOp.HasStop then
+            stopIndex := NormalizeIndex(AOp.Stop, count)
+          else
+            stopIndex := -1; // the default end, -count - 1, normalized
+          upper := Min(Max(startIndex, -1), count - 1);
+          lower := Min(Max(stopIndex, -1), count - 1);
+          position := upper;
+          while lower < position do
+          begin
+            Select(AOp.Next, sequence.Items[integer(position)], sequence, ARootPath, '', integer(position));
+            Inc(position, stepValue);
+          end;
         end;
       end;
       
@@ -1354,14 +1414,19 @@ var
   logicalExpr : TFilterLogicalExpression;
 begin
   left := ParseAndExpression(reader);
-  
+
   SkipWhitespace(reader);
   if (reader.Current = '|') and (reader.Peek = '|') then
   begin
     reader.Read(2);
     SkipWhitespace(reader);
-    right := ParseOrExpression(reader); // Right-associative OR
-    
+    try
+      right := ParseOrExpression(reader); // Right-associative OR
+    except
+      left.Free;
+      raise;
+    end;
+
     result := TFilterExpression.Create;
     result.IsComparison := False;
     logicalExpr := TFilterLogicalExpression.Create;
@@ -1372,7 +1437,7 @@ begin
   end
   else
     result := left;
-    
+
 end;
 
 function TYAMLPathProcessor.ParseAndExpression(const reader : IInputReader) : TFilterExpression;
@@ -1387,7 +1452,12 @@ begin
   begin
     reader.Read(2);
     SkipWhitespace(reader);
-    right := ParseAndExpression(reader); // Right-associative AND
+    try
+      right := ParseAndExpression(reader); // Right-associative AND
+    except
+      left.Free;
+      raise;
+    end;
     
     result := TFilterExpression.Create;
     result.IsComparison := False;
@@ -1404,18 +1474,21 @@ end;
 function TYAMLPathProcessor.ParseNotExpression(const reader : IInputReader) : TFilterExpression;
 var
   logicalExpr : TFilterLogicalExpression;
+  operand : TFilterExpression;
 begin
   SkipWhitespace(reader);
-  
+
   if (reader.Current = '!') then
   begin
     reader.Read;
     SkipWhitespace(reader);
+    // the operand first, so nothing is left to free if it raises
+    operand := ParseNotExpression(reader);
     result := TFilterExpression.Create;
     result.IsComparison := False;
     logicalExpr := TFilterLogicalExpression.Create;
     logicalExpr.LogicalOp := TFilterLogical.flNot;
-    logicalExpr.Left := ParseNotExpression(reader);
+    logicalExpr.Left := operand;
     logicalExpr.Right := nil;
     result.LogicalExpr := logicalExpr;
   end
@@ -1425,6 +1498,8 @@ begin
 end;
 
 function TYAMLPathProcessor.ParsePrimaryExpression(const reader : IInputReader) : TFilterExpression;
+var
+  comparison : TFilterComparison;
 begin
   SkipWhitespace(reader);
   
@@ -1436,80 +1511,251 @@ begin
     result := ParseLogicalExpression(reader);
     SkipWhitespace(reader);
     if (reader.Current <> ')') then
+    begin
+      result.Free;
       raise EYAMLPathError.Create(RS_YAML_PATH_MISSING_FILTER_PARENTHESIS);
+    end;
     reader.Read; // Skip ')'
   end
   else
   begin
-    // Handle comparison expression
+    // Handle comparison expression - parsed first, so nothing is left to free if it raises
+    comparison := ParseComparisonExpression(reader);
     result := TFilterExpression.Create;
     result.IsComparison := True;
-    result.Comparison := ParseComparisonExpression(reader);
+    result.Comparison := comparison;
   end;
 end;
 
 function TYAMLPathProcessor.ParseComparisonExpression(const reader : IInputReader) : TFilterComparison;
 begin
   result := TFilterComparison.Create;
+  // the comparison is freed if parsing it raises
+  try
 
-  result.LeftOperand := ParseOperand(reader);
-  SkipWhitespace(reader);
-  
-  // Check if there's an operator - if not, this is a truthiness check
-  // Note: We need to check for && and || specifically, not just & or |
-  if (reader.Current = ')') or (reader.Current = #0) or
-     ((reader.Current = '&') and (reader.Peek = '&')) or
-     ((reader.Current = '|') and (reader.Peek = '|')) then
-  begin
-    // No operator, this is a truthiness check - treat as "== true"
-    result.Operator := TFilterOperator.foEquals;
-    result.RightOperand.OperandType := TFilterOperandType.fotLiteral;
-    result.RightOperand.StringValue := '';
-    result.RightOperand.NumericValue := 0;
-    result.RightOperand.BoolValue := True;
-    result.RightOperand.Path := '';
-    result.RightOperand.IsTruthinessCheck := True;
-    result.RightOperand.IsNumericLiteral := False;
-  end
-  else
-  begin
-    // Has operator, parse normally
-    result.Operator := ParseFilterOperator(reader);
+    result.LeftOperand := ParseOperand(reader);
     SkipWhitespace(reader);
-    
-    // Special case for empty operator - it can be unary (defaults to true)
-    if (result.Operator = TFilterOperator.foEmpty) and 
-       ((reader.Current = ')') or (reader.Current = ']') or (reader.Current = #0) or
-        ((reader.Current = '&') and (reader.Peek = '&')) or
-        ((reader.Current = '|') and (reader.Peek = '|'))) then
+  
+    // Check if there's an operator - if not, this is a truthiness check
+    // Note: We need to check for && and || specifically, not just & or |
+    if (reader.Current = ')') or (reader.Current = #0) or
+       ((reader.Current = '&') and (reader.Peek = '&')) or
+       ((reader.Current = '|') and (reader.Peek = '|')) then
     begin
-      // Empty operator without right operand - default to true
+      // No operator, this is a truthiness check - treat as "== true"
+      result.Operator := TFilterOperator.foEquals;
       result.RightOperand.OperandType := TFilterOperandType.fotLiteral;
       result.RightOperand.StringValue := '';
       result.RightOperand.NumericValue := 0;
       result.RightOperand.BoolValue := True;
       result.RightOperand.Path := '';
-      result.RightOperand.IsTruthinessCheck := False;
+      result.RightOperand.IsTruthinessCheck := True;
       result.RightOperand.IsNumericLiteral := False;
     end
     else
     begin
-      result.RightOperand := ParseOperand(reader);
+      // Has operator, parse normally
+      result.Operator := ParseFilterOperator(reader);
+      SkipWhitespace(reader);
+
+      // Special case for empty operator - it can be unary (defaults to true)
+      if (result.Operator = TFilterOperator.foEmpty) and
+         ((reader.Current = ')') or (reader.Current = ']') or (reader.Current = #0) or
+          ((reader.Current = '&') and (reader.Peek = '&')) or
+          ((reader.Current = '|') and (reader.Peek = '|'))) then
+      begin
+        // Empty operator without right operand - default to true
+        result.RightOperand.OperandType := TFilterOperandType.fotLiteral;
+        result.RightOperand.LiteralKind := TFilterLiteralKind.flkBoolean;
+        result.RightOperand.StringValue := '';
+        result.RightOperand.NumericValue := 0;
+        result.RightOperand.BoolValue := True;
+        result.RightOperand.Path := '';
+        result.RightOperand.IsTruthinessCheck := False;
+        result.RightOperand.IsNumericLiteral := False;
+      end
+      else if (result.Operator = TFilterOperator.foRegexMatch) and (reader.Current = '/') then
+      begin
+        // =~ /pattern/flags
+        result.Regex := ParseRegexLiteral(reader);
+        result.HasRegex := True;
+      end
+      else
+      begin
+        // size can be compared: @.items size > 5 (size 5 is size == 5)
+        result.SizeOperator := TFilterOperator.foEquals;
+        if result.Operator = TFilterOperator.foSize then
+        begin
+          ParseComparisonOperator(reader, result.SizeOperator);
+          SkipWhitespace(reader);
+        end;
+        result.RightOperand := ParseOperand(reader);
+        // =~ 'pattern' - a string literal is a pattern too
+        if (result.Operator = TFilterOperator.foRegexMatch) and
+           (result.RightOperand.OperandType = TFilterOperandType.fotLiteral) and
+           (result.RightOperand.LiteralKind = TFilterLiteralKind.flkString) then
+        begin
+          result.Regex := CompileRegex(result.RightOperand.StringValue, []);
+          result.HasRegex := True;
+        end;
+      end;
     end;
+  except
+    result.Free;
+    raise;
+  end;
+end;
+
+class function TYAMLPathProcessor.ParseComparisonOperator(const reader : IInputReader; out AOperator : TFilterOperator) : boolean;
+begin
+  SkipWhitespace(reader);
+  result := True;
+  if (reader.Current = '=') and (reader.Peek = '=') then
+  begin
+    AOperator := TFilterOperator.foEquals;
+    reader.Read(2);
+  end
+  else if (reader.Current = '!') and (reader.Peek = '=') then
+  begin
+    AOperator := TFilterOperator.foNotEquals;
+    reader.Read(2);
+  end
+  else if (reader.Current = '>') and (reader.Peek = '=') then
+  begin
+    AOperator := TFilterOperator.foGreaterEq;
+    reader.Read(2);
+  end
+  else if (reader.Current = '<') and (reader.Peek = '=') then
+  begin
+    AOperator := TFilterOperator.foLessEq;
+    reader.Read(2);
+  end
+  else if reader.Current = '>' then
+  begin
+    AOperator := TFilterOperator.foGreater;
+    reader.Read;
+  end
+  else if reader.Current = '<' then
+  begin
+    AOperator := TFilterOperator.foLess;
+    reader.Read;
+  end
+  else
+  begin
+    AOperator := TFilterOperator.foEquals;
+    result := False;
+  end;
+end;
+
+class function TYAMLPathProcessor.CompileRegex(const APattern : string; const AOptions : TRegExOptions) : TRegEx;
+begin
+  // =~ matches the whole value, as Jayway JsonPath does: \A and \z anchor the pattern
+  try
+    result := TRegEx.Create('\A(?:' + APattern + ')\z', AOptions);
+    result.IsMatch(''); // XE2 compiles the pattern on first use - an invalid one raises here
+  except
+    on E : Exception do
+      raise EYAMLPathError.CreateFmt(RS_YAML_PATH_INVALID_REGEX, [E.Message]);
+  end;
+end;
+
+class function TYAMLPathProcessor.ParseRegexLiteral(const reader : IInputReader) : TRegEx;
+var
+  pattern : string;
+  options : TRegExOptions;
+begin
+  // /pattern/flags - a \ keeps the character after it in the pattern (so \/ is a /)
+  Assert(reader.Current = '/');
+  reader.Read;
+  pattern := '';
+  while (reader.Current <> '/') do
+  begin
+    if reader.Current = #0 then
+      raise EYAMLPathError.CreateFmt(RS_YAML_PATH_INVALID_REGEX, ['missing the closing /']);
+    if (reader.Current = '\') and (reader.Peek = '/') then
+    begin
+      pattern := pattern + '/';
+      reader.Read(2);
+      continue;
+    end;
+    if reader.Current = '\' then
+    begin
+      pattern := pattern + '\';
+      reader.Read;
+      if reader.Current = #0 then
+        raise EYAMLPathError.CreateFmt(RS_YAML_PATH_INVALID_REGEX, ['missing the closing /']);
+    end;
+    pattern := pattern + reader.Current;
+    reader.Read;
+  end;
+  reader.Read; // the closing /
+
+  options := [];
+  while CharInSet(reader.Current, ['a'..'z']) do
+  begin
+    case reader.Current of
+      'i' : Include(options, roIgnoreCase);
+      'm' : Include(options, roMultiLine);
+      's' : Include(options, roSingleLine);
+      'x' : Include(options, roIgnorePatternSpace);
+    else
+      raise EYAMLPathError.CreateFmt(RS_YAML_PATH_INVALID_REGEX, ['unknown flag "' + reader.Current + '"']);
+    end;
+    reader.Read;
+  end;
+  result := CompileRegex(pattern, options);
+end;
+
+function TYAMLPathProcessor.ParseListLiteral(const reader : IInputReader) : IYAMLSequence;
+var
+  list : TYAMLSequence;
+  item : TFilterOperand;
+begin
+  // [literal, literal, ...] - strings, numbers, true, false and null
+  Assert(reader.Current = '[');
+  reader.Read;
+  list := TYAMLSequence.Create(nil, '');
+  result := list;
+  SkipWhitespace(reader);
+  if reader.Current = ']' then
+  begin
+    reader.Read;
+    exit;
+  end;
+  while true do
+  begin
+    item := ParseOperand(reader);
+    if item.OperandType <> TFilterOperandType.fotLiteral then
+      raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_OPERAND);
+    list.AddItem(ResolveOperand(item, TFilterContext.Create(nil, nil)));
+    SkipWhitespace(reader);
+    if reader.Current = ']' then
+    begin
+      reader.Read;
+      break;
+    end;
+    if reader.Current <> ',' then
+      raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_OPERAND);
+    reader.Read;
   end;
 end;
 
 function TYAMLPathProcessor.ParseOperand(const reader : IInputReader) : TFilterOperand;
 var
   value : string;
+  quoteChar : Char;
+  int64Value : Int64;
 begin
   SkipWhitespace(reader);
-  
+
   // Additional safety check
   if reader.Current = #0 then
     raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_OPERAND);
-  
+
   result.OperandType := TFilterOperandType.fotCurrentItem;
+  result.LiteralKind := TFilterLiteralKind.flkString;
+  result.NumericText := '';
+  result.ListValue := nil;
   result.StringValue := '';
   result.NumericValue := 0;
   result.BoolValue := False;
@@ -1521,9 +1767,9 @@ begin
   begin
     // Current item reference
     reader.Read;
-    if (reader.Current = '.') then
+    if (reader.Current = '.') or (reader.Current = '[') then
     begin
-      // Property path like @.price
+      // Property path like @.price or @[0]
       result.OperandType := TFilterOperandType.fotPath;
       // Read property path
       while (reader.Current <> #0) and (reader.Current <> ' ') and (reader.Current <> ')') and
@@ -1545,9 +1791,9 @@ begin
     // Root reference
     reader.Read;
     result.OperandType := TFilterOperandType.fotRootItem;
-    if (reader.Current = '.') then
+    if (reader.Current = '.') or (reader.Current = '[') then
     begin
-      // Property path like $.store
+      // Property path like $.store or $[0]
       result.OperandType := TFilterOperandType.fotPath;
       result.Path := '$';
 
@@ -1563,11 +1809,13 @@ begin
   end
   else if IsQuote(reader.Current) then
   begin
-    // String literal
+    // String literal, up to the quote it started with (so "it's" keeps its ')
     result.OperandType := TFilterOperandType.fotLiteral;
+    result.LiteralKind := TFilterLiteralKind.flkString;
     result.IsNumericLiteral := False;
+    quoteChar := reader.Current;
     reader.Read; // Skip opening quote
-    while (reader.Current <> #0) and not IsQuote(reader.Current) do
+    while (reader.Current <> #0) and (reader.Current <> quoteChar) do
     begin
       result.StringValue := result.StringValue + reader.Current;
       reader.Read;
@@ -1578,12 +1826,12 @@ begin
   end
   else if ((reader.Current >= '0') and (reader.Current <= '9')) or (reader.Current = '-') then
   begin
-    // Numeric literal
+    // Numeric literal, with its sign
     result.OperandType := TFilterOperandType.fotLiteral;
+    result.LiteralKind := TFilterLiteralKind.flkNumber;
     result.IsNumericLiteral := True;
-    // Read the numeric value as string first
-    if (reader.Current = '-') then
-      reader.Read;
+    value := reader.Current;
+    reader.Read;
     while ((reader.Current >= '0') and (reader.Current <= '9')) or (reader.Current = '.') or
           (reader.Current = 'e') or (reader.Current = 'E') or (reader.Current = '+') or (reader.Current = '-') do
     begin
@@ -1591,57 +1839,48 @@ begin
       reader.Read;
     end;
 
-    // Try to parse as integer first, then as float
-    try
-      if Pos('.', value) = 0 then
-      begin
-        // No decimal point, try integer
-        result.NumericValue := StrToInt64(value);
-      end
-      else
-      begin
-        // Has decimal point, parse as float
-        result.NumericValue := StrToFloat(value, YAMLFormatSettings);
-      end;
-    except
+    // an integer unless it has a fraction or an exponent, as in YAML and JSON
+    if (Pos('.', value) = 0) and (Pos('e', value) = 0) and (Pos('E', value) = 0) then
+    begin
+      if not TryStrToInt64(value, int64Value) then
+        raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_OPERAND);
+      result.NumericValue := int64Value;
+    end
+    else if not TryStrToFloat(value, result.NumericValue, YAMLFormatSettings) then
       raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_OPERAND);
-    end;
+    result.NumericText := value;
   end
-  else if (reader.Current = 't') or (reader.Current = 'f') or (reader.Current = 'T') or (reader.Current = 'F') then
+  else if reader.Current = '[' then
   begin
-    // Boolean literal
+    // a list of literals, for in and nin
+    result.OperandType := TFilterOperandType.fotList;
+    result.ListValue := ParseListLiteral(reader);
+  end
+  else if CharInSet(reader.Current, ['a'..'z', 'A'..'Z', '_']) then
+  begin
+    // true, false and null; any other word is a string, as 'word' is
     result.OperandType := TFilterOperandType.fotLiteral;
     result.IsNumericLiteral := False;
-
-    while (not CharInSet(reader.Current, [#0, #9, ' ', ')', ']'])) do
+    while TYAMLCharUtils.IsAlphaNumeric(reader.Current) or (reader.Current = '_') do
     begin
       value := value + reader.Current;
       reader.Read;
     end;
-    if SameText(value, 'true') then
-      result.BoolValue := true
-    else if SameText(value, 'false') then
-      result.BoolValue := false
+    if SameText(value, 'true') or SameText(value, 'false') then
+    begin
+      result.LiteralKind := TFilterLiteralKind.flkBoolean;
+      result.BoolValue := SameText(value, 'true');
+    end
+    else if SameText(value, 'null') then
+      result.LiteralKind := TFilterLiteralKind.flkNull
     else
-      raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_OPERAND);
+    begin
+      result.LiteralKind := TFilterLiteralKind.flkString;
+      result.StringValue := value;
+    end;
   end
   else
-  begin
-    // Fallback - try to parse as a simple identifier or skip unknown characters
-    if ((reader.Current >= 'a') and (reader.Current <= 'z')) or ((reader.Current >= 'A') and (reader.Current <= 'Z')) or (reader.Current = '_') then
-    begin
-      // Try to parse as identifier and treat as string literal
-      result.OperandType := TFilterOperandType.fotLiteral;
-      result.IsNumericLiteral := False;
-      While TYAMLCharUtils.IsAlphaNumeric(reader.Current) do
-      begin
-        result.StringValue := result.StringValue + reader.Current;
-        reader.Read;
-      end;
-    end
-    else
-      raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_OPERAND);
-  end;
+    raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_OPERAND);
 end;
 
 function TYAMLPathProcessor.ParseFilterOperator(const reader : IInputReader) : TFilterOperator;
@@ -1687,7 +1926,9 @@ begin
   end
   else
   begin
-    while (not CharInSet(reader.Current,[#0, #9, ']', ')', ' ']))  do
+    // a word operator ends at the first character that is not a letter, so 'size>5' and
+    // "in['a']" read as size and in
+    while CharInSet(reader.Current, ['a'..'z', 'A'..'Z']) do
     begin
       value := value + reader.Current;
       reader.Read;
@@ -1737,7 +1978,8 @@ end;
 
 function TYAMLPathProcessor.EvaluateComparison(const Comp : TFilterComparison; const Context : TFilterContext) : Boolean;
 var
-  leftValue, rightValue : IYAMLValue;
+  leftValue, rightValue, sizeValue : IYAMLValue;
+  size : integer;
 begin
   if not Assigned(Comp) then
   begin
@@ -1767,11 +2009,63 @@ begin
     else
       result := True; // Non-null values are truthy
   end
+  else if Comp.Operator = TFilterOperator.foRegexMatch then
+  begin
+    // the whole of a scalar's text must match; null and collections never do
+    if leftValue.IsNull or not leftValue.IsScalar then
+      result := False
+    else if Comp.HasRegex then
+      result := Comp.Regex.IsMatch(leftValue.AsString)
+    else
+    begin
+      // the pattern comes from a path, so it is compiled here
+      rightValue := ResolveOperand(Comp.RightOperand, Context);
+      result := (not rightValue.IsNull) and rightValue.IsScalar and
+                CompileRegex(rightValue.AsString, []).IsMatch(leftValue.AsString);
+    end;
+  end
+  else if Comp.Operator = TFilterOperator.foSize then
+  begin
+    // the number of items of a collection, or of characters of a scalar's text, compared
+    // with the right operand
+    if leftValue.IsSequence then
+      size := leftValue.AsSequence.Count
+    else if leftValue.IsSet then
+      size := leftValue.AsSet.Count
+    else if leftValue.IsMapping then
+      size := leftValue.AsMapping.Count
+    else
+      size := Length(leftValue.AsString);
+    rightValue := ResolveOperand(Comp.RightOperand, Context);
+    // held in a variable: a new object passed straight to a const interface parameter is
+    // never released
+    sizeValue := TYAMLValue.Create(nil, TYAMLValueType.vtInteger, IntToStr(size));
+    result := rightValue.IsNumeric and CompareYAMLValues(sizeValue, rightValue, Comp.SizeOperator);
+  end
   else
   begin
     // Regular comparison
     rightValue := ResolveOperand(Comp.RightOperand, Context);
     result := CompareYAMLValues(leftValue, rightValue, Comp.Operator);
+  end;
+end;
+
+function TYAMLPathProcessor.SequenceHas(const collection, value : IYAMLValue) : Boolean;
+var
+  sequence : IYAMLSequence;
+  i : integer;
+begin
+  result := False;
+  if collection.IsSequence then
+    sequence := collection.AsSequence
+  else if collection.IsSet then
+    sequence := collection.AsSet
+  else
+    exit;
+  for i := 0 to sequence.Count - 1 do
+  begin
+    if CompareYAMLValues(sequence[i], value, TFilterOperator.foEquals) then
+      exit(True);
   end;
 end;
 
@@ -1786,19 +2080,22 @@ begin
     TFilterOperandType.fotRootItem:
       result := Context.RootDocument;
     TFilterOperandType.fotLiteral:
-      begin
-        if Operand.StringValue <> '' then
-          result := TYAMLValue.Create(nil, TYAMLValueType.vtString, Operand.StringValue)
-        else if Operand.IsNumericLiteral then
-        begin
-          if Frac(Operand.NumericValue) = 0 then
-            result := TYAMLValue.Create(nil, TYAMLValueType.vtInteger, IntToStr(Trunc(Operand.NumericValue)))
+      case Operand.LiteralKind of
+        TFilterLiteralKind.flkNumber :
+          // the number as written, so an integer past what a Double holds stays exact
+          if (Pos('.', Operand.NumericText) = 0) and (Pos('e', Operand.NumericText) = 0) and (Pos('E', Operand.NumericText) = 0) then
+            result := TYAMLValue.Create(nil, TYAMLValueType.vtInteger, Operand.NumericText)
           else
-            result := TYAMLValue.Create(nil, TYAMLValueType.vtFloat, YAMLFloatToStr(Operand.NumericValue));
-        end
-        else
-          result := TYAMLValue.Create(nil, TYAMLValueType.vtBoolean, BoolToStr(Operand.BoolValue, True));
+            result := TYAMLValue.Create(nil, TYAMLValueType.vtFloat, Operand.NumericText);
+        TFilterLiteralKind.flkBoolean :
+          result := TYAMLValue.Create(nil, TYAMLValueType.vtBoolean, LowerCase(BoolToStr(Operand.BoolValue, True)));
+        TFilterLiteralKind.flkNull :
+          result := TYAMLValue.Create(nil, TYAMLValueType.vtNull);
+      else
+        result := TYAMLValue.Create(nil, TYAMLValueType.vtString, Operand.StringValue);
       end;
+    TFilterOperandType.fotList:
+      result := Operand.ListValue;
     TFilterOperandType.fotPath:
       begin
         // Parse and execute the path expression. A record local does not zero its
@@ -1812,9 +2109,9 @@ begin
               pathProcessor := TYAMLPathProcessor.Create(Operand.Path);
               matches := pathProcessor.Query(Context.RootDocument);
             end
-            else if StartsText('.', Operand.Path) then
+            else if StartsText('.', Operand.Path) or StartsText('[', Operand.Path) then
             begin
-              // For paths like .rating, we need to access property of current item
+              // For paths like .rating or [0], we need to access property of current item
               pathProcessor := TYAMLPathProcessor.Create('$' + Operand.Path);
               matches := pathProcessor.Query(Context.CurrentItem);
             end
@@ -1852,6 +2149,9 @@ begin
       begin
         if Left.IsNull and Right.IsNull then
           result := True
+        else if Left.IsNull or Right.IsNull then
+          // null is only equal to null - not to '' (whose text it has)
+          result := False
         else if Left.ValueType = Right.ValueType then
         begin
           case Left.ValueType of
@@ -1929,19 +2229,23 @@ begin
       result := CompareYAMLValues(Left, Right, TFilterOperator.foLess) or CompareYAMLValues(Left, Right, TFilterOperator.foEquals);
     TFilterOperator.foContains:
       begin
-        leftStr := Left.AsString;
-        rightStr := Right.AsString;
-        result := Pos(rightStr, leftStr) > 0;
-      end;
-    TFilterOperator.foSize:
-      begin
-        if Left.IsSequence then
-          result := Left.AsSequence.Count = Right.AsInteger
+        // a list contains an item equal to the right operand; text contains it as a substring
+        if Left.IsSequence or Left.IsSet then
+          result := SequenceHas(Left, Right)
         else if Left.IsMapping then
-          result := Left.AsMapping.Count = Right.AsInteger
+          result := False
         else
-          result := Length(Left.AsString) = Right.AsInteger;
+        begin
+          leftStr := Left.AsString;
+          rightStr := Right.AsString;
+          result := Pos(rightStr, leftStr) > 0;
+        end;
       end;
+    TFilterOperator.foIn:
+      // the left operand is equal to an item of the list on the right
+      result := SequenceHas(Right, Left);
+    TFilterOperator.foNotIn:
+      result := not SequenceHas(Right, Left);
     TFilterOperator.foEmpty:
       begin
         if Right.AsBoolean then
@@ -1963,7 +2267,7 @@ begin
             result := Left.AsString <> '';
         end;
       end;
-    // TODO: Implement TFilterOperator.foRegexMatch, TFilterOperator.foIn, TFilterOperator.foNotIn if needed
+    // size and =~ are evaluated by EvaluateComparison
   end;
 end;
 
@@ -2012,10 +2316,13 @@ begin
   Next := nil;
   Name := '';
   SetLength(Indices,0);
-  Start := 0;
-  Stop := -1; // -1 indicates "not set", should use sequence length
-  Step := 1;
+  // the variant fields overlap, so the pointer goes first and the slice fields after it
   FilterExpression := nil;
+  Start := 0;
+  Stop := 0;
+  Step := 1;
+  HasStart := False;
+  HasStop := False;
 end;
 
 end.

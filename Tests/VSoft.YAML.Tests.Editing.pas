@@ -119,6 +119,28 @@ type
     procedure Clone_EmptyCollections;
     [Test]
     procedure Clone_ThenAttach;
+
+    // the null a missing key or index gives
+    [Test]
+    procedure MissingKeyOrIndex_GivesADetachedNull;
+    // typed Add* and Insert* on a set
+    [Test]
+    procedure Set_DuplicateGivesADetachedNode;
+    // the A[] and O[] setters
+    [Test]
+    procedure MappingSetters_SetParent;
+    [Test]
+    procedure MappingSetters_AttachedNodeRaises;
+    [Test]
+    procedure MappingSetters_NilWritesNull;
+    [Test]
+    procedure SequenceSetters_SetParent;
+    [Test]
+    procedure SequenceSetters_AttachedNodeRaises;
+    [Test]
+    procedure SequenceSetters_NilWritesNull;
+    [Test]
+    procedure SequenceSetters_SameNodeChangesNothing;
   end;
 
 implementation
@@ -381,11 +403,15 @@ begin
     begin
       mapping.AddOrSetValue('c', attached);
     end, EArgumentException, 'a node already in this mapping');
+  // setting a key to the node it already holds changes nothing, as O['a'] := O['a'] does
+  mapping.AddOrSetValue('a', attached);
+  Assert.IsTrue(SameNode(mapping, attached.Parent));
+  Assert.IsTrue(SameNode(attached, mapping['a']));
   Assert.WillRaise(
     procedure
     begin
-      mapping.AddOrSetValue('a', attached);
-    end, EArgumentException, 'setting a key to the node it already holds');
+      mapping.AddOrSetValue('b', attached);
+    end, EArgumentException, 'a node of this mapping under another key');
   Assert.WillRaise(
     procedure
     begin
@@ -1187,6 +1213,195 @@ begin
     items.AddValue(item);
   end;
   Assert.AreEqual('{"template":{"name":"x"},"items":[{"name":"item1"},{"name":"item2"},{"name":"item3"}]}', CompactJSON(doc));
+end;
+
+{ the null a missing key or index gives }
+
+procedure TYAMLEditingTests.MissingKeyOrIndex_GivesADetachedNull;
+var
+  doc, target : IYAMLDocument;
+  missingKey, missingIndex : IYAMLValue;
+begin
+  doc := TYAML.LoadFromString('m: {a: 1}' + sLineBreak + 's: [x]');
+  missingKey := doc.AsMapping['m'].AsMapping['nothing'];
+  missingIndex := doc.AsMapping['s'].AsSequence[5];
+  Assert.IsTrue(missingKey.IsNull);
+  Assert.IsTrue(missingKey.Parent = nil, 'it is in no collection');
+  Assert.IsTrue(missingIndex.IsNull);
+  Assert.IsTrue(missingIndex.Parent = nil);
+  Assert.AreEqual(1, doc.AsMapping['m'].AsMapping.Count, 'reading a missing key adds nothing');
+
+  // so it can be added like any detached node
+  target := TYAML.CreateSequence;
+  target.AsSequence.AddValue(missingKey);
+  target.AsSequence.AddValue(missingIndex);
+  Assert.AreEqual('[null,null]', CompactJSON(target));
+end;
+
+{ typed Add* and Insert* on a set }
+
+procedure TYAMLEditingTests.Set_DuplicateGivesADetachedNode;
+var
+  doc : IYAMLDocument;
+  aSet : IYAMLSet;
+  added, duplicate, inserted : IYAMLValue;
+begin
+  doc := TYAML.CreateSet;
+  aSet := doc.AsSet;
+  added := aSet.AddValue('a');
+  Assert.IsTrue(SameNode(aSet, added.Parent));
+
+  duplicate := aSet.AddValue('a');
+  Assert.AreEqual(1, aSet.Count);
+  Assert.IsFalse(SameNode(added, duplicate));
+  Assert.IsTrue(duplicate.Parent = nil, 'the set did not take it');
+
+  inserted := aSet.InsertValue(0, 'a');
+  Assert.AreEqual(1, aSet.Count);
+  Assert.IsTrue(inserted.Parent = nil);
+
+  // a detached node can go elsewhere
+  doc := TYAML.CreateSequence;
+  doc.AsSequence.AddValue(duplicate);
+  Assert.IsTrue(SameNode(doc.Root, duplicate.Parent));
+end;
+
+{ the A[] and O[] setters }
+
+procedure TYAMLEditingTests.MappingSetters_SetParent;
+var
+  doc, other : IYAMLDocument;
+  list : IYAMLSequence;
+  map : IYAMLMapping;
+begin
+  doc := TYAML.CreateMapping;
+  other := TYAML.LoadFromString('l: [1, 2]' + sLineBreak + 'm: {k: v}');
+  list := other.AsMapping['l'].Clone.AsSequence;
+  map := other.AsMapping['m'].Clone.AsMapping;
+  doc.AsMapping.A['list'] := list;
+  doc.AsMapping.O['map'] := map;
+  Assert.IsTrue(SameNode(doc.Root, list.Parent));
+  Assert.IsTrue(SameNode(doc.Root, map.Parent));
+  Assert.AreEqual('{"list":[1,2],"map":{"k":"v"}}', CompactJSON(doc));
+end;
+
+procedure TYAMLEditingTests.MappingSetters_AttachedNodeRaises;
+var
+  doc, other : IYAMLDocument;
+  mapping : IYAMLMapping;
+begin
+  doc := TYAML.CreateMapping;
+  mapping := doc.AsMapping;
+  other := TYAML.LoadFromString('l: [1, 2]' + sLineBreak + 'm: {k: v}');
+  Assert.WillRaise(
+    procedure
+    begin
+      mapping.A['list'] := other.AsMapping['l'].AsSequence;
+    end, EArgumentException);
+  Assert.WillRaise(
+    procedure
+    begin
+      mapping.O['map'] := other.AsMapping['m'].AsMapping;
+    end, EArgumentException);
+  Assert.WillRaise(
+    procedure
+    begin
+      mapping.O['self'] := mapping;
+    end, EArgumentException);
+  Assert.AreEqual(0, mapping.Count);
+end;
+
+procedure TYAMLEditingTests.MappingSetters_NilWritesNull;
+var
+  doc : IYAMLDocument;
+  list : IYAMLSequence;
+  map : IYAMLMapping;
+begin
+  doc := TYAML.CreateMapping;
+  list := nil;
+  map := nil;
+  doc.AsMapping.A['list'] := list;
+  doc.AsMapping.O['map'] := map;
+  Assert.IsTrue(doc.AsMapping['list'].IsNull);
+  Assert.IsTrue(doc.AsMapping['map'].IsNull);
+  Assert.AreEqual('{"list":null,"map":null}', CompactJSON(doc));
+end;
+
+procedure TYAMLEditingTests.SequenceSetters_SetParent;
+var
+  doc : IYAMLDocument;
+  sequence : IYAMLSequence;
+  list : IYAMLSequence;
+  map : IYAMLMapping;
+  old : IYAMLValue;
+begin
+  doc := TYAML.LoadFromString('[a, b]');
+  sequence := doc.AsSequence;
+  old := sequence[0];
+  list := TYAML.LoadFromString('[1]').Root.AsSequence;
+  map := TYAML.LoadFromString('{k: v}').Root.AsMapping;
+  sequence.A[0] := list;
+  sequence.O[1] := map;
+  Assert.IsTrue(SameNode(sequence, list.Parent));
+  Assert.IsTrue(SameNode(sequence, map.Parent));
+  Assert.IsTrue(old.Parent = nil, 'the item replaced forgets the sequence');
+  Assert.AreEqual('[[1],{"k":"v"}]', CompactJSON(doc));
+end;
+
+procedure TYAMLEditingTests.SequenceSetters_AttachedNodeRaises;
+var
+  doc, other : IYAMLDocument;
+  sequence : IYAMLSequence;
+begin
+  doc := TYAML.LoadFromString('[a, b]');
+  sequence := doc.AsSequence;
+  other := TYAML.LoadFromString('l: [1, 2]' + sLineBreak + 'm: {k: v}');
+  Assert.WillRaise(
+    procedure
+    begin
+      sequence.A[0] := other.AsMapping['l'].AsSequence;
+    end, EArgumentException);
+  Assert.WillRaise(
+    procedure
+    begin
+      sequence.O[1] := other.AsMapping['m'].AsMapping;
+    end, EArgumentException);
+  Assert.WillRaise(
+    procedure
+    begin
+      sequence.A[0] := sequence;
+    end, EArgumentException);
+  Assert.AreEqual('a,b', ItemsOf(sequence));
+end;
+
+procedure TYAMLEditingTests.SequenceSetters_NilWritesNull;
+var
+  doc : IYAMLDocument;
+  list : IYAMLSequence;
+  map : IYAMLMapping;
+begin
+  doc := TYAML.LoadFromString('[a, b]');
+  list := nil;
+  map := nil;
+  doc.AsSequence.A[0] := list;
+  doc.AsSequence.O[1] := map;
+  Assert.AreEqual('[null,null]', CompactJSON(doc));
+  Assert.IsTrue(SameNode(doc.Root, doc.AsSequence[0].Parent));
+end;
+
+procedure TYAMLEditingTests.SequenceSetters_SameNodeChangesNothing;
+var
+  doc : IYAMLDocument;
+  sequence : IYAMLSequence;
+  child : IYAMLSequence;
+begin
+  doc := TYAML.LoadFromString('[[1], x]');
+  sequence := doc.AsSequence;
+  child := sequence.A[0];
+  sequence.A[0] := child;
+  Assert.IsTrue(SameNode(sequence, child.Parent));
+  Assert.IsTrue(SameNode(child, sequence[0]));
+  Assert.AreEqual('[[1],"x"]', CompactJSON(doc));
 end;
 
 initialization

@@ -56,7 +56,7 @@ VSoft.YAML can parse and write JSON (since YAML 1.2 is a superset of JSON):
 - **Error Handling** - Detailed parse error reporting with line/column information
 
 ### Advanced Features
-- **Multiple Documents** - Full support for multi-document YAML files with `LoadAllFromString/File()` and `WriteAllToString/File()`
+- **Multiple Documents** - Full support for multi-document YAML files with `LoadAllFromString/File()`, and `WriteToString/File/Stream()` with an array of documents
 - **YAML Directives** - Complete support for `%YAML` version and `%TAG` custom handle directives
 - **Comprehensive Tag System** - Full implementation of all YAML 1.2 tag types (Standard, Local, Custom, Verbatim, Global)
 - **[JSONPath Queries](/docs/JSONPath-Syntax.md)** - JSONPath-style querying with `Query()` and `QuerySingle()` methods, and `QueryMatches()`, which also gives where each match is
@@ -154,9 +154,10 @@ end;
 - `IYAMLSequence.Delete(index)` removes an item. An index outside `0..Count - 1` raises `EArgumentOutOfRangeException`.
 - `IYAMLSequence.InsertValue(index, value)` has overloads for `string`, `Int64`, `Double`, `Boolean` and `IYAMLValue`. `InsertNull`, `InsertNumber`, `InsertMapping` and `InsertSequence` work as the `Add` methods of the same names. `index` is `0..Count`, and `Count` adds at the end; any other index raises `EArgumentOutOfRangeException`. A set does not insert a value it already has.
 - `IYAMLMapping.AddOrSetValue(key, node)`, `IYAMLSequence.AddValue(node)` and `IYAMLSequence.InsertValue(index, node)` put an existing node of any kind into a collection, and make the collection its `Parent`. On an existing key, `AddOrSetValue` replaces the value in the same position, as the other overloads do.
-- The node must be in no collection, so its `Parent` must be nil. A node that `Remove` or `Delete` took out, a `Clone` and the root of a document are such nodes. A node that is still in a collection raises `EArgumentException`, and so does a collection added to itself or to a collection inside it. `nil` raises `EArgumentNilException`.
+- The node must be in no collection, so its `Parent` must be nil. A node that `Remove` or `Delete` took out, a `Clone`, the root of a document and the null that a missing key or index gives are such nodes. A node that is still in a collection raises `EArgumentException`, and so does a collection added to itself or to a collection inside it. `nil` raises `EArgumentNilException`. Setting a key to the node it already holds changes nothing.
 - `IYAMLValue.Clone` returns a deep copy whose `Parent` is nil. The copy keeps the value type, the text (so `0x1F` and `1.50` are written as they were read), the tags and the comments. A node that an alias shares is copied each time it occurs, so the copies are independent.
-- The `A[]` and `O[]` setters did not change. They put the collection in as it is and do not change its `Parent`.
+- The `A[]` and `O[]` setters, on mappings and sequences, follow the same rules as `AddOrSetValue(key, node)`. Setting one to `nil` writes a null, as JsonDataObjects does.
+- On a set, the typed `AddValue` and `InsertValue` overloads return a node that is in no collection when the set already has the value.
 
 ### Where a Query Matched
 `QueryMatches` runs a JSONPath query as `Query` does, and gives each match with the place it is in the document. It is on `IYAMLDocument` and `IYAMLCollection`, and `TYAMLPathProcessor` has a static and a compiled form. The matches are in the same order as `Query` returns them.
@@ -200,6 +201,15 @@ The location comes from the path that the query took. A node that an alias share
 
 A negative index counts from the end of a sequence, as RFC 9535 says: `$.books[-1]` is the last book, and `$.books[0,-1]` the first and the last. An index out of range selects nothing; it does not raise an error.
 
+### Long Lines
+Set `MaxLineLength` to fold long strings in YAML output. A plain or quoted string that would make its line longer is written over several lines, broken at single spaces, and reads back as the same text. Keys, flow output and words longer than the limit stay on one line. The default, 0, never folds.
+```pascal
+  doc.Options.MaxLineLength := 80;
+  WriteLn(TYAML.WriteToString(doc));
+  // description: a long text that goes past the limit is written over several
+  //   lines, and reads back as one line
+```
+
 ### Multiple Documents
 ```pascal
 var
@@ -221,7 +231,7 @@ begin
   documents[0] := doc1;
   documents[1] := doc2;
   
-  yamlContent := TYAML.WriteAllToString(documents);
+  yamlContent := TYAML.WriteToString(documents);
   WriteLn('Multi-document YAML:');
   WriteLn(yamlContent);
   
@@ -422,7 +432,43 @@ JSON (`JSONMode`) is read by the same parser in its strict RFC 8259 mode, which 
 
 - **`IYAMLSequence.AddValue(IYAMLValue)` sets the node's `Parent`, and refuses a node that is in a collection.** It used to add the node as it was: the node kept its old `Parent` and could be in two collections at once. Now the sequence becomes the node's `Parent`. A node whose `Parent` is set raises `EArgumentException`: take it out of its collection first (`Remove` or `Delete`), or add `node.Clone`. A sequence added to itself, or to a collection inside it, also raises `EArgumentException`. On a set, a value the set already has is still not added, and its `Parent` is not set.
 - **`AddValue(nil)` on a set raises `EArgumentNilException`,** as it already did on a sequence. It did nothing.
+- **The `A[]` and `O[]` setters check the node too.** On mappings and sequences they now work as `AddOrSetValue(key, node)`: the collection becomes the node's `Parent`, a node that is in another collection raises `EArgumentException`, and setting a key or index to the node it already holds changes nothing. `nil` writes a null; it used to store a nil value, which the writers could not write.
+- **A missing key or index gives a null that is in no collection.** `mapping['missing']` and `sequence[99]` return a new null as before, but its `Parent` is nil rather than the collection it is not in, so it can be added to a collection.
+- **A set gives back what it did not take.** On a set that already has the value, the typed `AddValue` and `InsertValue` overloads return a node whose `Parent` is nil. It was the set.
 - **Negative JSONPath indexes count from the end.** `$.a[-1]` and `$.a[0,-1]` raised `EYAMLPathError` ("Negative array index..."). Now `-1` is the last item, as RFC 9535 says, and an index out of range selects nothing. The `RS_YAML_PATH_NEGATIVE_ARRAY_INDEX` resource string is no longer used.
+- **JSONPath `..` works as RFC 9535 says.** The selector after `..` is applied to the node and then to each of its descendants in document order, and the search goes on inside a match. `$..*`, `$..[0]` and `$..['name']` used to find nothing, `$..price` missed a `price` inside another `price`, and the matches of a node came after those of the nodes inside it, where they now come first.
+- **JSONPath slices work as RFC 9535 says.** A negative end counts from the end (`$.a[0:-1]` is all but the last item, where it was every item), a negative step goes backwards (`$.a[::-1]`), a step of 0 selects nothing, and a start past the end selects nothing (`$.a[3:1]` gave from 3 to the end).
+- **JSONPath filter operators.**
+  - `=~` matches a regular expression against the whole value: `@.name =~ /app.*/i`, or with a string pattern. It parsed, and was always false.
+  - `in` and `nin` take a list, `@.size in ['S', 'M']`, or a sequence in the document. A list did not parse, and they were always false.
+  - `size` takes a comparison: `@.reviews size > 5`. Only `size 5` worked.
+  - `contains` finds an item in a sequence, as well as text in a string.
+  - `null` is a literal, and null equals only null - not `''`. `null` was the string 'null', and a missing property equalled `''`.
+  - A negative number keeps its sign: `@.n > -5` compared with 5. A number with an exponent, such as `1e3`, is read.
+  - A string literal ends at the quote it started with, so `"it's"` is one string. `''` is an empty string; it was read as `true`.
+  - A word such as `fred` is a string, as `bob` was; a word starting with t or f raised an error.
+  - `@[0]` and `$[0]` paths work as well as `@.a` and `$.a`.
+  - An invalid regular expression raises `EYAMLPathError`.
+- **The YAML writer writes every tag.** Tags were written only for values in block mappings, and a tagged collection there came out as `key:!tag ` with no space, which did not read back. They are now written for sequence and set items, the root (on a line of its own before a block collection) and in flow output, so the output reads back with the same tags. `EmitTags := false` still writes none.
+- **YAML writer fixes.** These were written in a way that did not read back as the same document:
+  - a mapping under the first key of a mapping that is a sequence item (`[{a: {b: 1}, c: 2}]` read back as `{a: null, b: 1, c: 2}`), and with `IndentSize` 1 under the other keys too;
+  - a block scalar under the first key of a mapping that is a sequence item (the output did not parse);
+  - a set in flow output, or under a key of a mapping that is a sequence item (written as nothing);
+  - a null item in a flow sequence (`[a, , b]`; it is now `[a, null, b]`);
+  - a mapping in a set (written as a `- ` item among the `? ` ones).
+- **Block scalars read back as the same text.** With `BlockScalarStyle` set, most strings with line breaks used to read back changed, or not at all:
+  - The chomping indicator came from the `BlockChompingIndicator` option, but only one indicator reads back as a given text, so with the default (clip) `'a'#10'b'` came back as `'a'#10'b'#10`. The writer now chooses it from each string: `|-` with no final line break, `|` with one, `|+` with more.
+  - Folded (`>`) output wrote each line on a line of its own, which reads back with a space for each line break (`'a'#10'b'` came back as `'a b'`). A line break between two lines is now written as an empty line, as folding requires; with `MaxLineLength` set, long lines are folded at spaces.
+  - A string whose first line starts with a space gave output that did not parse. It now gets an indentation indicator (`|2`).
+  - A string with a control character, or a CR that is not part of CR LF, is now written double quoted. A block scalar cannot hold them.
+  - A same-line `Comment` is written after the header (`key: | # note`); it was dropped.
+  - CR LF line breaks are still written as line breaks, so they read back as LF: a block scalar holds no CR.
+- **`BlockChompingIndicator` is deprecated, and has no effect.** The `TYAMLBlockChompingIndicator` type is marked deprecated (a property cannot be), so code that sets the option gets a compiler warning. The property is kept, so that code still compiles.
+- **Double quoted strings escape every control character.** `#1`-`#6`, `#14`-`#26`, `#28`-`#31`, DEL and `#$80`-`#$9F` were written as they are inside the quotes, which YAML does not allow anywhere in a stream. They are now written as `\x01` and so on, and a byte order mark (`#$FEFF`) inside a string as `\uFEFF`.
+- **`MaxLineLength` works, and is 0 by default.** It was 80 and had no effect; any value below 80 was raised to 80. Now a value above 0 folds long strings in YAML output, and 0 never folds. See Long Lines above.
+- **Writing several documents leaves the first document's options alone.** `WriteToString(docs)`, `WriteToStream(docs)` and `WriteToFile(docs)` set `EmitDocumentMarkers` on the first document's options, so that document was written with `---` and `...` from then on.
+- **`WriteToJSONStream(docs)` writes the byte order mark** when `WriteByteOrderMark` is set, as the other stream writers do. It never wrote one.
+- **`LoadAll` error messages give the position once.** They ended "at line 1, column 6 at line 1, column 6".
 - **New interface members.** These were added:
   - `IYAMLValue.Clone`
   - `IYAMLMapping.AddOrSetValue(key, IYAMLValue)` and `IYAMLMapping.Remove`

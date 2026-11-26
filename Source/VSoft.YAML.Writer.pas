@@ -16,6 +16,7 @@ type
   TYAMLWriterImpl = class
   private
     FIndentLevel : UInt32;
+    FIndentOffset : integer; // columns added to every level's indent - see WriteValueAtColumn
     FCurrentIndent : string;
     FIndentStrings : TArray<string>; // indent text per level, see UpdateIndentCache
     FOptions : IYAMLEmitOptions;
@@ -32,26 +33,39 @@ type
     function FormatKey(const key : string) : string;
     function FormatScalar(const value : IYAMLValue) : string;
     function GetFormattedTag(const value : IYAMLValue) : string;
-    function ContainsLineBreaks(const value : string) : boolean;
-    function ShouldUseBlockScalar(const value : IYAMLValue) : boolean;
-    function GetChompingIndicator : string;
-    procedure WriteBlockScalar(const value : string; const key : string; const tag : string);
-    procedure WriteSequenceBlockScalar(const value : string);
-    procedure WriteSequenceMappingBlockScalar(const value : string; const key : string; const prefix : string);
+    // the tag to write in front of value, with a space after it - '' when it has none, or
+    // EmitTags is off
+    function TagOf(const value : IYAMLValue) : string;
+    // after 'key:', '-' or '?' on the line a collection starts: a space and its tag
+    procedure WriteHeaderTag(const tag : string);
+    // tag and a scalar's text, which start at column; the text is folded to MaxLineLength,
+    // with continuation lines indented to contColumn
+    procedure WriteScalarAt(column : integer; const tag, text : string; contColumn : integer);
+    procedure WriteFoldedText(const text : string; startColumn, contColumn : integer);
+    // True when value is to be written as a block scalar: text is its text with CR LF line
+    // breaks as LF, and header the indicators after the key or dash ('|2-', '>+' ...).
+    // relativeIndent is how far its lines are indented past the node it is in.
+    function TryBlockScalar(const value : IYAMLValue; relativeIndent : integer; out text, header : string) : boolean;
+    // lineStart (the indent and 'key: ', '- ' or '- key: '), the tag, the header and the
+    // comment, then the lines of text at column
+    procedure WriteBlockScalar(const lineStart, tag, header, text, comment : string; column : integer);
+    procedure WriteFoldedBlockLine(const line : string; column : integer);
 
-    // Core writing methods
-    procedure WriteValue(const value : IYAMLValue);
-    procedure WriteMapping(const mapping : IYAMLMapping);
-    procedure WriteSequence(const sequence : IYAMLSequence);
-    procedure WriteSet(const ASet : IYAMLSet);
+    // Core writing methods. tagWritten: the line before the collection has its tag already
+    procedure WriteRoot(const value : IYAMLValue);
+    procedure WriteValue(const value : IYAMLValue; tagWritten : boolean);
+    // WriteValue with the first line of the collection at column, after a line that has
+    // its tag; the levels inside it are indented from there
+    procedure WriteValueAtColumn(const value : IYAMLValue; column : integer);
+    procedure WriteMapping(const mapping : IYAMLMapping; tagWritten : boolean);
+    procedure WriteSequence(const sequence : IYAMLSequence; tagWritten : boolean);
+    procedure WriteSet(const ASet : IYAMLSet; tagWritten : boolean);
     procedure WriteScalar(const value : IYAMLValue);
-    // Flow style methods
-    procedure WriteMappingFlow(const mapping : IYAMLMapping; const mapKey : string = '');
-    procedure WriteSequenceFlow(const sequence : IYAMLSequence; const key : string = '');
-
-    function WriteNestedMappingFlow(const mapping : IYAMLMapping) : string;
-    function WriteNestedSequenceFlow(const sequence : IYAMLSequence) : string;
-    function WriteNestedSetFlow(const ASet : IYAMLSet) : string;
+    // Flow style: a line of the indent, prefix ('key: ' or '') and the value in flow style
+    procedure WriteFlowLine(const value : IYAMLValue; const prefix : string; includeTag : boolean);
+    // value in flow style, with its tag when includeTag is set. An empty null in a sequence
+    // is written as null, as there is nothing to write between the commas.
+    function FlowText(const value : IYAMLValue; inSequence, includeTag : boolean) : string;
 
     // Sequence-specific mapping writer
     procedure WriteSequenceMapping(mapping : IYAMLMapping);
@@ -114,6 +128,12 @@ end;
 
 procedure TYAMLWriterImpl.UpdateIndentCache;
 begin
+  if FIndentOffset <> 0 then
+  begin
+    // inside a collection placed at a column of its own (WriteValueAtColumn)
+    FCurrentIndent := TYAMLCharUtils.SpaceStr(FIndentOffset + Integer(FIndentLevel * FOptions.IndentSize));
+    exit;
+  end;
   // one indent string per level, built once
   if Integer(FIndentLevel) >= Length(FIndentStrings) then
     SetLength(FIndentStrings, FIndentLevel + 8);
@@ -186,7 +206,7 @@ begin
         exit(True);
       #0..#31, #127:
         exit(True);
-      #$85, #$A0, #$2028, #$2029:
+      #$80..#$9F, #$A0, #$2028, #$2029, #$FEFF:
         exit(True);
     end;
   end;
@@ -204,8 +224,10 @@ begin
   {$HIGHCHARUNICODE ON}
   for i := 1 to Length(value) do
   begin
+    // every character YAML does not allow in a stream as it is (YAML 1.2 section 5.1) has an
+    // escape, as do " and \
     case value[i] of
-      #0, #7..#13, #27, '"', '\', #$85, #$A0, #$2028, #$2029 : ;
+      #0..#31, #127, '"', '\', #$80..#$9F, #$A0, #$2028, #$2029, #$FEFF : ;
     else
       continue;
     end;
@@ -229,6 +251,15 @@ begin
       #$A0: sb.Append('\_');   // Non-breaking space
       #$2028: sb.Append('\L'); // Line separator
       #$2029: sb.Append('\P'); // Paragraph separator
+      #$FEFF:
+      begin
+        sb.Append('\');
+        sb.Append('uFEFF');    // Byte order mark
+      end;
+    else
+      // the other control characters (C0, DEL and C1) by their code
+      sb.Append('\x');
+      sb.Append(IntToHex(Ord(value[i]), 2));
     end;
   end;
  {$HIGHCHARUNICODE OFF}
@@ -251,13 +282,15 @@ begin
         exit(True);
       '\':         // Backslash
         exit(True);
-      #$85:        // Next line (NEL)
+      #$80..#$9F:  // C1 control characters, and next line (NEL)
         exit(True);
       #$A0:        // Non-breaking space
         exit(True);
       #$2028:      // Line separator
         exit(True);
       #$2029:      // Paragraph separator
+        exit(True);
+      #$FEFF:      // Byte order mark
         exit(True);
     end;
   end;
@@ -396,181 +429,267 @@ begin
   end;
 end;
 
-function TYAMLWriterImpl.ContainsLineBreaks(const value : string) : boolean;
-var
-  i : integer;
+function TYAMLWriterImpl.TagOf(const value : IYAMLValue) : string;
 begin
-  result := False;
-  for i := 1 to Length(value) do
+  if FOptions.EmitTags then
+    result := GetFormattedTag(value)
+  else
+    result := '';
+end;
+
+procedure TYAMLWriterImpl.WriteHeaderTag(const tag : string);
+begin
+  if tag <> '' then
   begin
-    if (value[i] = #10) or (value[i] = #13) then
-    begin
-      result := True;
-      Exit;
-    end;
+    FOut.WriteChar(' ');
+    FOut.Write(TrimRight(tag));
   end;
 end;
 
-function TYAMLWriterImpl.ShouldUseBlockScalar(const value : IYAMLValue) : boolean;
-var
-  str : string;
+procedure TYAMLWriterImpl.WriteScalarAt(column : integer; const tag, text : string; contColumn : integer);
 begin
-  result := False;
-
-  // Only for strings
-  if value.ValueType <> TYAMLValueType.vtString then
-    Exit;
-
-  // Only if block scalar style is enabled
-  if FOptions.BlockScalarStyle = TYAMLBlockScalarStyle.bssNone then
-    Exit;
-
-  str := value.AsString;
-
-  // Empty strings should not use block scalars
-  if str = '' then
-    Exit;
-
-  // Check if string contains line breaks
-  result := ContainsLineBreaks(str);
-end;
-
-function TYAMLWriterImpl.GetChompingIndicator : string;
-begin
-  case FOptions.BlockChompingIndicator of
-    TYAMLBlockChompingIndicator.bciStrip : result := '-';
-    TYAMLBlockChompingIndicator.bciKeep : result := '+';
-  else
-    result := ''; // bciClip - no indicator needed (default)
+  if text = '' then
+  begin
+    // an empty null: the tag alone, without a space after it
+    FOut.Write(TrimRight(tag));
+    exit;
   end;
-end;
-
-procedure TYAMLWriterImpl.WriteBlockScalar(const value : string; const key : string; const tag : string);
-var
-  lines : TStringList;
-  i : integer;
-  indicator : Char;
-  lineContent : string;
-begin
-  // Determine block indicator based on style
-  if FOptions.BlockScalarStyle = TYAMLBlockScalarStyle.bssFolded then
-    indicator := '>'
-  else
-    indicator := '|';
-
-  // Write the key and block indicator with chomping
-  FOut.Write(FCurrentIndent);
-  FOut.Write(key);
-  FOut.Write(': ');
   FOut.Write(tag);
-  FOut.Write(indicator);
-  FOut.Write(GetChompingIndicator);
-  FOut.WriteNewLine;
-
-  // Split the value into lines and write each with proper indentation
-  lines := TStringList.Create;
-  try
-    // Handle both CRLF and LF line endings
-    lines.Text := value;
-
-    IncIndent;
-    for i := 0 to lines.Count - 1 do
-    begin
-      lineContent := lines[i];
-      FOut.Write(FCurrentIndent);
-      FOut.Write(lineContent);
-      FOut.WriteNewLine;
-    end;
-    DecIndent;
-  finally
-    lines.Free;
-  end;
+  WriteFoldedText(text, column + Length(tag), contColumn);
 end;
 
-procedure TYAMLWriterImpl.WriteSequenceBlockScalar(const value : string);
+// A plain, single quoted or double quoted scalar can go on over several lines: a line break
+// between two lines reads as one space, and the indentation of the next line is dropped. So
+// a single space between two characters that are not spaces can be written as a line break.
+// A plain scalar does not break before a character that could start something else on a
+// line of its own, such as # or -.
+procedure TYAMLWriterImpl.WriteFoldedText(const text : string; startColumn, contColumn : integer);
 var
-  lines : TStringList;
-  i : integer;
-  indicator : Char;
-  lineContent : string;
+  width, len, i, lineStart, column, lastBreak : integer;
+  plain, canBreak : boolean;
+  indent : string;
 begin
-  // Determine block indicator based on style
-  if FOptions.BlockScalarStyle = TYAMLBlockScalarStyle.bssFolded then
-    indicator := '>'
-  else
-    indicator := '|';
-
-  // Write the dash and block indicator with chomping
-  FOut.Write(FCurrentIndent);
-  FOut.Write('- ');
-  FOut.Write(indicator);
-  FOut.Write(GetChompingIndicator);
-  FOut.WriteNewLine;
-
-  // Split the value into lines and write each with proper indentation
-  lines := TStringList.Create;
-  try
-    // Handle both CRLF and LF line endings
-    lines.Text := value;
-
-    IncIndent;
-    for i := 0 to lines.Count - 1 do
-    begin
-      lineContent := lines[i];
-      FOut.Write(FCurrentIndent);
-      FOut.Write(lineContent);
-      FOut.WriteNewLine;
-    end;
-    DecIndent;
-  finally
-    lines.Free;
+  width := FOptions.MaxLineLength;
+  len := Length(text);
+  if (width = 0) or (startColumn + len <= width) then
+  begin
+    FOut.Write(text);
+    exit;
   end;
+  plain := not CharInSet(text[1], ['''', '"']);
+  indent := TYAMLCharUtils.SpaceStr(contColumn);
+  lineStart := 1;         // where the line being written starts in text
+  column := startColumn;  // the column it starts at
+  lastBreak := 0;         // the last space on that line the text can break at
+  for i := 2 to len - 1 do
+  begin
+    canBreak := (text[i] = ' ') and (text[i - 1] <> ' ') and (text[i + 1] <> ' ');
+    if canBreak and plain then
+      canBreak := not CharInSet(text[i + 1], ['#', '-', '?', ':', ',', '[', ']', '{', '}', '&', '*', '!', '|', '>', '''', '"', '%', '@', '`'])
+    else if canBreak then
+      canBreak := (i > 2) and (i < len - 1); // not next to the quotes
+    if not canBreak then
+      continue;
+    // the line would hold text[lineStart .. i - 1]
+    if (column + (i - lineStart) > width) and (lastBreak >= lineStart) then
+    begin
+      FOut.Write(Copy(text, lineStart, lastBreak - lineStart));
+      FOut.WriteNewLine;
+      FOut.Write(indent);
+      lineStart := lastBreak + 1;
+      column := contColumn;
+    end;
+    lastBreak := i;
+  end;
+  // the rest of the text, broken once more if it does not fit
+  if (column + (len + 1 - lineStart) > width) and (lastBreak >= lineStart) then
+  begin
+    FOut.Write(Copy(text, lineStart, lastBreak - lineStart));
+    FOut.WriteNewLine;
+    FOut.Write(indent);
+    lineStart := lastBreak + 1;
+  end;
+  FOut.Write(Copy(text, lineStart, len - lineStart + 1));
 end;
 
-procedure TYAMLWriterImpl.WriteSequenceMappingBlockScalar(const value : string; const key : string; const prefix : string);
+// Block scalars (YAML 1.2 section 8.1). A string is written as one when BlockScalarStyle is
+// set and the string has a line break. The text a block scalar holds is not quite the text of
+// its lines, so the header says how to read them:
+// - the chomping indicator gives the line breaks at the end: '-' for none, none for one and
+//   '+' for more (or for a text that is only line breaks). It is chosen from the string - the
+//   deprecated BlockChompingIndicator option is not used, as only one indicator reads back as
+//   the same text.
+// - an indentation indicator gives the indent of the lines when the first line that is not
+//   empty starts with a space, as the indent is otherwise taken from that line.
+// A block scalar holds no carriage return - YAML reads every line break in one as a line
+// feed - so a CR LF line break is written as a line break and reads back as LF. A string that
+// has a CR on its own, or a character YAML does not allow in a stream, is written double
+// quoted, with escapes, instead.
+function TYAMLWriterImpl.TryBlockScalar(const value : IYAMLValue; relativeIndent : integer; out text, header : string) : boolean;
 var
-  lines : TStringList;
-  i : integer;
-  indicator : Char;
-  lineContent : string;
+  i, len, trailing : integer;
+  ch : Char;
 begin
-  // Determine block indicator based on style
-  if FOptions.BlockScalarStyle = TYAMLBlockScalarStyle.bssFolded then
-    indicator := '>'
-  else
-    indicator := '|';
+  result := false;
+  if (FOptions.BlockScalarStyle = TYAMLBlockScalarStyle.bssNone) or (value.ValueType <> TYAMLValueType.vtString) then
+    exit;
+  text := StringReplace(value.AsString, #13#10, #10, [rfReplaceAll]);
+  if Pos(#10, text) = 0 then
+    exit;
+  len := Length(text);
+  {$HIGHCHARUNICODE ON}
+  for i := 1 to len do
+  begin
+    ch := text[i];
+    if ch = #$FEFF then
+      exit;
+    case ch of
+      #9, #10, #32..#126, #$85, #$A0..#$D7FF, #$E000..#$FFFD : ;
+      #$D800..#$DBFF :
+        // a high surrogate must start a pair
+        if not ((i < len) and (text[i + 1] >= #$DC00) and (text[i + 1] <= #$DFFF)) then
+          exit;
+      #$DC00..#$DFFF :
+        if not ((i > 1) and (text[i - 1] >= #$D800) and (text[i - 1] <= #$DBFF)) then
+          exit;
+    else
+      exit; // a CR on its own or another control character
+    end;
+  end;
+  {$HIGHCHARUNICODE OFF}
 
-  // Write the prefix (e.g., '- ' or '  '), key and block indicator with chomping
-  FOut.Write(FCurrentIndent);
-  FOut.Write(prefix);
-  FOut.Write(key);
-  FOut.Write(': ');
-  FOut.Write(indicator);
-  FOut.Write(GetChompingIndicator);
+  if FOptions.BlockScalarStyle = TYAMLBlockScalarStyle.bssFolded then
+    header := '>'
+  else
+    header := '|';
+
+  // the first line that is not empty
+  i := 1;
+  while (i <= len) and (text[i] = #10) do
+    Inc(i);
+  if (i <= len) and (text[i] = ' ') then
+  begin
+    // an indentation indicator is a single digit
+    if (relativeIndent < 1) or (relativeIndent > 9) then
+      exit;
+    header := header + IntToStr(relativeIndent);
+  end;
+
+  trailing := 0;
+  while (trailing < len) and (text[len - trailing] = #10) do
+    Inc(trailing);
+  if trailing = 0 then
+    header := header + '-'
+  else if (trailing > 1) or (trailing = len) then
+    header := header + '+';
+  result := true;
+end;
+
+procedure TYAMLWriterImpl.WriteBlockScalar(const lineStart, tag, header, text, comment : string; column : integer);
+var
+  indent, line : string;
+  len, trailing, bodyEnd, start, stop, i, extra : integer;
+  folded, normal, previousNormal : boolean;
+begin
+  FOut.Write(lineStart);
+  FOut.Write(tag);
+  FOut.Write(header);
+  if comment <> '' then
+  begin
+    FOut.Write(' # ');
+    FOut.Write(comment);
+  end;
   FOut.WriteNewLine;
 
-  // Split the value into lines and write each with proper indentation
-  lines := TStringList.Create;
-  try
-    // Handle both CRLF and LF line endings
-    lines.Text := value;
+  indent := TYAMLCharUtils.SpaceStr(column);
+  folded := header[1] = '>';
+  len := Length(text);
+  trailing := 0;
+  while (trailing < len) and (text[len - trailing] = #10) do
+    Inc(trailing);
+  bodyEnd := len - trailing;
 
-    IncIndent;
-    if prefix = '  ' then
-      IncIndent; // Extra indent for non-first keys in sequence mapping
-    for i := 0 to lines.Count - 1 do
+  // the lines before the final line breaks, each with its line break
+  previousNormal := false;
+  start := 1;
+  while start <= bodyEnd do
+  begin
+    stop := start;
+    while (stop <= bodyEnd) and (text[stop] <> #10) do
+      Inc(stop);
+    line := Copy(text, start, stop - start);
+    if line = '' then
+      FOut.WriteNewLine // an empty line, with no spaces
+    else
     begin
-      lineContent := lines[i];
-      FOut.Write(FCurrentIndent);
-      FOut.Write(lineContent);
+      // In a folded scalar a single line break between two lines that do not start with
+      // white space reads as a space, and an empty line between them as a line break - so
+      // such a line break is written as an empty line. Line breaks next to a line that
+      // starts with white space are read as they are.
+      normal := not CharInSet(line[1], [' ', #9]);
+      if folded and normal and previousNormal then
+        FOut.WriteNewLine;
+      FOut.Write(indent);
+      if folded and normal then
+        WriteFoldedBlockLine(line, column)
+      else
+        FOut.Write(line);
       FOut.WriteNewLine;
+      previousNormal := normal;
     end;
-    if prefix = '  ' then
-      DecIndent;
-    DecIndent;
-  finally
-    lines.Free;
+    // (the body does not end with a line break, so the last line ends at bodyEnd)
+    if stop > bodyEnd then
+      break;
+    start := stop + 1;
   end;
+
+  // The line break of the last line is written above. With '+' the other final line breaks
+  // are empty lines - all of them when the text is only line breaks.
+  if bodyEnd = 0 then
+    extra := trailing
+  else
+    extra := trailing - 1;
+  for i := 1 to extra do
+    FOut.WriteNewLine;
+end;
+
+// A line of a folded block scalar that does not start with white space, written at column:
+// when MaxLineLength asks for it, it goes over several lines, broken at single spaces, which
+// read back as those spaces.
+procedure TYAMLWriterImpl.WriteFoldedBlockLine(const line : string; column : integer);
+var
+  width, len, i, lineStart, lastBreak : integer;
+begin
+  width := FOptions.MaxLineLength;
+  len := Length(line);
+  if (width = 0) or (column + len <= width) then
+  begin
+    FOut.Write(line);
+    exit;
+  end;
+  lineStart := 1;
+  lastBreak := 0;
+  for i := 2 to len - 1 do
+  begin
+    if (line[i] <> ' ') or (line[i - 1] = ' ') or (line[i + 1] = ' ') then
+      continue;
+    if (column + (i - lineStart) > width) and (lastBreak >= lineStart) then
+    begin
+      FOut.Write(Copy(line, lineStart, lastBreak - lineStart));
+      FOut.WriteNewLine;
+      FOut.Write(TYAMLCharUtils.SpaceStr(column));
+      lineStart := lastBreak + 1;
+    end;
+    lastBreak := i;
+  end;
+  if (column + (len + 1 - lineStart) > width) and (lastBreak >= lineStart) then
+  begin
+    FOut.Write(Copy(line, lineStart, lastBreak - lineStart));
+    FOut.WriteNewLine;
+    FOut.Write(TYAMLCharUtils.SpaceStr(column));
+    lineStart := lastBreak + 1;
+  end;
+  FOut.Write(Copy(line, lineStart, len - lineStart + 1));
 end;
 
 function TYAMLWriterImpl.ShouldUseFlowStyle(const value : IYAMLValue) : boolean;
@@ -688,31 +807,72 @@ begin
   FOut.Write(FCurrentIndent);
 end;
 
-procedure TYAMLWriterImpl.WriteValue(const value : IYAMLValue);
+procedure TYAMLWriterImpl.WriteRoot(const value : IYAMLValue);
+var
+  tag : string;
+  tagWritten : boolean;
+begin
+  // The root has no line of its own to put its tag on. A block collection's tag goes on the
+  // line before it; a scalar's goes in front of it, and a flow collection's into its text.
+  tagWritten := false;
+  if (value.ValueType in [TYAMLValueType.vtMapping, TYAMLValueType.vtSequence, TYAMLValueType.vtSet]) and
+     not ShouldUseFlowStyle(value) then
+  begin
+    tag := TagOf(value);
+    if tag <> '' then
+    begin
+      WriteIndent;
+      FOut.Write(TrimRight(tag));
+      FOut.WriteNewLine;
+      tagWritten := true;
+    end;
+  end;
+  WriteValue(value, tagWritten);
+end;
+
+procedure TYAMLWriterImpl.WriteValue(const value : IYAMLValue; tagWritten : boolean);
 begin
   case value.ValueType of
-    TYAMLValueType.vtMapping  : WriteMapping(value.AsMapping);
-    TYAMLValueType.vtSequence : WriteSequence(value.AsSequence);
-    TYAMLValueType.vtSet      : WriteSet(value.AsSet);
+    TYAMLValueType.vtMapping  : WriteMapping(value.AsMapping, tagWritten);
+    TYAMLValueType.vtSequence : WriteSequence(value.AsSequence, tagWritten);
+    TYAMLValueType.vtSet      : WriteSet(value.AsSet, tagWritten);
   else
       WriteScalar(value);
   end;
 end;
 
-procedure TYAMLWriterImpl.WriteMapping(const mapping : IYAMLMapping);
+procedure TYAMLWriterImpl.WriteValueAtColumn(const value : IYAMLValue; column : integer);
+var
+  savedOffset : integer;
+begin
+  // the indent of each level is offset so that this level is at column
+  savedOffset := FIndentOffset;
+  FIndentOffset := column - Integer(FIndentLevel * FOptions.IndentSize);
+  UpdateIndentCache;
+  try
+    WriteValue(value, true);
+  finally
+    FIndentOffset := savedOffset;
+    UpdateIndentCache;
+  end;
+end;
+
+procedure TYAMLWriterImpl.WriteMapping(const mapping : IYAMLMapping; tagWritten : boolean);
 var
   priv : IYAMLMappingPrivate;
-  i : integer;
+  i, keyColumn : integer;
   key : string;
   value : IYAMLValue;
   tag : string;
-  valueStr : string;
+  valueStr, blockText, blockHeader : string;
 begin
   WriteCollectionComments(mapping);
 
   if mapping.Count = 0 then
   begin
     WriteIndent;
+    if not tagWritten then
+      FOut.Write(TagOf(mapping));
     FOut.Write('{}');
     FOut.WriteNewLine;
     if mapping.HasEndComments then
@@ -722,17 +882,14 @@ begin
 
   if ShouldUseFlowStyle(mapping) then
   begin
-    WriteMappingFlow(mapping);
+    WriteFlowLine(mapping, '', not tagWritten);
     Exit;
   end;
 
-
   if not Supports(mapping, IYAMLMappingPrivate, priv) then
-
-
     priv := nil;
 
-
+  keyColumn := Length(FCurrentIndent);
   for i := 0 to mapping.Count - 1 do
   begin
     key := mapping.Keys[i];
@@ -741,81 +898,42 @@ begin
     else
       value := mapping.Values[key];
 
-    if FOptions.EmitTags then
-      tag := GetFormattedTag(value)
-    else
-      tag := '';
-
-
+    tag := TagOf(value);
     key := FormatKey(key);
 
     case value.ValueType of
-      TYAMLValueType.vtSequence :
-      begin
-        if ShouldUseFlowStyle(value) then
-          WriteSequenceFlow(value.AsSequence, key + ': ')
-        else
-        begin
-          WriteIndent;
-          FOut.Write(key);
-          FOut.Write(':');
-          FOut.Write(tag);
-          FOut.WriteNewLine;
-          IncIndent;
-          WriteValue(value);
-          DecIndent;
-        end;
-      end;
-      TYAMLValueType.vtSet :
-      begin
-        if ShouldUseFlowStyle(value) then
-          WriteSequenceFlow(value.AsSet, key + ': ')
-        else
-        begin
-          WriteIndent;
-          FOut.Write(key);
-          FOut.Write(':');
-          FOut.Write(tag);
-          FOut.WriteNewLine;
-          IncIndent;
-          WriteValue(value);
-          DecIndent;
-        end;
-      end;
+      TYAMLValueType.vtSequence,
+      TYAMLValueType.vtSet,
       TYAMLValueType.vtMapping :
       begin
         if ShouldUseFlowStyle(value) then
-          WriteMappingFlow(value.AsMapping, key + ': ')
+          WriteFlowLine(value, key + ': ', true)
         else
         begin
           WriteIndent;
           FOut.Write(key);
           FOut.Write(':');
-          FOut.Write(tag);
+          WriteHeaderTag(tag);
           FOut.WriteNewLine;
           IncIndent;
-          WriteValue(value);
+          WriteValue(value, true);
           DecIndent;
         end;
       end;
-
     else
       begin
         if value.HasComments then
           WriteCommentLines(value.Comments, FCurrentIndent);
-        // Check if we should use block scalar style for multiline strings
-        if ShouldUseBlockScalar(value) then
-        begin
-          WriteBlockScalar(value.AsString, key, tag);
-        end
+        // a multi-line string as a block scalar, its lines one level past the key
+        if TryBlockScalar(value, Integer(FOptions.IndentSize), blockText, blockHeader) then
+          WriteBlockScalar(FCurrentIndent + key + ': ', tag, blockHeader, blockText, value.Comment, keyColumn + Integer(FOptions.IndentSize))
         else
         begin
           valueStr := FormatScalar(value);
           FOut.Write(FCurrentIndent);
           FOut.Write(key);
           FOut.Write(': ');
-          FOut.Write(tag);
-          FOut.Write(valueStr);
+          WriteScalarAt(keyColumn + Length(key) + 2, tag, valueStr, keyColumn + Integer(FOptions.IndentSize));
           if value.Comment <> '' then
           begin
             FOut.Write(' # ');
@@ -830,17 +948,19 @@ begin
     WriteCommentLines(mapping.EndComments, FCurrentIndent);
 end;
 
-procedure TYAMLWriterImpl.WriteSequence(const sequence : IYAMLSequence);
+procedure TYAMLWriterImpl.WriteSequence(const sequence : IYAMLSequence; tagWritten : boolean);
 var
-  i : integer;
+  i, dashColumn : integer;
   item : IYAMLValue;
-  itemStr : string;
+  itemStr, tag, blockText, blockHeader : string;
 begin
   WriteCollectionComments(sequence);
 
   if sequence.Count = 0 then
   begin
     WriteIndent;
+    if not tagWritten then
+      FOut.Write(TagOf(sequence));
     FOut.Write('[]');
     FOut.WriteNewLine;
     if sequence.HasEndComments then
@@ -850,13 +970,15 @@ begin
 
   if ShouldUseFlowStyle(sequence) then
   begin
-    WriteSequenceFlow(sequence);
+    WriteFlowLine(sequence, '', not tagWritten);
     Exit;
   end;
 
+  dashColumn := Length(FCurrentIndent);
   for i := 0 to sequence.Count - 1 do
   begin
     item := sequence[i];
+    tag := TagOf(item);
 
     case item.ValueType of
       TYAMLValueType.vtSequence,
@@ -864,27 +986,41 @@ begin
       begin
         WriteIndent;
         FOut.Write('-');
+        WriteHeaderTag(tag);
         FOut.WriteNewLine;
         IncIndent;
-        WriteValue(item);
+        WriteValue(item, true);
         DecIndent;
       end;
-      TYAMLValueType.vtMapping : WriteSequenceMapping(item.AsMapping);
+      TYAMLValueType.vtMapping :
+        if tag = '' then
+          WriteSequenceMapping(item.AsMapping)
+        else
+        begin
+          // the tag goes after the dash, so the mapping starts on the next line (on the dash
+          // line, the tag would be the first key's)
+          WriteIndent;
+          FOut.Write('-');
+          WriteHeaderTag(tag);
+          FOut.WriteNewLine;
+          IncIndent;
+          WriteValue(item, true);
+          DecIndent;
+        end;
     else
       begin
         if item.HasComments then
           WriteCommentLines(item.Comments, FCurrentIndent);
         // Check if we should use block scalar style for multiline strings
-        if ShouldUseBlockScalar(item) then
-        begin
-          WriteSequenceBlockScalar(item.AsString);
-        end
+        // a multi-line string as a block scalar, its lines one level past the dash
+        if TryBlockScalar(item, Integer(FOptions.IndentSize), blockText, blockHeader) then
+          WriteBlockScalar(FCurrentIndent + '- ', tag, blockHeader, blockText, item.Comment, dashColumn + Integer(FOptions.IndentSize))
         else
         begin
           itemStr := FormatScalar(item);
           FOut.Write(FCurrentIndent);
           FOut.Write('- ');
-          FOut.Write(itemStr);
+          WriteScalarAt(dashColumn + 2, tag, itemStr, dashColumn + 2);
           if item.Comment <> '' then
           begin
             FOut.Write(' # ');
@@ -907,7 +1043,7 @@ begin
     WriteCommentLines(value.Comments, FCurrentIndent);
   formattedValue := FormatScalar(value);
   WriteIndent;
-  FOut.Write(formattedValue);
+  WriteScalarAt(Length(FCurrentIndent), TagOf(value), formattedValue, Length(FCurrentIndent) + Integer(FOptions.IndentSize));
   if value.Comment <> '' then
   begin
     FOut.Write(' # ');
@@ -916,304 +1052,101 @@ begin
   FOut.WriteNewLine;
 end;
 
-procedure TYAMLWriterImpl.WriteMappingFlow(const mapping : IYAMLMapping; const mapKey : string);
-var
-  priv : IYAMLMappingPrivate;
-  i : integer;
-  key : string;
-  value : IYAMLValue;
-  valueStr : string;
+procedure TYAMLWriterImpl.WriteFlowLine(const value : IYAMLValue; const prefix : string; includeTag : boolean);
 begin
   FOut.Write(FCurrentIndent);
-  FOut.Write(mapKey);
-  FOut.WriteChar('{');
-
-  if not Supports(mapping, IYAMLMappingPrivate, priv) then
-
-    priv := nil;
-
-  for i := 0 to mapping.Count - 1 do
-  begin
-    key := mapping.Keys[i];
-    if priv <> nil then
-      value := priv.ValueAt(i)
-    else
-      value := mapping.Values[key];
-
-    if i > 0 then
-      FOut.Write(', ');
-
-    key := FormatKey(key);
-
-    // Handle nested structures properly in flow style
-    case value.ValueType of
-      TYAMLValueType.vtMapping :
-      begin
-        if value.AsMapping.Count = 0 then
-          valueStr := '{}'
-        else
-          valueStr := WriteNestedMappingFlow(value.AsMapping);
-      end;
-    TYAMLValueType.vtSequence :
-      begin
-        if value.AsSequence.Count = 0 then
-          valueStr := '[]'
-        else
-          valueStr := WriteNestedSequenceFlow(value.AsSequence);
-      end;
-    else
-      valueStr := FormatScalar(value);
-    end;
-
-    FOut.Write(key);
-    FOut.Write(': ');
-    FOut.Write(valueStr);
-  end;
-
-  FOut.Write('}');
-  if mapping.Comment <> '' then
+  FOut.Write(prefix);
+  FOut.Write(FlowText(value, false, includeTag));
+  if value.Comment <> '' then
   begin
     FOut.Write(' # ');
-    FOut.Write(mapping.Comment);
+    FOut.Write(value.Comment);
   end;
   FOut.WriteNewLine;
 end;
 
-function TYAMLWriterImpl.WriteNestedMappingFlow(const mapping : IYAMLMapping) : string;
+function TYAMLWriterImpl.FlowText(const value : IYAMLValue; inSequence, includeTag : boolean) : string;
 var
   priv : IYAMLMappingPrivate;
+  mapping : IYAMLMapping;
+  sequence : IYAMLSequence;
+  item : IYAMLValue;
   i : integer;
-  key : string;
-  value : IYAMLValue;
-  valueStr : string;
+  tag, body : string;
   sb : TStringBuilder;
 begin
-  sb := TStringBuilder.Create;
-  try
-    sb.Append('{');
-
-  if not Supports(mapping, IYAMLMappingPrivate, priv) then
-
-    priv := nil;
-
-  for i := 0 to mapping.Count - 1 do
-  begin
-    key := mapping.Keys[i];
-    if priv <> nil then
-      value := priv.ValueAt(i)
-    else
-      value := mapping.Values[key];
-
-    if i > 0 then
-      sb.Append(', ');
-
-    key := FormatKey(key);
-
-    // Recursively handle nested structures
-    case value.ValueType of
-      TYAMLValueType.vtMapping :
-      begin
-        if value.AsMapping.Count = 0 then
-          valueStr := '{}'
-        else
-          valueStr := WriteNestedMappingFlow(value.AsMapping);
+  if includeTag then
+    tag := TagOf(value)
+  else
+    tag := '';
+  case value.ValueType of
+    TYAMLValueType.vtMapping :
+    begin
+      mapping := value.AsMapping;
+      if not Supports(mapping, IYAMLMappingPrivate, priv) then
+        priv := nil;
+      sb := TStringBuilder.Create;
+      try
+        sb.Append('{');
+        for i := 0 to mapping.Count - 1 do
+        begin
+          if priv <> nil then
+            item := priv.ValueAt(i)
+          else
+            item := mapping.Values[mapping.Keys[i]];
+          if i > 0 then
+            sb.Append(', ');
+          sb.Append(FormatKey(mapping.Keys[i]));
+          sb.Append(': ');
+          sb.Append(FlowText(item, false, true));
+        end;
+        sb.Append('}');
+        body := sb.ToString;
+      finally
+        sb.Free;
       end;
-      TYAMLValueType.vtSequence :
-      begin
-        if value.AsSequence.Count = 0 then
-          valueStr := '[]'
-        else
-          valueStr := WriteNestedSequenceFlow(value.AsSequence);
-      end;
-      TYAMLValueType.vtSet :
-      begin
-        if value.AsSet.Count = 0 then
-          valueStr := '[]'
-        else
-          valueStr := WriteNestedSetFlow(value.AsSet);
-      end;
+    end;
+    TYAMLValueType.vtSequence,
+    TYAMLValueType.vtSet :
+    begin
+      // AsSequence rejects sets, but a set is a sequence (IYAMLSet extends IYAMLSequence)
+      if value.ValueType = TYAMLValueType.vtSet then
+        sequence := value.AsSet
       else
-        valueStr := FormatScalar(value);
+        sequence := value.AsSequence;
+      sb := TStringBuilder.Create;
+      try
+        sb.Append('[');
+        for i := 0 to sequence.Count - 1 do
+        begin
+          if i > 0 then
+            sb.Append(', ');
+          sb.Append(FlowText(sequence[i], true, true));
+        end;
+        sb.Append(']');
+        body := sb.ToString;
+      finally
+        sb.Free;
+      end;
     end;
-
-    sb.Append(key + ': ' + valueStr);
+  else
+    body := FormatScalar(value);
+    if (body = '') and inSequence then
+      body := 'null';
   end;
-
-  sb.Append('}');
-  result := sb.ToString;
-  finally
-    sb.Free;
-  end;
-end;
-
-function TYAMLWriterImpl.WriteNestedSequenceFlow(const sequence : IYAMLSequence) : string;
-var
-  i : integer;
-  item : IYAMLValue;
-  itemStr : string;
-  sb : TStringBuilder;
-begin
-  sb := TStringBuilder.Create;
-  try
-    sb.Append('[');
-
-  for i := 0 to sequence.Count - 1 do
-  begin
-    item := sequence[i];
-
-    if i > 0 then
-      sb.Append(', ');
-
-    // Recursively handle nested structures
-    case item.ValueType of
-      TYAMLValueType.vtMapping :
-      begin
-        if item.AsMapping.Count = 0 then
-          itemStr := '{}'
-        else
-          itemStr := WriteNestedMappingFlow(item.AsMapping);
-      end;
-      TYAMLValueType.vtSequence :
-      begin
-        if item.AsSequence.Count = 0 then
-          itemStr := '[]'
-        else
-          itemStr := WriteNestedSequenceFlow(item.AsSequence);
-      end;
-      TYAMLValueType.vtSet :
-      begin
-        if item.AsSet.Count = 0 then
-          itemStr := '[]'
-        else
-          itemStr := WriteNestedSetFlow(item.AsSet);
-      end;
-    else
-        itemStr := FormatScalar(item);
-    end;
-
-    sb.Append(itemStr);
-  end;
-
-  sb.Append(']');
-  result := sb.ToString;
-  finally
-    sb.Free;
-  end;
-end;
-
-function TYAMLWriterImpl.WriteNestedSetFlow(const ASet : IYAMLSet) : string;
-var
-  i : integer;
-  item : IYAMLValue;
-  itemStr : string;
-  sb : TStringBuilder;
-begin
-  sb := TStringBuilder.Create;
-  try
-    sb.Append('[');
-
-  for i := 0 to ASet.Count - 1 do
-  begin
-    item := ASet[i];
-
-    if i > 0 then
-      sb.Append(', ');
-
-    // Recursively handle nested structures
-    case item.ValueType of
-      TYAMLValueType.vtMapping :
-      begin
-        if item.AsMapping.Count = 0 then
-          itemStr := '{}'
-        else
-          itemStr := WriteNestedMappingFlow(item.AsMapping);
-      end;
-      TYAMLValueType.vtSequence :
-      begin
-        if item.AsSequence.Count = 0 then
-          itemStr := '[]'
-        else
-          itemStr := WriteNestedSequenceFlow(item.AsSequence);
-      end;
-      TYAMLValueType.vtSet :
-      begin
-        if item.AsSet.Count = 0 then
-          itemStr := '[]'
-        else
-          itemStr := WriteNestedSetFlow(item.AsSet);
-      end;
-      else
-        itemStr := FormatScalar(item);
-    end;
-
-    sb.Append(itemStr);
-  end;
-
-  sb.Append(']');
-  result := sb.ToString;
-  finally
-    sb.Free;
-  end;
-end;
-
-
-procedure TYAMLWriterImpl.WriteSequenceFlow(const sequence : IYAMLSequence; const key : string = '');
-var
-  i : integer;
-  item : IYAMLValue;
-  itemStr : string;
-begin
-  FOut.Write(FCurrentIndent);
-  FOut.Write(key);
-  FOut.WriteChar('[');
-
-  for i := 0 to sequence.Count - 1 do
-  begin
-    item := sequence[i];
-
-    if i > 0 then
-      FOut.Write(', ');
-
-    // Handle nested structures properly in flow style
-    case item.ValueType of
-      TYAMLValueType.vtMapping :
-      begin
-        if item.AsMapping.Count = 0 then
-          itemStr := '{}'
-        else
-          itemStr := WriteNestedMappingFlow(item.AsMapping);
-      end;
-      TYAMLValueType.vtSequence :
-      begin
-        if item.AsSequence.Count = 0 then
-          itemStr := '[]'
-        else
-          itemStr := WriteNestedSequenceFlow(item.AsSequence);
-      end;
-    else
-      itemStr := FormatScalar(item);
-    end;
-
-    FOut.Write(itemStr);
-  end;
-
-  FOut.Write(']');
-  if sequence.Comment <> '' then
-  begin
-    FOut.Write(' # ');
-    FOut.Write(sequence.Comment);
-  end;
-  FOut.WriteNewLine;
+  if body = '' then
+    result := TrimRight(tag)
+  else
+    result := tag + body;
 end;
 
 procedure TYAMLWriterImpl.WriteSequenceMapping(mapping : IYAMLMapping);
 var
   priv : IYAMLMappingPrivate;
-  i : integer;
-  key : string;
+  i, dashColumn, keyColumn, indentSize, column : integer;
+  key, prefix : string;
   value : IYAMLValue;
-  valueStr : string;
-  firstKey : boolean;
+  valueStr, tag, blockText, blockHeader : string;
 begin
   if mapping.HasComments then
     WriteCommentLines(mapping.Comments, FCurrentIndent);
@@ -1228,9 +1161,15 @@ begin
     Exit;
   end;
 
-  firstKey := True;
   if not Supports(mapping, IYAMLMappingPrivate, priv) then
     priv := nil;
+  // The first key goes on the line of the dash, after '- ', and the others line up with it.
+  // What a key holds goes on the next lines, indented one level from the dash for the first
+  // key and two for the others - or, where that would not be past the keys (when the indent
+  // is less than 3), one level from the keys.
+  dashColumn := Length(FCurrentIndent);
+  keyColumn := dashColumn + 2;
+  indentSize := Integer(FOptions.IndentSize);
   for i := 0 to mapping.Count - 1 do
   begin
     key := mapping.Keys[i];
@@ -1240,152 +1179,80 @@ begin
       value := mapping.Values[key];
 
     key := FormatKey(key);
-
-    if firstKey then
+    tag := TagOf(value);
+    if i = 0 then
     begin
-      // First key-value pair goes on the same line as the dash
-      case value.ValueType of
-        TYAMLValueType.vtSequence :
-        begin
-          if ShouldUseFlowStyle(value) then
-          begin
-            valueStr := WriteNestedSequenceFlow(value.AsSequence);
-            FOut.Write(FCurrentIndent);
-            FOut.Write('- ');
-            FOut.Write(key);
-            FOut.Write(': ');
-            FOut.Write(valueStr);
-            if value.Comment <> '' then
-            begin
-              FOut.Write(' # ');
-              FOut.Write(value.Comment);
-            end;
-            FOut.WriteNewLine;
-          end
-          else
-          begin
-            WriteIndent;
-            FOut.Write('- ');
-            FOut.Write(key);
-            FOut.Write(':');
-            FOut.WriteNewLine;
-            IncIndent;
-            WriteValue(value);
-            DecIndent;
-          end;
-        end;
-        TYAMLValueType.vtMapping :
-        begin
-          WriteIndent;
-          FOut.Write('- ');
-          FOut.Write(key);
-          FOut.Write(':');
-          FOut.WriteNewLine;
-          IncIndent;
-          WriteValue(value);
-          DecIndent;
-        end;
-      else
-        begin
-          if value.HasComments then
-            WriteCommentLines(value.Comments, FCurrentIndent);
-          // Check if we should use block scalar style for multiline strings
-          if ShouldUseBlockScalar(value) then
-          begin
-            WriteSequenceMappingBlockScalar(value.AsString, key, '- ');
-          end
-          else
-          begin
-            valueStr := FormatScalar(value);
-            FOut.Write(FCurrentIndent);
-            FOut.Write('- ');
-            FOut.Write(key);
-            FOut.Write(': ');
-            FOut.Write(valueStr);
-            if value.Comment <> '' then
-            begin
-              FOut.Write(' # ');
-              FOut.Write(value.Comment);
-            end;
-            FOut.WriteNewLine;
-          end;
-        end;
-      end;
-      firstKey := False;
+      prefix := '- ';
+      column := dashColumn + indentSize;
     end
     else
     begin
-      // Subsequent key-value pairs at the same indentation level as the first key
+      prefix := '  ';
+      column := dashColumn + 2 * indentSize;
+    end;
 
-      case value.ValueType of
-        TYAMLValueType.vtSequence :
-        begin
-          if ShouldUseFlowStyle(value) then
-          begin
-            valueStr := WriteNestedSequenceFlow(value.AsSequence);
-            FOut.Write(FCurrentIndent);
-            FOut.Write('  ');
-            FOut.Write(key);
-            FOut.Write(': ');
-            FOut.Write(valueStr);
-            if value.Comment <> '' then
-            begin
-              FOut.Write(' # ');
-              FOut.Write(value.Comment);
-            end;
-            FOut.WriteNewLine;
-          end
-          else
-          begin
-            WriteIndent;
-            FOut.Write('  ');
-            FOut.Write(key);
-            FOut.Write(':');
-            FOut.WriteNewLine;
-            IncIndent;
-            IncIndent; // Extra indent for sequence context
-            WriteValue(value);
-            DecIndent;
-            DecIndent;
-          end;
-        end;
-        TYAMLValueType.vtMapping :
+    case value.ValueType of
+      TYAMLValueType.vtSequence,
+      TYAMLValueType.vtSet :
+      begin
+        if ShouldUseFlowStyle(value) then
+          WriteFlowLine(value, prefix + key + ': ', true)
+        else
         begin
           WriteIndent;
-          FOut.Write('  ');
+          FOut.Write(prefix);
           FOut.Write(key);
           FOut.Write(':');
+          WriteHeaderTag(tag);
           FOut.WriteNewLine;
-          IncIndent;
-          IncIndent; // Extra indent for sequence context
-          WriteValue(value);
-          DecIndent;
-          DecIndent;
+          // a sequence may line up with the key it is the value of
+          if column < keyColumn then
+            column := keyColumn;
+          WriteValueAtColumn(value, column);
         end;
-      else
+      end;
+      TYAMLValueType.vtMapping :
+      begin
+        WriteIndent;
+        FOut.Write(prefix);
+        FOut.Write(key);
+        FOut.Write(':');
+        WriteHeaderTag(tag);
+        FOut.WriteNewLine;
+        // a mapping must be past the key, or its keys would be this mapping's
+        if column <= keyColumn then
+          column := keyColumn + indentSize;
+        WriteValueAtColumn(value, column);
+      end;
+    else
+      begin
+        if value.HasComments then
         begin
-          if value.HasComments then
-            WriteCommentLines(value.Comments, FCurrentIndent + '  ');
-          // Check if we should use block scalar style for multiline strings
-          if ShouldUseBlockScalar(value) then
-          begin
-            WriteSequenceMappingBlockScalar(value.AsString, key, '  ');
-          end
+          if i = 0 then
+            WriteCommentLines(value.Comments, FCurrentIndent)
           else
+            WriteCommentLines(value.Comments, FCurrentIndent + '  ');
+        end;
+        // Check if we should use block scalar style for multiline strings
+        // the lines of a block scalar must be past the key too
+        if column <= keyColumn then
+          column := keyColumn + indentSize;
+        if TryBlockScalar(value, column - keyColumn, blockText, blockHeader) then
+          WriteBlockScalar(FCurrentIndent + prefix + key + ': ', tag, blockHeader, blockText, value.Comment, column)
+        else
+        begin
+          valueStr := FormatScalar(value);
+          FOut.Write(FCurrentIndent);
+          FOut.Write(prefix);
+          FOut.Write(key);
+          FOut.Write(': ');
+          WriteScalarAt(keyColumn + Length(key) + 2, tag, valueStr, keyColumn + indentSize);
+          if value.Comment <> '' then
           begin
-            valueStr := FormatScalar(value);
-            FOut.Write(FCurrentIndent);
-            FOut.Write('  ');
-            FOut.Write(key);
-            FOut.Write(': ');
-            FOut.Write(valueStr);
-            if value.Comment <> '' then
-            begin
-              FOut.Write(' # ');
-              FOut.Write(value.Comment);
-            end;
-            FOut.WriteNewLine;
+            FOut.Write(' # ');
+            FOut.Write(value.Comment);
           end;
+          FOut.WriteNewLine;
         end;
       end;
     end;
@@ -1394,59 +1261,62 @@ begin
     WriteCommentLines(mapping.EndComments, FCurrentIndent + '  ');
 end;
 
-procedure TYAMLWriterImpl.WriteSet(const ASet : IYAMLSet);
+procedure TYAMLWriterImpl.WriteSet(const ASet : IYAMLSet; tagWritten : boolean);
 var
   i : integer;
   item : IYAMLValue;
-  itemStr : string;
+  itemStr, tag : string;
 begin
   WriteCollectionComments(ASet);
 
   if ASet.Count = 0 then
   begin
     WriteIndent;
+    if not tagWritten then
+      FOut.Write(TagOf(ASet));
     FOut.Write('[]');
     FOut.WriteNewLine;
     Exit;
   end;
 
-//  UseFlow := ShouldUseFlowStyle(sequence);
   if ShouldUseFlowStyle(ASet) then
   begin
-    WriteSequenceFlow(ASet);
+    WriteFlowLine(ASet, '', not tagWritten);
     Exit;
   end;
 
+  // a block set is a mapping of '? ' keys with no values
   for i := 0 to ASet.Count - 1 do
   begin
     item := ASet[i];
+    tag := TagOf(item);
 
     case item.ValueType of
-      TYAMLValueType.vtSequence :
+      TYAMLValueType.vtSequence,
+      TYAMLValueType.vtSet,
+      TYAMLValueType.vtMapping :
       begin
         WriteIndent;
         FOut.Write('?');
+        WriteHeaderTag(tag);
         FOut.WriteNewLine;
         IncIndent;
-        WriteValue(item);
+        WriteValue(item, true);
         DecIndent;
       end;
-      TYAMLValueType.vtSet :
-      begin
-        WriteIndent;
-        FOut.Write('?');
-        FOut.WriteNewLine;
-        IncIndent;
-        WriteValue(item);
-        DecIndent;
-      end;
-      TYAMLValueType.vtMapping : WriteSequenceMapping(item.AsMapping);
     else
       begin
         itemStr := FormatScalar(item);
         FOut.Write(FCurrentIndent);
         FOut.Write('? ');
-        FOut.Write(itemStr);
+        // a key, so never folded
+        if itemStr = '' then
+          FOut.Write(TrimRight(tag))
+        else
+        begin
+          FOut.Write(tag);
+          FOut.Write(itemStr);
+        end;
         if item.Comment <> '' then
         begin
           FOut.Write(' # ');
@@ -1465,7 +1335,7 @@ begin
   try
     if FOptions.EmitDocumentMarkers then
       FOut.WriteLine('---');
-    WriteValue(value);
+    WriteRoot(value);
     if FOptions.EmitDocumentMarkers then
       FOut.WriteLine('...');
     result := FOut.ExtractString;
@@ -1498,7 +1368,7 @@ begin
     if FOptions.EmitDocumentMarkers or FOptions.EmitTagDirectives or FOptions.EmitYAMLDirective then
       FOut.WriteLine('---');
 
-    WriteValue(doc.Root);
+    WriteRoot(doc.Root);
     if doc.HasEndComments then
       WriteCommentLines(doc.EndComments, '');
     if FOptions.EmitDocumentMarkers then
@@ -1548,7 +1418,7 @@ begin
   try
     if ownsWriter and FOptions.EmitDocumentMarkers then
       FOut.WriteLine('---');
-    WriteValue(value);
+    WriteRoot(value);
     if ownsWriter and FOptions.EmitDocumentMarkers then
       FOut.WriteLine('...');
   finally

@@ -51,12 +51,14 @@ type
     bssFolded     // Use folded style (>) - folds line breaks into spaces
   );
 
-  // YAML block scalar chomping indicator options
+  // YAML block scalar chomping indicator options. Deprecated: the writer chooses the indicator
+  // from each string - see IYAMLEmitOptions.BlockChompingIndicator. (A property cannot be
+  // marked deprecated, so the type is: code that sets the property names it, and is warned.)
   TYAMLBlockChompingIndicator = (
-    bciClip,      // Default - single trailing newline preserved (no indicator)
+    bciClip,      // single trailing newline preserved (no indicator)
     bciStrip,     // All trailing newlines removed (-)
     bciKeep       // All trailing newlines preserved (+)
-  );
+  ) deprecated 'The YAML writer chooses the chomping indicator from each string';
 
   TYAMLDuplicateKeyBehavior = (
     dkOverwrite,  // the value will overwrite the existing one.
@@ -567,8 +569,10 @@ type
     procedure SetEscapeNonASCII(const value : boolean);
     function GetBlockScalarStyle : TYAMLBlockScalarStyle;
     procedure SetBlockScalarStyle(value : TYAMLBlockScalarStyle);
-    function GetBlockChompingIndicator : TYAMLBlockChompingIndicator;
-    procedure SetBlockChompingIndicator(value : TYAMLBlockChompingIndicator);
+    {$WARN SYMBOL_DEPRECATED OFF}
+    function GetBlockChompingIndicator : TYAMLBlockChompingIndicator; deprecated 'The YAML writer chooses the chomping indicator from each string';
+    procedure SetBlockChompingIndicator(value : TYAMLBlockChompingIndicator); deprecated 'The YAML writer chooses the chomping indicator from each string';
+    {$WARN SYMBOL_DEPRECATED DEFAULT}
     function GetJSON5UnquotedKeys : boolean;
     procedure SetJSON5UnquotedKeys(value : boolean);
     function GetJSON5SingleQuotes : boolean;
@@ -585,8 +589,19 @@ type
     property Format : TYAMLOutputFormat read GetFormat write SetFormat;
     property IndentSize : UInt32 read GetIndentSize write SetIndentSize;
 
-    //not currently implemented
+    /// <summary>
+    ///  YAML block output only. When more than 0, a plain or quoted string that would make
+    ///  its line longer than this is folded onto more lines at single spaces, which the
+    ///  parser reads back as the same text. Keys, flow output and text with no single space
+    ///  to break at stay on one line, so a line can still be longer. 0 (the default) never
+    ///  folds.
+    /// </summary>
     property MaxLineLength : UInt32 read GetMaxLineLength write SetMaxLineLength;
+
+    /// <summary>
+    ///  Writes the encoding's byte order mark (the UTF-8 BOM by default) at the start of a
+    ///  stream or file. Off by default. Strings have no byte order mark.
+    /// </summary>
     property WriteByteOrderMark : boolean read GetWriteBOM write SetWriteBOM;
 
     // YAML ONLY
@@ -597,8 +612,23 @@ type
 
     property EmitTags : boolean read GetEmitTags write SetEmitTags;
     property EmitExplicitNull : boolean read GetEmitExplicitNull write SetEmitExplicitNull;
+    /// <summary>
+    ///  Writes strings that have line breaks as literal (|) or folded (>) block scalars rather
+    ///  than as double quoted strings with \n escapes. Off (bssNone) by default. Each string
+    ///  reads back as the same text, with one exception: a block scalar holds no carriage
+    ///  return, so CR LF line breaks read back as LF. A string with any other control
+    ///  character, a CR on its own included, is written double quoted.
+    /// </summary>
     property BlockScalarStyle : TYAMLBlockScalarStyle read GetBlockScalarStyle write SetBlockScalarStyle;
+
+    /// <summary>
+    ///  Deprecated, and has no effect: the YAML writer gives each block scalar the chomping
+    ///  indicator its final line breaks need (- for none, none for one, + for more), as no
+    ///  other indicator reads back as the same text.
+    /// </summary>
+    {$WARN SYMBOL_DEPRECATED OFF}
     property BlockChompingIndicator : TYAMLBlockChompingIndicator read GetBlockChompingIndicator write SetBlockChompingIndicator;
+    {$WARN SYMBOL_DEPRECATED DEFAULT}
 
     //JSON only
     property PrettyPrint : boolean read GetPrettyPrint write SetPrettyPrint;
@@ -1213,8 +1243,8 @@ begin
   if Length(docs) = 0 then
     Exit;
 
-  // Use the first document's options as default
-  writerOptions := docs[0].Options;
+  // Use the first document's options as default. A copy: they are the caller's options
+  writerOptions := docs[0].Options.Clone;
   //if more than 1 doc we must write markers
   if Length(docs) > 1 then
     writerOptions.EmitDocumentMarkers := true;
@@ -1296,34 +1326,25 @@ end;
 
 class procedure TYAML.WriteToJSONStream(const docs: TArray<IYAMLDocument>; const stream: TStream);
 var
-  writerOptions : IYAMLEmitOptions;
-  len : integer;
-  i: Integer;
-  writer : TJSONWriterImpl;
-  jsonStr : string;
+  text : string;
+  bytes, preamble : TBytes;
+  encoding : TEncoding;
 begin
-  len := Length(docs);
-  if len = 0 then
+  if Length(docs) = 0 then
     Exit;
 
-  // Use the first document's options to determine encoding
-  writerOptions := docs[0].Options;
-  writer := TJSONWriterImpl.Create(writerOptions);
-  try
-    jsonStr := '[';
-    for i := 0 to len - 1 do
-    begin
-      if i > 0 then
-        jsonStr := jsonStr + ',';
-      jsonStr := jsonStr + writer.WriteToString(docs[i]);
-    end;
-    jsonStr := jsonStr + ']';
-    
-    // Write the complete JSON array to stream
-    stream.WriteBuffer(writerOptions.Encoding.GetBytes(jsonStr)[0], Length(writerOptions.Encoding.GetBytes(jsonStr)));
-  finally
-    writer.Free;
+  // the documents as one JSON array, in the first document's encoding
+  text := WriteToJSONString(docs);
+  encoding := docs[0].Options.Encoding;
+  if docs[0].Options.WriteByteOrderMark then
+  begin
+    preamble := encoding.GetPreamble;
+    if Length(preamble) > 0 then
+      stream.WriteBuffer(preamble[0], Length(preamble));
   end;
+  bytes := encoding.GetBytes(text);
+  if Length(bytes) > 0 then
+    stream.WriteBuffer(bytes[0], Length(bytes));
 end;
 
 class procedure TYAML.WriteToJSONStream(const doc: IYAMLDocument; const stream: TStream);
@@ -1504,7 +1525,7 @@ end;
 class procedure TYAML.WriteToJSON5Stream(const docs : TArray<IYAMLDocument>; const stream : TStream);
 var
   text : string;
-  bytes : TBytes;
+  bytes, preamble : TBytes;
   encoding : TEncoding;
 begin
   if Length(docs) = 0 then
@@ -1514,8 +1535,9 @@ begin
   bytes := encoding.GetBytes(text);
   if docs[0].Options.WriteByteOrderMark then
   begin
-    if Length(encoding.GetPreamble) > 0 then
-      stream.WriteBuffer(encoding.GetPreamble[0], Length(encoding.GetPreamble));
+    preamble := encoding.GetPreamble;
+    if Length(preamble) > 0 then
+      stream.WriteBuffer(preamble[0], Length(preamble));
   end;
   if Length(bytes) > 0 then
     stream.WriteBuffer(bytes[0], Length(bytes));
@@ -1561,8 +1583,9 @@ begin
   if len = 0 then
     Exit;
 
-  // Use the first document's options to determine encoding
-  writerOptions := docs[0].Options;
+  // Use the first document's options to determine encoding. A copy: they are the caller's
+  // options
+  writerOptions := docs[0].Options.Clone;
   if len > 1 then
     writerOptions.EmitDocumentMarkers := true;
   writer := TYAMLWriterImpl.Create(writerOptions);
