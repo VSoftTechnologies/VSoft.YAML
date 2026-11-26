@@ -52,7 +52,9 @@ uses
   VSoft.YAML.Tests.JSONSuites in 'VSoft.YAML.Tests.JSONSuites.pas',
   VSoft.YAML.Tests.YAMLSuite in 'VSoft.YAML.Tests.YAMLSuite.pas',
   VSoft.YAML.Tests.YAML12 in 'VSoft.YAML.Tests.YAML12.pas',
-  VSoft.YAML.Tests.Nodes in 'VSoft.YAML.Tests.Nodes.pas';
+  VSoft.YAML.Tests.Nodes in 'VSoft.YAML.Tests.Nodes.pas',
+  VSoft.YAML.Tests.Editing in 'VSoft.YAML.Tests.Editing.pas',
+  VSoft.YAML.Tests.PathMatches in 'VSoft.YAML.Tests.PathMatches.pas';
 
 { keep comment here to protect the following conditional from being removed by the IDE when adding a unit }
 {$IFNDEF TESTINSIGHT}

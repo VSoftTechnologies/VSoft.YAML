@@ -166,6 +166,15 @@ type
     procedure ClearTag;
 
     /// <summary>
+    ///  A deep copy of the value that no collection holds (its Parent is nil), so it can be
+    ///  added to any collection. The copy has the same value type, text (so numbers keep the
+    ///  text they were written with), tag, Comment, Comments and EndComments, and copies of
+    ///  all the items. A node that the value holds more than once - an alias - is copied each
+    ///  time, so the copies are independent.
+    /// </summary>
+    function Clone : IYAMLValue;
+
+    /// <summary>
     ///  The comment on the same line as the value, after it (and after its comma in JSON5).
     /// </summary>
     property Comment : string read GetComment write SetComment;
@@ -186,6 +195,27 @@ type
     property Tag : string read GetTag;
     property TagInfo : IYAMLTagInfo read GetTagInfo;
     property Values[const Key : string] : IYAMLValue read GetValue;
+  end;
+
+  /// <summary>
+  ///  A JSONPath match and where it is in the tree the query ran on. The location comes from
+  ///  the path the query took, so it is right for a node that an alias shares, where the
+  ///  node's own Parent names only one of the places it is in.
+  /// </summary>
+  TYAMLPathMatch = record
+    /// <summary> The matched node - the node in the tree, not a copy. </summary>
+    Value : IYAMLValue;
+    /// <summary> The mapping or sequence the match is in; nil for the root. </summary>
+    Parent : IYAMLCollection;
+    /// <summary> The key of a mapping member; '' for a sequence item and the root. </summary>
+    Key : string;
+    /// <summary> The index of a sequence item; -1 for a mapping member and the root. </summary>
+    Index : integer;
+    /// <summary>
+    ///  The RFC 9535 normalized path of the match, such as $['store']['book'][0] - names in
+    ///  single quotes with ' and \ escaped, indexes counted from 0.
+    /// </summary>
+    Path : string;
   end;
 
   IYAMLCollection = interface(IYAMLValue)
@@ -214,6 +244,15 @@ type
     /// <returns>True if a match is found or False otherwise</returns>
     /// <exception cref="EYAMLPathError">if AExpression is invalid</exception>
     function QuerySingle(const AExpression : string; out AMatch : IYAMLValue) : boolean;
+
+    /// <summary>
+    /// Executes a JSONPath expression on a collection and returns each match with where it
+    /// is: the collection it is in, its key or index and its normalized path.
+    /// </summary>
+    /// <param name="AExpression">the JSONPath expression to run</param>
+    /// <returns>The matches, in the order Query returns them</returns>
+    /// <exception cref="EYAMLPathError">if AExpression is invalid</exception>
+    function QueryMatches(const AExpression : string) : TArray<TYAMLPathMatch>;
 
     /// <summary>
     ///  Comments after the last item, before the closing bracket - or inside an empty
@@ -305,6 +344,26 @@ type
     function AddOrSetSet(const key : string; const tag : string = '') : IYAMLSet;overload;
     function AddOrSetSet(const key : string; const tagInfo : IYAMLTagInfo) : IYAMLSet;overload;
 
+    /// <summary>
+    ///  Puts a node of any kind under key, as the other AddOrSetValue overloads do: a new key
+    ///  goes last, and the value of an existing key is replaced where it is. The mapping
+    ///  becomes the node's Parent.
+    /// </summary>
+    /// <exception cref="EArgumentNilException">if value is nil</exception>
+    /// <exception cref="EArgumentException">
+    ///  if value is already in a collection (its Parent is set) - Remove or Delete it from
+    ///  there first, or add value.Clone - or if value is this mapping or a collection this
+    ///  mapping is in
+    /// </exception>
+    procedure AddOrSetValue(const key : string; const value : IYAMLValue); overload;
+
+    /// <summary>
+    ///  Removes key and its value. The other keys keep their order. The value forgets this
+    ///  mapping as its Parent, so it can be added to another collection.
+    /// </summary>
+    /// <returns>True if the key was there, False if it was not</returns>
+    function Remove(const key : string) : boolean;
+
     function ContainsKey(const key : string) : boolean;
     function Contains(const key : string) : boolean;//for JSONDataObjects api compat
 
@@ -365,6 +424,16 @@ type
     // JSONDataObjects api
 
 
+    /// <summary>
+    ///  Adds a node of any kind at the end. The sequence becomes the node's Parent. A set does
+    ///  not add a value it already has.
+    /// </summary>
+    /// <exception cref="EArgumentNilException">if value is nil</exception>
+    /// <exception cref="EArgumentException">
+    ///  if value is already in a collection (its Parent is set) - Remove or Delete it from
+    ///  there first, or add value.Clone - or if value is this sequence or a collection this
+    ///  sequence is in
+    /// </exception>
     procedure AddValue(const value : IYAMLValue);overload;
 
     function AddValue(const value : boolean; const tag : string = '') : IYAMLValue; overload;
@@ -412,6 +481,34 @@ type
 
     function AddSet(const tag : string = '') : IYAMLSet;overload;
     function AddSet(const tagInfo : IYAMLTagInfo) : IYAMLSet;overload;
+
+    /// <summary>
+    ///  Removes the item at index; the items after it move down one. The item forgets this
+    ///  sequence as its Parent, so it can be added to another collection.
+    /// </summary>
+    /// <exception cref="EArgumentOutOfRangeException">if index is not 0..Count - 1</exception>
+    procedure Delete(index : integer);
+
+    /// <summary>
+    ///  Inserts a node of any kind at index; index = Count adds it at the end. The sequence
+    ///  becomes the node's Parent. A set does not insert a value it already has.
+    /// </summary>
+    /// <exception cref="EArgumentOutOfRangeException">if index is not 0..Count</exception>
+    /// <exception cref="EArgumentNilException">if value is nil</exception>
+    /// <exception cref="EArgumentException">as for AddValue(IYAMLValue)</exception>
+    procedure InsertValue(index : integer; const value : IYAMLValue); overload;
+
+    // Insert a new value at index (0..Count, Count adds at the end), as AddValue adds one at
+    // the end; out of range raises EArgumentOutOfRangeException.
+    function InsertValue(index : integer; const value : string; const tag : string = '') : IYAMLValue; overload;
+    function InsertValue(index : integer; const value : Int64; const tag : string = '') : IYAMLValue; overload;
+    function InsertValue(index : integer; const value : Double; const tag : string = '') : IYAMLValue; overload;
+    function InsertValue(index : integer; const value : Boolean; const tag : string = '') : IYAMLValue; overload;
+    function InsertNull(index : integer; const tag : string = '') : IYAMLValue;
+    // a number from its text - see IYAMLMapping.AddOrSetNumber
+    function InsertNumber(index : integer; const value : string) : IYAMLValue;
+    function InsertMapping(index : integer; const tag : string = '') : IYAMLMapping;
+    function InsertSequence(index : integer; const tag : string = '') : IYAMLSequence;
 
     property Count : integer read GetCount;
     property Items[Index : integer] : IYAMLValue read GetItem;default;
@@ -602,6 +699,13 @@ type
     /// <returns>True if a match is found or False otherwise</returns>
     /// <exception cref="EYAMLPathError">if AExpression is invalid</exception>
     function QuerySingle(const AExpression : string; out AMatch : IYAMLValue) : boolean;
+
+    /// <summary>
+    /// Executes a JSONPath expression on a document and returns each match with where it
+    /// is - see IYAMLCollection.QueryMatches.
+    /// </summary>
+    /// <exception cref="EYAMLPathError">if AExpression is invalid</exception>
+    function QueryMatches(const AExpression : string) : TArray<TYAMLPathMatch>;
 
 
     property IsMapping : boolean read GetIsMapping;

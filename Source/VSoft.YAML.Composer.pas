@@ -68,6 +68,10 @@ type
     procedure TakeSameLineComment(const value : IYAMLValue; line : integer);
 
     function NewNull(const parent : IYAMLValue) : IYAMLValue;inline;
+    // A sequence, or a set for the !!set tag. The parse methods add items through the object
+    // (AddItem) rather than IYAMLSequence.AddValue, which takes only a node that is in no
+    // collection: an alias's node stays in the collection it was parsed in.
+    function NewSequence(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo) : TYAMLSequence;
     function IsSetTag(const tagInfo : IYAMLTagInfo) : boolean;
     function KeyText(const key : IYAMLValue) : string;
     procedure AddEntry(const mapping : IYAMLMapping; const mappingPriv : IYAMLMappingPrivate; const text : string;
@@ -535,6 +539,14 @@ begin
   result := TYAMLValue.Create(parent, TYAMLValueType.vtNull, '', '');
 end;
 
+function TYAMLComposer.NewSequence(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo) : TYAMLSequence;
+begin
+  if IsSetTag(tagInfo) then
+    result := TYAMLSet.Create(parent, tagInfo)
+  else
+    result := TYAMLSequence.Create(parent, tagInfo);
+end;
+
 function TYAMLComposer.IsSetTag(const tagInfo : IYAMLTagInfo) : boolean;
 begin
   result := (tagInfo <> nil) and (tagInfo.ResolvedTag = cCoreTagPrefix + 'set');
@@ -809,14 +821,13 @@ end;
 function TYAMLComposer.ParseBlockSequence(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 var
   tok : PYAMLScanToken;
+  sequenceObj : TYAMLSequence; // AddItem adds an alias's node as it is - see NewSequence
   sequence : IYAMLSequence;
   item : IYAMLValue;
 begin
   tok := FScanner.Peek;
-  if IsSetTag(tagInfo) then
-    sequence := TYAMLSet.Create(parent, tagInfo)
-  else
-    sequence := TYAMLSequence.Create(parent, tagInfo);
+  sequenceObj := NewSequence(parent, tagInfo);
+  sequence := sequenceObj;
   result := sequence;
   TakeLeadingComments(sequence, tok^.Index);
   FScanner.Skip;
@@ -832,7 +843,7 @@ begin
         item := NewNull(sequence)
       else
         item := ParseNode(sequence, true, false);
-      sequence.AddValue(item);
+      sequenceObj.AddItem(item);
     end
     else if tok^.Kind = TYAMLScanTokenKind.BlockEnd then
     begin
@@ -849,14 +860,13 @@ end;
 function TYAMLComposer.ParseIndentlessSequence(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 var
   tok : PYAMLScanToken;
+  sequenceObj : TYAMLSequence;
   sequence : IYAMLSequence;
   item : IYAMLValue;
 begin
   tok := FScanner.Peek;
-  if IsSetTag(tagInfo) then
-    sequence := TYAMLSet.Create(parent, tagInfo)
-  else
-    sequence := TYAMLSequence.Create(parent, tagInfo);
+  sequenceObj := NewSequence(parent, tagInfo);
+  sequence := sequenceObj;
   result := sequence;
   TakeLeadingComments(sequence, tok^.Index);
   EnterCollection;
@@ -873,7 +883,7 @@ begin
     else
       item := ParseNode(sequence, true, false);
     end;
-    sequence.AddValue(item);
+    sequenceObj.AddItem(item);
   end;
   Dec(FDepth);
 end;
@@ -883,6 +893,7 @@ var
   tok : PYAMLScanToken;
   mapping : IYAMLMapping;
   mappingPriv : IYAMLMappingPrivate; // obtained once; a per-key 'as' cast is a QueryInterface
+  setObj : TYAMLSet; // AddItem adds an alias's node as it is
   aSet : IYAMLSet;
   key, value : IYAMLValue;
   text : string;
@@ -895,9 +906,11 @@ begin
   // YAML 1.1 style: a mapping of '? ' keys without values is read as a set
   setCandidate := FLenient and (tagInfo = nil);
   keys := nil;
+  setObj := nil;
   if isSet then
   begin
-    aSet := TYAMLSet.Create(parent, tagInfo);
+    setObj := TYAMLSet.Create(parent, tagInfo);
+    aSet := setObj;
     result := aSet;
     TakeLeadingComments(aSet, tok^.Index);
   end
@@ -962,7 +975,7 @@ begin
       begin
         if key = nil then
           key := NewNull(aSet);
-        aSet.AddValue(key);
+        setObj.AddItem(key);
       end
       else
       begin
@@ -983,7 +996,8 @@ begin
 
     if setCandidate and (keys <> nil) and (keys.Count > 0) then
     begin
-      aSet := TYAMLSet.Create(parent, '');
+      setObj := TYAMLSet.Create(parent, '');
+      aSet := setObj;
       for i := 0 to keys.Count - 1 do
       begin
         key := keys[i];
@@ -991,7 +1005,7 @@ begin
           key := NewNull(aSet)
         else
           YAMLSetParent(key, aSet);
-        aSet.AddValue(key);
+        setObj.AddItem(key);
       end;
       if mapping.HasComments then
         aSet.Comments := mapping.Comments;
@@ -1053,16 +1067,15 @@ end;
 function TYAMLComposer.ParseFlowSequence(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 var
   tok : PYAMLScanToken;
+  sequenceObj : TYAMLSequence;
   sequence : IYAMLSequence;
   item : IYAMLValue;
   first : boolean;
   endLine : integer;
 begin
   tok := FScanner.Peek;
-  if IsSetTag(tagInfo) then
-    sequence := TYAMLSet.Create(parent, tagInfo)
-  else
-    sequence := TYAMLSequence.Create(parent, tagInfo);
+  sequenceObj := NewSequence(parent, tagInfo);
+  sequence := sequenceObj;
   result := sequence;
   TakeLeadingComments(sequence, tok^.Index);
   FScanner.Skip;
@@ -1087,7 +1100,7 @@ begin
       item := ParseFlowPair(sequence)
     else
       item := ParseNode(sequence, false, false);
-    sequence.AddValue(item);
+    sequenceObj.AddItem(item);
     first := false;
   end;
   endLine := tok^.Line;
@@ -1102,6 +1115,7 @@ var
   tok : PYAMLScanToken;
   mapping : IYAMLMapping;
   mappingPriv : IYAMLMappingPrivate;
+  setObj : TYAMLSet; // AddItem adds an alias's node as it is
   aSet : IYAMLSet;
   key, value : IYAMLValue;
   text : string;
@@ -1110,9 +1124,11 @@ var
 begin
   tok := FScanner.Peek;
   isSet := IsSetTag(tagInfo);
+  setObj := nil;
   if isSet then
   begin
-    aSet := TYAMLSet.Create(parent, tagInfo);
+    setObj := TYAMLSet.Create(parent, tagInfo);
+    aSet := setObj;
     result := aSet;
     TakeLeadingComments(aSet, tok^.Index);
   end
@@ -1178,7 +1194,7 @@ begin
     begin
       if key = nil then
         key := NewNull(aSet);
-      aSet.AddValue(key);
+      setObj.AddItem(key);
     end
     else
       AddEntry(mapping, mappingPriv, text, value, isMergeKey, keyLine, keyColumn);

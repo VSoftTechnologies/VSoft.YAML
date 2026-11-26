@@ -1026,12 +1026,16 @@ end;
 
 function TJSONParserImpl.ParseArray(const parent : IYAMLValue) : IYAMLValue;
 var
+  sequenceObj : TYAMLSequence;
   sequence : IYAMLSequence;
   item : IYAMLValue;
   ch : Char;
   endLine : integer;
 begin
-  sequence := TYAMLSequence.Create(parent, '');
+  // items go in through the object's AddItem: they are made with the sequence as their
+  // parent already, which IYAMLSequence.AddValue would refuse
+  sequenceObj := TYAMLSequence.Create(parent, '');
+  sequence := sequenceObj;
   result := sequence;
   if FComments <> nil then
     TakeLeadingComments(result);
@@ -1046,7 +1050,7 @@ begin
       if ch = ',' then
         RaiseError('Missing array element - a value was expected before ","');
       item := ParseValue(result);
-      sequence.AddValue(item);
+      sequenceObj.AddItem(item);
       endLine := FLine;
       SkipWhitespace;
       if FComments <> nil then

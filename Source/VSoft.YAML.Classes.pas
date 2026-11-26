@@ -33,8 +33,13 @@ type
     function GetItem(index : integer) : IYAMLValue;inline;
     procedure SetItem(index : integer; const value : IYAMLValue);inline;
     procedure RaiseOutOfRange;
+    procedure Grow;
   public
     procedure Add(const value : IYAMLValue);
+    // puts value at index (0..Count); the items from index on move up one
+    procedure Insert(index : integer; const value : IYAMLValue);
+    // removes the item at index; the items after it move down one
+    procedure Delete(index : integer);
     // sets item index to value; the value it held forgets owner as its parent
     procedure Replace(index : integer; const value : IYAMLValue; owner : TObject);
     procedure Clear;
@@ -132,7 +137,16 @@ type
     procedure SetTagInfo(const tagInfo : IYAMLTagInfo);virtual;
     procedure ClearTag;virtual;
 
+    function Clone : IYAMLValue;
+    // copies the tag and the comments to target, which has none of its own yet
+    procedure CopyExtraTo(target : TYAMLValue);
+    // checks that value can go into this collection: it must not be nil, must not be in a
+    // collection already, and must not be this collection or one it is in
+    procedure CheckDetached(const value : IYAMLValue);
+
   public
+    // a deep copy of this node with parent as its Parent - Clone gives nil
+    function CloneNode(const parent : IYAMLValue) : IYAMLValue;virtual;
     constructor Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string = ''; const tag : string = ''); overload;
     constructor Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string; const tagInfo : IYAMLTagInfo); overload;
     constructor CreateNull;
@@ -151,6 +165,7 @@ type
     procedure Clear;virtual;abstract;
     function Query(const AExpression : string) : IYAMLSequence;
     function QuerySingle(const AExpression : string; out AMatch : IYAMLValue) : boolean;
+    function QueryMatches(const AExpression : string) : TArray<TYAMLPathMatch>;
 
   public
     constructor Create(const parent : IYAMLValue; valueType : TYAMLValueType; const rawValue : string = ''; const tag : string = ''); overload;
@@ -196,7 +211,7 @@ type
 
 
 
-    procedure AddValue(const value : IYAMLValue);overload;virtual;
+    procedure AddValue(const value : IYAMLValue);overload;
 
     // Tag-aware value creation methods
     function AddValue(const value : boolean; const tag : string = '') : IYAMLValue; overload;
@@ -230,6 +245,19 @@ type
     function AddSet(const tag : string = '') : IYAMLSet;overload;
     function AddSet(const tagInfo : IYAMLTagInfo) : IYAMLSet;overload;
 
+    procedure Delete(index : integer);virtual;
+    procedure InsertValue(index : integer; const value : IYAMLValue); overload;
+    function InsertValue(index : integer; const value : string; const tag : string = '') : IYAMLValue; overload;
+    function InsertValue(index : integer; const value : Int64; const tag : string = '') : IYAMLValue; overload;
+    function InsertValue(index : integer; const value : Double; const tag : string = '') : IYAMLValue; overload;
+    function InsertValue(index : integer; const value : Boolean; const tag : string = '') : IYAMLValue; overload;
+    function InsertNull(index : integer; const tag : string = '') : IYAMLValue;
+    function InsertNumber(index : integer; const value : string) : IYAMLValue;
+    function InsertMapping(index : integer; const tag : string = '') : IYAMLMapping;
+    function InsertSequence(index : integer; const tag : string = '') : IYAMLSequence;
+    // raises EArgumentOutOfRangeException unless index is 0..Count
+    procedure CheckInsertIndex(index : integer);
+
     procedure Clear;override;
 
   public
@@ -237,7 +265,18 @@ type
     constructor Create(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo);overload;virtual;
     destructor Destroy; override;
 
+    function CloneNode(const parent : IYAMLValue) : IYAMLValue;override;
+
+    // For the parsers and the value classes: adds value at the end as it is, without the
+    // checks AddValue makes and without changing its Parent - an alias adds the node its
+    // anchor names, which stays in the collection it was parsed in. False when a set already
+    // has the value, which is then not added.
+    function AddItem(const value : IYAMLValue) : boolean;virtual;
+    // as AddItem, at index (0..Count)
+    function InsertItem(index : integer; const value : IYAMLValue) : boolean;virtual;
   end;
+
+  TYAMLSequenceClass = class of TYAMLSequence;
 
 
   TYAMLSet = class(TYAMLSequence, IYAMLSet)
@@ -245,18 +284,25 @@ type
     FValues : TStringList; // For fast duplicate checking using string representations
   protected
     class function GetNodeValueType : TYAMLValueType;override;
-    procedure AddValue(const value : IYAMLValue);override;
-     procedure Clear;override;
+    procedure Delete(index : integer);override;
+    procedure Clear;override;
 
   public
     constructor Create(const parent : IYAMLValue; const tag : string);override;
     constructor Create(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo);override;
     destructor Destroy; override;
 
+    function CloneNode(const parent : IYAMLValue) : IYAMLValue;override;
+    function AddItem(const value : IYAMLValue) : boolean;override;
+    function InsertItem(index : integer; const value : IYAMLValue) : boolean;override;
   end;
 
   IYAMLMappingPrivate = interface
   ['{F14352DD-0C83-4BDE-988B-C007D0FE93AC}']
+    // For the parsers: puts value under key as it is, without the checks the public
+    // IYAMLMapping.AddOrSetValue(key, IYAMLValue) makes and without changing its Parent - an
+    // alias, and a merged (<<) collection, put in the node they name, which stays in the
+    // collection it was parsed in.
     procedure AddOrSetValue(const key : string; const value : IYAMLValue);
     procedure MergeMapping(const ASourceMapping : IYAMLMapping);
     // value by insertion index, so iterating Keys[i] needs no per-key lookup
@@ -290,7 +336,12 @@ type
     function GetValue(const key : string) : IYAMLValue;override;
 
 
+    // IYAMLMappingPrivate.AddOrSetValue: value goes in as it is
+    procedure IYAMLMappingPrivate.AddOrSetValue = AddOrSetEntry;
+    procedure AddOrSetEntry(const key : string; const value : IYAMLValue);
+    // IYAMLMapping.AddOrSetValue: value must be detached, and gets this mapping as its parent
     procedure AddOrSetValue(const key : string; const value : IYAMLValue);overload;
+    function Remove(const key : string) : boolean;
 
     function AddOrSetValue(const key : string; const value : boolean) : IYAMLValue; overload;
     function AddOrSetValue(const key : string; const value : Int32) : IYAMLValue; overload;
@@ -373,6 +424,8 @@ type
     constructor Create(const parent : IYAMLValue; const tag : string);overload;
     constructor Create(const parent : IYAMLValue; const tagInfo : IYAMLTagInfo);overload;
     destructor Destroy; override;
+
+    function CloneNode(const parent : IYAMLValue) : IYAMLValue;override;
   end;
 
   TYAMLEmitOptions = class(TInterfacedObject, IYAMLEmitOptions)
@@ -499,6 +552,7 @@ type
     function AsSet : IYAMLSet;
     function Query(const expression : string) : IYAMLSequence;
     function QuerySingle(const expression : string; out AMatch : IYAMLValue) : boolean;
+    function QueryMatches(const expression : string) : TArray<TYAMLPathMatch>;
   public
     constructor Create;overload;
     constructor Create(const ARoot : IYAMLValue; const yamlVersion : IYAMLVersionDirective; const tagDirectives : TList<IYAMLTagDirective>);overload;
@@ -1324,17 +1378,50 @@ begin
   FValues[index] := value;
 end;
 
+procedure TYAMLValueList.Grow;
+begin
+  if FCount = 0 then
+    SetLength(FValues, 4)
+  else
+    SetLength(FValues, FCount * 2);
+end;
+
 procedure TYAMLValueList.Add(const value : IYAMLValue);
 begin
   if FCount = Length(FValues) then
-  begin
-    if FCount = 0 then
-      SetLength(FValues, 4)
-    else
-      SetLength(FValues, FCount * 2);
-  end;
+    Grow;
   FValues[FCount] := value;
   Inc(FCount);
+end;
+
+procedure TYAMLValueList.Insert(index : integer; const value : IYAMLValue);
+begin
+  if Cardinal(index) > Cardinal(FCount) then
+    RaiseOutOfRange;
+  if FCount = Length(FValues) then
+    Grow;
+  if index < FCount then
+  begin
+    // the references move as they are; the slot left at index is cleared, not released
+    Move(FValues[index], FValues[index + 1], (FCount - index) * SizeOf(IYAMLValue));
+    Pointer(FValues[index]) := nil;
+  end;
+  FValues[index] := value;
+  Inc(FCount);
+end;
+
+procedure TYAMLValueList.Delete(index : integer);
+begin
+  if Cardinal(index) >= Cardinal(FCount) then
+    RaiseOutOfRange;
+  FValues[index] := nil;
+  Dec(FCount);
+  if index < FCount then
+  begin
+    // the references move as they are; the last slot, now a duplicate, is cleared
+    Move(FValues[index + 1], FValues[index], (FCount - index) * SizeOf(IYAMLValue));
+    Pointer(FValues[FCount]) := nil;
+  end;
 end;
 
 procedure TYAMLValueList.Clear;
@@ -2108,56 +2195,110 @@ begin
   end;
 end;
 
+function TYAMLValue.Clone : IYAMLValue;
+begin
+  result := CloneNode(nil);
+end;
+
+function TYAMLValue.CloneNode(const parent : IYAMLValue) : IYAMLValue;
+var
+  node : TYAMLValue;
+begin
+  // the type and text as they are - no tag conversion, which the original has had
+  node := TYAMLValue.Create(parent, FValueType, FRawValue, '');
+  result := node;
+  CopyExtraTo(node);
+end;
+
+procedure TYAMLValue.CopyExtraTo(target : TYAMLValue);
+var
+  extra : PYAMLValueExtra;
+begin
+  if FExtra = nil then
+    exit;
+  extra := target.Extra;
+  extra^.Tag := FExtra^.Tag;
+  extra^.TagInfo := FExtra^.TagInfo; // tag info cannot be changed, so it can be shared
+  extra^.Comment := FExtra^.Comment;
+  extra^.Comments := Copy(FExtra^.Comments);
+  extra^.EndComments := Copy(FExtra^.EndComments);
+end;
+
+procedure TYAMLValue.CheckDetached(const value : IYAMLValue);
+var
+  valueObj, ancestorObj : TObject;
+  ancestor : Pointer;
+begin
+  if value = nil then
+    raise EArgumentNilException.Create('Cannot add nil to a collection');
+  if value.Parent <> nil then
+    raise EArgumentException.Create('The value is already in a collection - remove it from there first, or add a Clone of it');
+  // going up from this collection must not reach value, or the tree would hold itself
+  valueObj := value as TObject;
+  ancestorObj := Self;
+  while true do
+  begin
+    if ancestorObj = valueObj then
+      raise EArgumentException.Create('A collection cannot hold itself or a collection it is in');
+    if not (ancestorObj is TYAMLValue) then
+      break;
+    ancestor := TYAMLValue(ancestorObj).FParent;
+    if ancestor = nil then
+      break;
+    ancestorObj := IYAMLValue(ancestor) as TObject;
+  end;
+end;
+
 { TYAMLSequence }
 
 function TYAMLSequence.AddMapping(const tag : string) : IYAMLMapping;
 begin
   result := TYAMLMapping.Create(Self, tag);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddCurrencyValue(const value: Currency; const tagInfo: IYAMLTagInfo): IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, CurrToStr(value, YAMLFormatSettings), tagInfo);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddCurrencyValue(const value: Currency; const tag: string): IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, CurrToStr(value, YAMLFormatSettings), tag);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddMapping(const tagInfo : IYAMLTagInfo) : IYAMLMapping;
 begin
   result := TYAMLMapping.Create(Self, tagInfo);
-  AddValue(result);
+  AddItem(result);
 end;
 
 
 function TYAMLSequence.AddSequence(const tag : string) : IYAMLSequence;
 begin
   result := TYAMLSequence.Create(Self, tag);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddSequence(const tagInfo : IYAMLTagInfo) : IYAMLSequence;
 begin
   result := TYAMLSequence.Create(Self, tagInfo);
-  AddValue(result);
+  AddItem(result);
 end;
 
 
 function TYAMLSequence.AddSet(const tag : string) : IYAMLSet;
 begin
   result := TYAMLSet.Create(Self, tag);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddSet(const tagInfo : IYAMLTagInfo) : IYAMLSet;
 begin
   result := TYAMLSet.Create(Self, tagInfo);
-  AddValue(result);
+  AddItem(result);
 end;
 
 
@@ -2168,116 +2309,220 @@ end;
 function TYAMLSequence.AddValue(const value : boolean; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtBoolean, LowerCase(BoolToStr(value, true)), tag);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : boolean; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtBoolean, LowerCase(BoolToStr(value, true)), tagInfo);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : Int32; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(value), tag);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : Int32; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(value), tagInfo);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : UInt32; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, UIntToStr(value), tag);
-  AddValue(result);
+  AddItem(result);
 end;
 
 procedure TYAMLSequence.AddValue(const value : IYAMLValue);
 begin
-  if value = nil then
-    raise EArgumentNilException.Create('cannot add nil to sequence');
+  CheckDetached(value);
+  if AddItem(value) then
+    YAMLSetParent(value, Self);
+end;
+
+function TYAMLSequence.AddItem(const value : IYAMLValue) : boolean;
+begin
   FItems.Add(value);
+  result := true;
+end;
+
+function TYAMLSequence.InsertItem(index : integer; const value : IYAMLValue) : boolean;
+begin
+  FItems.Insert(index, value);
+  result := true;
+end;
+
+procedure TYAMLSequence.CheckInsertIndex(index : integer);
+begin
+  if (index < 0) or (index > FItems.Count) then
+    raise EArgumentOutOfRangeException.CreateFmt('Cannot insert at index %d - it must be 0 to %d', [index, FItems.Count]);
+end;
+
+procedure TYAMLSequence.Delete(index : integer);
+begin
+  if (index < 0) or (index >= FItems.Count) then
+    raise EArgumentOutOfRangeException.CreateFmt('Cannot delete index %d - the sequence has %d items', [index, FItems.Count]);
+  // the item, if it is still referenced elsewhere, must not keep this sequence as its parent
+  DetachReplaced(FItems.FValues[index], nil, Self);
+  FItems.Delete(index);
+end;
+
+procedure TYAMLSequence.InsertValue(index : integer; const value : IYAMLValue);
+begin
+  CheckInsertIndex(index);
+  CheckDetached(value);
+  if InsertItem(index, value) then
+    YAMLSetParent(value, Self);
+end;
+
+function TYAMLSequence.InsertValue(index : integer; const value : string; const tag : string) : IYAMLValue;
+begin
+  CheckInsertIndex(index);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tag);
+  InsertItem(index, result);
+end;
+
+function TYAMLSequence.InsertValue(index : integer; const value : Int64; const tag : string) : IYAMLValue;
+begin
+  CheckInsertIndex(index);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(value), tag);
+  InsertItem(index, result);
+end;
+
+function TYAMLSequence.InsertValue(index : integer; const value : Double; const tag : string) : IYAMLValue;
+begin
+  CheckInsertIndex(index);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tag);
+  InsertItem(index, result);
+end;
+
+function TYAMLSequence.InsertValue(index : integer; const value : Boolean; const tag : string) : IYAMLValue;
+begin
+  CheckInsertIndex(index);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtBoolean, LowerCase(BoolToStr(value, true)), tag);
+  InsertItem(index, result);
+end;
+
+function TYAMLSequence.InsertNull(index : integer; const tag : string) : IYAMLValue;
+begin
+  CheckInsertIndex(index);
+  result := TYAMLValue.Create(Self, TYAMLValueType.vtNull, '', tag);
+  InsertItem(index, result);
+end;
+
+function TYAMLSequence.InsertNumber(index : integer; const value : string) : IYAMLValue;
+begin
+  CheckInsertIndex(index);
+  result := CreateNumberValue(Self, value);
+  InsertItem(index, result);
+end;
+
+function TYAMLSequence.InsertMapping(index : integer; const tag : string) : IYAMLMapping;
+begin
+  CheckInsertIndex(index);
+  result := TYAMLMapping.Create(Self, tag);
+  InsertItem(index, result);
+end;
+
+function TYAMLSequence.InsertSequence(index : integer; const tag : string) : IYAMLSequence;
+begin
+  CheckInsertIndex(index);
+  result := TYAMLSequence.Create(Self, tag);
+  InsertItem(index, result);
+end;
+
+function TYAMLSequence.CloneNode(const parent : IYAMLValue) : IYAMLValue;
+var
+  node : TYAMLSequence;
+  i : integer;
+begin
+  // the same class, so a set stays a set
+  node := TYAMLSequenceClass(ClassType).Create(parent, '');
+  result := node;
+  CopyExtraTo(node);
+  for i := 0 to FItems.Count - 1 do
+    node.FItems.Add(TYAMLValue(FItems.FValues[i] as TObject).CloneNode(result));
 end;
 
 function TYAMLSequence.AddValue(const value : UInt32; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, UIntToStr(value), tagInfo);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : Int64; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(value), tag);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : Int64; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(value), tagInfo);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : UInt64; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, UIntToStr(value), tag);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : UInt64; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, UIntToStr(value), tagInfo);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : Single; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tag);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : Single; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tagInfo);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : Double; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tag);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : Double; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tagInfo);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : string; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tag);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddNull(const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtNull, '', tag);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddNumber(const value : string) : IYAMLValue;
 begin
   result := CreateNumberValue(Self, value);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : string; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tagInfo);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : TDateTime; isUTC : boolean; const tag : string) : IYAMLValue;
@@ -2286,7 +2531,7 @@ begin
     result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.UTCDateToISO8601Str(value), tag)
   else
     result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.LocalDateToISO8601Str(value), tag);
-  AddValue(result);
+  AddItem(result);
 end;
 
 function TYAMLSequence.AddValue(const value : TDateTime; isUTC : boolean; const tagInfo : IYAMLTagInfo) : IYAMLValue;
@@ -2295,7 +2540,7 @@ begin
     result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.UTCDateToISO8601Str(value), tagInfo)
   else
     result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.LocalDateToISO8601Str(value), tagInfo);
-  AddValue(result);
+  AddItem(result);
 end;
 
 
@@ -2565,70 +2810,70 @@ end;
 function TYAMLMapping.AddOrSetMapping(const key : string; const tag : string = '') : IYAMLMapping;
 begin
   result := TYAMLMapping.Create(Self, tag);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetMapping(const key : string;  const tagInfo : IYAMLTagInfo) : IYAMLMapping;
 begin
   result := TYAMLMapping.Create(Self, tagInfo);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 
 function TYAMLMapping.AddOrSetSequence(const key : string; const tag : string = '') : IYAMLSequence;
 begin
   result := TYAMLSequence.Create(Self, tag);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetSequence(const key : string; const tagInfo : IYAMLTagInfo) : IYAMLSequence;
 begin
   result := TYAMLSequence.Create(Self, tagInfo);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 
 function TYAMLMapping.AddOrSetSet(const key : string; const tag : string = '') : IYAMLSet;
 begin
   result := TYAMLSet.Create(Self, tag);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetSet(const key : string; const tagInfo : IYAMLTagInfo) : IYAMLSet;
 begin
   result := TYAMLSet.Create(Self, tagInfo);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Single) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value));
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Double) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value));
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key, value : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtString,value);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetNull(const key : string; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtNull, '', tag);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetNumber(const key : string; const value : string) : IYAMLValue;
 begin
   result := CreateNumberValue(Self, value);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean) : IYAMLValue;
@@ -2637,13 +2882,13 @@ begin
     result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.UTCDateToISO8601Str(value), '!!timestamp')
   else
     result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.LocalDateToISO8601Str(value), '!!timestamp');
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : UInt64) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, UIntToStr(value));
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 const
@@ -2756,6 +3001,61 @@ begin
 end;
 
 procedure TYAMLMapping.AddOrSetValue(const key : string; const value : IYAMLValue);
+begin
+  CheckDetached(value);
+  YAMLSetParent(value, Self);
+  AddOrSetEntry(key, value);
+end;
+
+function TYAMLMapping.Remove(const key : string) : boolean;
+var
+  idx, slotCount, i : integer;
+  hash : Cardinal;
+begin
+  idx := FindKey(key, hash);
+  if idx < 0 then
+    exit(false);
+  // the value, if it is still referenced elsewhere, must not keep this mapping as its parent
+  DetachReplaced(FEntries[idx].Value, nil, Self);
+  FEntries[idx].Key := '';
+  FEntries[idx].Value := nil;
+  Dec(FCount);
+  if idx < FCount then
+  begin
+    // the entries after it move down as they are; the last slot, now a duplicate, is cleared
+    Move(FEntries[idx + 1], FEntries[idx], (FCount - idx) * SizeOf(TYAMLMappingEntry));
+    FillChar(FEntries[FCount], SizeOf(TYAMLMappingEntry), 0);
+  end;
+  if FIndex <> nil then
+  begin
+    if FCount > cIndexThreshold then
+    begin
+      // the index holds each key's hash at the key's position: move them down too, then
+      // rebuild the table from them
+      slotCount := (Length(FIndex) div 3) * 2;
+      for i := idx to FCount - 1 do
+        FIndex[slotCount + i] := FIndex[slotCount + i + 1];
+      BuildIndex(slotCount);
+    end
+    else
+      FIndex := nil; // few enough keys to scan
+  end;
+  result := true;
+end;
+
+function TYAMLMapping.CloneNode(const parent : IYAMLValue) : IYAMLValue;
+var
+  node : TYAMLMapping;
+  i : integer;
+begin
+  node := TYAMLMapping.Create(parent, '');
+  result := node;
+  CopyExtraTo(node);
+  for i := 0 to FCount - 1 do
+    node.AddOrSetEntry(FEntries[i].Key, TYAMLValue(FEntries[i].Value as TObject).CloneNode(result));
+end;
+
+procedure TYAMLMapping.AddOrSetEntry(const key : string; const value : IYAMLValue);
 var
   idx, slotCount : integer;
   hash : Cardinal;
@@ -2795,25 +3095,25 @@ end;
 function TYAMLMapping.AddOrSetValue(const key : string; const value : boolean) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtBoolean, LowerCase(BoolToStr(value, true)));
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Int32) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(value));
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : UInt32) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, UIntToStr(value));
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Int64) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(value));
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 // Tag-aware AddOrSetValue implementations
@@ -2821,98 +3121,98 @@ end;
 function TYAMLMapping.AddOrSetValue(const key : string; const value : boolean; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtBoolean, LowerCase(BoolToStr(value, true)), tag);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : boolean; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtBoolean, LowerCase(BoolToStr(value, true)), tagInfo);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Int32; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(value), tag);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Int32; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(value), tagInfo);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : UInt32; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, UIntToStr(value), tag);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : UInt32; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, UIntToStr(value), tagInfo);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Int64; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(value), tag);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Int64; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, IntToStr(value), tagInfo);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : UInt64; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, UIntToStr(value), tag);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : UInt64; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtInteger, UIntToStr(value), tagInfo);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Single; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tag);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Single; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tagInfo);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Double; const tag : string) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tag);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : Double; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, YAMLFloatToStr(value), tagInfo);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : string; const tag : string) : IYAMLValue;
 begin
   // '' is an empty string, as AddValue('') is on a sequence - AddOrSetNull writes a null
   result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tag);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : string; const tagInfo : IYAMLTagInfo) : IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtString, value, tagInfo);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean; const tag : string) : IYAMLValue;
@@ -2921,7 +3221,7 @@ begin
     result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.UTCDateToISO8601Str(value), tag)
   else
     result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.LocalDateToISO8601Str(value), tag);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key : string; const value : TDateTime; isUTC : boolean; const tagInfo : IYAMLTagInfo) : IYAMLValue;
@@ -2930,26 +3230,26 @@ begin
     result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.UTCDateToISO8601Str(value), tagInfo)
   else
     result := TYAMLValue.Create(Self, TYAMLValueType.vtTimestamp, TYAMLDateUtils.LocalDateToISO8601Str(value), tagInfo);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 
 function TYAMLMapping.AddOrSetCurrencyValue(const key: string; const value: Currency; const tagInfo: IYAMLTagInfo): IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, CurrToStr(value, YAMLFormatSettings), tagInfo);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetCurrencyValue(const key: string; const value: Currency; const tag: string): IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, CurrToStr(value, YAMLFormatSettings), tag);
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 function TYAMLMapping.AddOrSetValue(const key: string; const value: Currency): IYAMLValue;
 begin
   result := TYAMLValue.Create(Self, TYAMLValueType.vtFloat, CurrToStr(value, YAMLFormatSettings));
-  AddOrSetValue(key, result);
+  AddOrSetEntry(key, result);
 end;
 
 procedure TYAMLMapping.Clear;
@@ -3158,20 +3458,21 @@ begin
         //TODO : replace this with a deeep copy
         copiedValue := value;
 
-      AddOrSetValue(key, copiedValue);
+      AddOrSetEntry(key, copiedValue);
     end;
   end;
 
 end;
 
+// A[] and O[] put the collection in as it is, as they always have
 procedure TYAMLMapping.SetArray(const key: string; const Value: IYAMLSequence);
 begin
-  AddOrSetValue(key,Value);
+  AddOrSetEntry(key,Value);
 end;
 
 procedure TYAMLMapping.SetObject(const key: string; const Value: IYAMLMapping);
 begin
-  AddOrSetValue(key,Value);
+  AddOrSetEntry(key,Value);
 end;
 
 procedure TYAMLMapping.SetObjectBool(const key: string; const Value: Boolean);
@@ -3358,6 +3659,11 @@ end;
 function TYAMLDocument.QuerySingle(const expression: string; out AMatch: IYAMLValue): boolean;
 begin
   result := TYAMLPathProcessor.QuerySingle(FRoot, expression, AMatch);
+end;
+
+function TYAMLDocument.QueryMatches(const expression : string) : TArray<TYAMLPathMatch>;
+begin
+  result := TYAMLPathProcessor.QueryMatches(FRoot, expression);
 end;
 
 procedure TYAMLDocument.WriteToFile(const filename : string);
@@ -3689,20 +3995,51 @@ end;
 
 { TYAMLSet }
 
-procedure TYAMLSet.AddValue(const value : IYAMLValue);
+function TYAMLSet.AddItem(const value : IYAMLValue) : boolean;
 var
-  ValueStr : string;
+  valueStr : string;
 begin
-  if value = nil then Exit;
-
-  ValueStr := value.AsString;
-
   // Check for duplicates using string representation
-  if FValues.IndexOf(ValueStr) < 0 then
+  valueStr := value.AsString;
+  result := FValues.IndexOf(valueStr) < 0;
+  if result then
   begin
-    FValues.Add(ValueStr);
-    inherited AddValue(value);
+    FValues.Add(valueStr);
+    FItems.Add(value);
   end;
+end;
+
+function TYAMLSet.InsertItem(index : integer; const value : IYAMLValue) : boolean;
+var
+  valueStr : string;
+begin
+  valueStr := value.AsString;
+  result := FValues.IndexOf(valueStr) < 0;
+  if result then
+  begin
+    FItems.Insert(index, value);
+    FValues.Add(valueStr);
+  end;
+end;
+
+procedure TYAMLSet.Delete(index : integer);
+var
+  valueIndex : integer;
+begin
+  if (index >= 0) and (index < FItems.Count) then
+  begin
+    // so the value can be added again
+    valueIndex := FValues.IndexOf(FItems.FValues[index].AsString);
+    if valueIndex >= 0 then
+      FValues.Delete(valueIndex);
+  end;
+  inherited;
+end;
+
+function TYAMLSet.CloneNode(const parent : IYAMLValue) : IYAMLValue;
+begin
+  result := inherited CloneNode(parent);
+  TYAMLSet(result as TObject).FValues.AddStrings(FValues);
 end;
 
 constructor TYAMLSet.Create(const parent : IYAMLValue; const tag : string);
@@ -3781,6 +4118,11 @@ end;
 function TYAMLCollection.QuerySingle(const AExpression: string; out AMatch: IYAMLValue): boolean;
 begin
   result := TYAMLPathProcessor.QuerySingle(Self, AExpression, AMatch);
+end;
+
+function TYAMLCollection.QueryMatches(const AExpression : string) : TArray<TYAMLPathMatch>;
+begin
+  result := TYAMLPathProcessor.QueryMatches(Self, AExpression);
 end;
 
 procedure TYAMLCollection.SetEndComments(const value : TArray<string>);

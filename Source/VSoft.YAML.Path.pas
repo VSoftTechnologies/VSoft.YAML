@@ -18,6 +18,7 @@ uses
   VSoft.YAML.Utils,
   VSoft.YAML.IO,
   VSoft.YAML,
+  VSoft.YAML.Classes,
   System.SysUtils;
 
 {$SCOPEDENUMS ON}
@@ -117,9 +118,9 @@ type
       OperatorType : TOperatorType;
       Next : POperator;
       Name : string;                  // For ChildName
-      Indices : TArray<integer>;          // For IndexList
+      Indices : TArray<integer>;          // For IndexList - negative counts from the end
       case Byte of
-        0 : (Index : integer);             // For ChildIndex
+        0 : (Index : integer);             // For ChildIndex - negative counts from the end
         1 : (Start, Stop, Step : integer); // For Slice
         2 : (FilterExpression : TFilterExpression); // For Filter
     end;
@@ -128,21 +129,35 @@ type
     FOperators : TArray<TOperator>;
     FOperatorCount : integer;
     FMatches : IYAMLSequence;
+    FMatchList : TYAMLSequence; // FMatches' object: matches go in through AddItem, as they are
     FMatchCount : integer;
     FSingleMatch : boolean;
     FRootDocument : IYAMLValue;
+    // QueryMatches: each match and where it is goes in FLocations instead of FMatches
+    FTrackLocations : boolean;
+    FLocations : TArray<TYAMLPathMatch>;
   private
     class procedure SkipWhitespace(const reader : IInputReader); inline; static;
     class function ParseInteger(const reader : IInputReader; out AValue : integer) : boolean; static;
     class function IsQuote(const ch : Char) : boolean; inline; static;
+    // the index into count items that AIndex selects - a negative one counts from the end
+    class function NormalizeIndex(AIndex, ACount : integer) : integer; inline; static;
   private
     procedure AddOperator(const AOperator : TOperator);
-    procedure AddMatch(const AMatch : IYAMLValue);
+    procedure AddMatch(const AMatch : IYAMLValue; const AParent : IYAMLCollection; const AKey : string; AIndex : integer; const APath : string);
     procedure ParseDotOperator(const reader : IInputReader);
     procedure ParseBracketOperator(const reader : IInputReader);
 
     function InternalMatch(const root : IYAMLValue; const AMatchSingle : boolean) : IYAMLSequence;
-    procedure VisitOperator(const AOp : POperator; const ARoot : IYAMLValue);
+    function InternalMatches(const root : IYAMLValue) : TArray<TYAMLPathMatch>;
+    // the normalized path of a child of the node at AParentPath - a member when AIndex is -1,
+    // an item otherwise; '' when locations are not tracked
+    function PathTo(const AParentPath, AKey : string; AIndex : integer) : string;
+    // AValue was selected: it is a match when there is no next operator, else the next
+    // operator runs on it
+    procedure Select(const ANext : POperator; const AValue : IYAMLValue; const AParent : IYAMLCollection;
+      const AParentPath, AKey : string; AIndex : integer);
+    procedure VisitOperator(const AOp : POperator; const ARoot : IYAMLValue; const ARootPath : string);
     
     // Filter processing methods
     function ParseFilterExpression(const reader : IInputReader) : TFilterExpression;
@@ -218,6 +233,25 @@ type
     /// <exception cref="EYAMLPathError">if AExpression is invalid</exception>
     class function QuerySingle(const ADoc : IYAMLValue; const AExpression : string; out AMatch : IYAMLValue) : boolean; overload; static;
 
+    /// <summary>
+    /// Executes this JSONPath expression on a document and returns each match with where it
+    /// is - see TYAMLPathMatch.
+    /// </summary>
+    /// <param name="root">the document to use this JSONPath on</param>
+    /// <returns>The matches, in the order Query returns them</returns>
+    function QueryMatches(const root : IYAMLValue) : TArray<TYAMLPathMatch>; overload;
+
+    /// <summary>
+    /// Executes a JSONPath expression on a document and returns each match with where it is:
+    /// the collection it is in (nil for the root), its key or index, and its RFC 9535
+    /// normalized path.
+    /// </summary>
+    /// <param name="root">the document to use the expression on</param>
+    /// <param name="AExpression">the JSONPath expression to run</param>
+    /// <returns>The matches, in the order Query returns them</returns>
+    /// <exception cref="EYAMLPathError">if AExpression is invalid</exception>
+    class function QueryMatches(const root : IYAMLValue; const AExpression : string) : TArray<TYAMLPathMatch>; overload; static;
+
   end;
 
 resourcestring
@@ -245,15 +279,117 @@ implementation
 uses
   System.Character,
   System.Classes,
-  System.StrUtils,
-  VSoft.YAML.Classes;
+  System.StrUtils;
+
+// A name in an RFC 9535 normalized path (section 2.7) goes in single quotes: ' and \ are
+// escaped with \, so are backspace, tab, line feed, form feed and carriage return (\b \t \n
+// \f \r), and any other control character is \u00 and two lower-case hex digits.
+function NormalizedPathName(const name : string) : string;
+const
+  cHex : array[0..15] of Char = ('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f');
+var
+  i : integer;
+  ch : Char;
+  needsEscape : boolean;
+  sb : TStringBuilder;
+begin
+  needsEscape := false;
+  for i := 1 to Length(name) do
+  begin
+    ch := name[i];
+    if (ch < ' ') or (ch = '''') or (ch = '\') then
+    begin
+      needsEscape := true;
+      break;
+    end;
+  end;
+  if not needsEscape then
+    exit(name);
+
+  sb := TStringBuilder.Create(Length(name) + 8);
+  try
+    for i := 1 to Length(name) do
+    begin
+      ch := name[i];
+      case ch of
+        '''' : sb.Append('\''');
+        '\' : sb.Append('\\');
+        #8 : sb.Append('\b');
+        #9 : sb.Append('\t');
+        #10 : sb.Append('\n');
+        #12 : sb.Append('\f');
+        #13 : sb.Append('\r');
+      else
+        if ch < ' ' then
+        begin
+          sb.Append('\');
+          sb.Append('u00');
+          sb.Append(cHex[Ord(ch) shr 4]);
+          sb.Append(cHex[Ord(ch) and 15]);
+        end
+        else
+          sb.Append(ch);
+      end;
+    end;
+    result := sb.ToString;
+  finally
+    sb.Free;
+  end;
+end;
 
 { TYAMLPathProcessor }
 
-procedure TYAMLPathProcessor.AddMatch(const AMatch : IYAMLValue);
+procedure TYAMLPathProcessor.AddMatch(const AMatch : IYAMLValue; const AParent : IYAMLCollection; const AKey : string; AIndex : integer; const APath : string);
 begin
-  FMatches.AddValue(AMatch);
+  if FTrackLocations then
+  begin
+    if FMatchCount = Length(FLocations) then
+    begin
+      if FMatchCount = 0 then
+        SetLength(FLocations, 4)
+      else
+        SetLength(FLocations, FMatchCount * 2);
+    end;
+    FLocations[FMatchCount].Value := AMatch;
+    FLocations[FMatchCount].Parent := AParent;
+    FLocations[FMatchCount].Key := AKey;
+    FLocations[FMatchCount].Index := AIndex;
+    FLocations[FMatchCount].Path := APath;
+  end
+  else
+    // the node as it is - it stays in its own collection, and keeps its Parent
+    FMatchList.AddItem(AMatch);
   Inc(FMatchCount);
+end;
+
+class function TYAMLPathProcessor.NormalizeIndex(AIndex, ACount : integer) : integer;
+begin
+  if AIndex < 0 then
+    result := ACount + AIndex
+  else
+    result := AIndex;
+end;
+
+function TYAMLPathProcessor.PathTo(const AParentPath, AKey : string; AIndex : integer) : string;
+begin
+  if not FTrackLocations then
+    result := ''
+  else if AIndex >= 0 then
+    result := AParentPath + '[' + IntToStr(AIndex) + ']'
+  else
+    result := AParentPath + '[''' + NormalizedPathName(AKey) + ''']';
+end;
+
+procedure TYAMLPathProcessor.Select(const ANext : POperator; const AValue : IYAMLValue; const AParent : IYAMLCollection;
+  const AParentPath, AKey : string; AIndex : integer);
+var
+  path : string;
+begin
+  path := PathTo(AParentPath, AKey, AIndex);
+  if ANext = nil then
+    AddMatch(AValue, AParent, AKey, AIndex, path)
+  else
+    VisitOperator(ANext, AValue, path);
 end;
 
 procedure TYAMLPathProcessor.AddOperator(const AOperator : TOperator);
@@ -366,22 +502,69 @@ end;
 
 function TYAMLPathProcessor.InternalMatch(const root : IYAMLValue; const AMatchSingle : boolean) : IYAMLSequence;
 begin
-  FMatches := TYAMLSequence.Create(root, '');
+  FMatchList := TYAMLSequence.Create(root, '');
+  FMatches := FMatchList;
   FMatchCount := 0;
   FSingleMatch := AMatchSingle;
+  FTrackLocations := False;
   FRootDocument := root;
 
   if (FOperatorCount = 0) then
   begin
     // Root-only access ($) - return the root node itself
-    AddMatch(root);
+    AddMatch(root, nil, '', -1, '$');
     result := FMatches;
     exit;
   end;
 
-  VisitOperator(@FOperators[0], root);
+  VisitOperator(@FOperators[0], root, '$');
 
   result := FMatches;
+end;
+
+function TYAMLPathProcessor.InternalMatches(const root : IYAMLValue) : TArray<TYAMLPathMatch>;
+begin
+  FMatches := nil;
+  FMatchList := nil;
+  FLocations := nil;
+  FMatchCount := 0;
+  FSingleMatch := False;
+  FTrackLocations := True;
+  FRootDocument := root;
+  try
+    if (FOperatorCount = 0) then
+      AddMatch(root, nil, '', -1, '$') // root-only access ($)
+    else
+      VisitOperator(@FOperators[0], root, '$');
+    SetLength(FLocations, FMatchCount);
+    result := FLocations;
+  finally
+    FLocations := nil;
+    FTrackLocations := False;
+  end;
+end;
+
+function TYAMLPathProcessor.QueryMatches(const root : IYAMLValue) : TArray<TYAMLPathMatch>;
+begin
+  result := InternalMatches(root);
+end;
+
+class function TYAMLPathProcessor.QueryMatches(const root : IYAMLValue; const AExpression : string) : TArray<TYAMLPathMatch>;
+var
+  path : TYAMLPathProcessor;
+begin
+  if (AExpression = '') then
+  begin
+    result := nil;
+    Exit;
+  end;
+
+  path := TYAMLPathProcessor.Create(AExpression);
+  try
+    result := path.InternalMatches(root);
+  finally
+    path.Cleanup;
+  end;
 end;
 
 
@@ -755,17 +938,13 @@ begin
       SkipWhitespace(reader);
       if (reader.Current = ']') then
       begin
-        // [index]
-        if (index < 0) then
-          raise EYAMLPathError.Create(RS_YAML_PATH_NEGATIVE_ARRAY_INDEX);
+        // [index] - a negative index counts from the end (RFC 9535 2.3.3)
         op.Init(TOperatorType.ChildIndex);
         op.Index := index;
       end
       else if (reader.Current = ',') then
       begin
         // [index, index, ...]
-        if (index < 0) then
-          raise EYAMLPathError.Create(RS_YAML_PATH_NEGATIVE_ARRAY_INDEX);
         op.Init(TOperatorType.IndexList);
         SetLength(op.Indices, 4);
         op.Indices[0] := index;
@@ -778,8 +957,6 @@ begin
           if (not ParseInteger(reader, index)) then
             raise EYAMLPathError.Create(RS_YAML_PATH_INVALID_INDEX);
 
-          if (index < 0) then
-            raise EYAMLPathError.Create(RS_YAML_PATH_NEGATIVE_ARRAY_INDEX);
           if (count >= Length(op.Indices)) then
             SetLength(op.Indices, count * 2);
           op.Indices[count] := index;
@@ -983,7 +1160,7 @@ begin
 end;
 
 
-procedure TYAMLPathProcessor.VisitOperator(const AOp : POperator; const ARoot : IYAMLValue);
+procedure TYAMLPathProcessor.VisitOperator(const AOp : POperator; const ARoot : IYAMLValue; const ARootPath : string);
 var
   index, arrayIndex, startIndex, stopIndex, stepValue : integer;
   value : IYAMLValue;
@@ -1002,27 +1179,17 @@ begin
       begin
         mapping := ARoot.AsMapping;
         if mapping.TryGetValue(AOp.Name, value) then
-        begin
-          if (AOp.Next = nil) then
-            AddMatch(value)
-          else
-            VisitOperator(AOp.Next, value);
-        end;
+          Select(AOp.Next, value, mapping, ARootPath, AOp.Name, -1);
       end;
 
     TOperatorType.ChildIndex :
       if ARoot.IsSequence then
       begin
         sequence := ARoot.AsSequence;
-        if (AOp.Index < sequence.Count) then
-        begin
-          Assert(AOp.Index >= 0);
-          value := sequence.Items[AOp.Index];
-          if (AOp.Next = nil) then
-            AddMatch(value)
-          else
-            VisitOperator(AOp.Next, value);
-        end;
+        // a negative index counts from the end; out of range selects nothing
+        arrayIndex := NormalizeIndex(AOp.Index, sequence.Count);
+        if (arrayIndex >= 0) and (arrayIndex < sequence.Count) then
+          Select(AOp.Next, sequence.Items[arrayIndex], sequence, ARootPath, '', arrayIndex);
       end;
 
     TOperatorType.RecursiveDescent :
@@ -1035,11 +1202,11 @@ begin
           for index := 0 to sequence.Count - 1 do
           begin
             if (nextOp.OperatorType = TOperatorType.ChildIndex)
-              and (nextOp.Index = index)
+              and (NormalizeIndex(nextOp.Index, sequence.Count) = index)
             then
-              VisitOperator(nextOp, ARoot)
+              VisitOperator(nextOp, ARoot, ARootPath)
             else
-              VisitOperator(AOp, sequence.Items[index]);
+              VisitOperator(AOp, sequence.Items[index], PathTo(ARootPath, '', index));
           end;
         end;
 
@@ -1050,9 +1217,9 @@ begin
           begin
             name := mapping.Keys[index];
             if(nextOp.OperatorType = TOperatorType.ChildName) and (nextOp.Name = name) then
-              VisitOperator(nextOp, ARoot)
+              VisitOperator(nextOp, ARoot, ARootPath)
             else
-              VisitOperator(AOp, mapping.Values[name] );
+              VisitOperator(AOp, mapping.Values[name], PathTo(ARootPath, name, -1));
           end;
         end;
       end;
@@ -1063,13 +1230,7 @@ begin
           begin
             sequence := ARoot.AsSequence;
             for index := 0 to sequence.Count - 1 do
-            begin
-              value := sequence.Items[index];
-              if (AOp.Next = nil) then
-                AddMatch(value)
-              else
-                VisitOperator(AOp.Next, value);
-            end;
+              Select(AOp.Next, sequence.Items[index], sequence, ARootPath, '', index);
           end;
 
         TYAMLValueType.vtMapping :
@@ -1078,11 +1239,7 @@ begin
             for index := 0 to mapping.Count - 1 do
             begin
               name := mapping.Keys[index];
-              value := mapping.Values[name];
-              if (AOp.Next = nil) then
-                AddMatch(value)
-              else
-                VisitOperator(AOp.Next, value);
+              Select(AOp.Next, mapping.Values[name], mapping, ARootPath, name, -1);
             end;
           end;
       end;
@@ -1093,16 +1250,10 @@ begin
         sequence := ARoot.AsSequence;
         for index := 0 to Length(AOp.Indices) - 1 do
         begin
-          arrayIndex := AOp.Indices[index];
-          Assert(arrayIndex >= 0);
-          if (arrayIndex < sequence.Count) then
-          begin
-            value := sequence.Items[arrayIndex];
-            if (AOp.Next = nil) then
-              AddMatch(value)
-            else
-              VisitOperator(AOp.Next, value);
-          end;
+          // each index as for [index]: negative counts from the end, out of range is skipped
+          arrayIndex := NormalizeIndex(AOp.Indices[index], sequence.Count);
+          if (arrayIndex >= 0) and (arrayIndex < sequence.Count) then
+            Select(AOp.Next, sequence.Items[arrayIndex], sequence, ARootPath, '', arrayIndex);
         end;
       end;
 
@@ -1144,12 +1295,7 @@ begin
         
         while (index < stopIndex) and (index < sequence.Count) do
         begin
-          value := sequence.Items[index];
-          if (AOp.Next = nil) then
-            AddMatch(value)
-          else
-            VisitOperator(AOp.Next, value);
-
+          Select(AOp.Next, sequence.Items[index], sequence, ARootPath, '', index);
           Inc(index, stepValue);
         end;
       end;
@@ -1165,14 +1311,9 @@ begin
               Exit;
             
             value := sequence.Items[index];
-            if EvaluateFilterExpression(AOp.FilterExpression, 
+            if EvaluateFilterExpression(AOp.FilterExpression,
               TFilterContext.Create(value, FRootDocument)) then
-            begin
-              if (AOp.Next = nil) then
-                AddMatch(value)
-              else
-                VisitOperator(AOp.Next, value);
-            end;
+              Select(AOp.Next, value, sequence, ARootPath, '', index);
           end;
         end
         else if ARoot.IsMapping then
@@ -1185,14 +1326,9 @@ begin
             
             name := mapping.Keys[index];
             value := mapping.Values[name];
-            if EvaluateFilterExpression(AOp.FilterExpression, 
+            if EvaluateFilterExpression(AOp.FilterExpression,
               TFilterContext.Create(value, FRootDocument)) then
-            begin
-              if (AOp.Next = nil) then
-                AddMatch(value)
-              else
-                VisitOperator(AOp.Next, value);
-            end;
+              Select(AOp.Next, value, mapping, ARootPath, name, -1);
           end;
         end;
       end

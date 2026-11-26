@@ -59,7 +59,8 @@ VSoft.YAML can parse and write JSON (since YAML 1.2 is a superset of JSON):
 - **Multiple Documents** - Full support for multi-document YAML files with `LoadAllFromString/File()` and `WriteAllToString/File()`
 - **YAML Directives** - Complete support for `%YAML` version and `%TAG` custom handle directives
 - **Comprehensive Tag System** - Full implementation of all YAML 1.2 tag types (Standard, Local, Custom, Verbatim, Global)
-- **[JSONPath Queries](/docs/JSONPath-Syntax.md)** - JSONPath-style querying with `Query()` and `QuerySingle()` methods
+- **[JSONPath Queries](/docs/JSONPath-Syntax.md)** - JSONPath-style querying with `Query()` and `QuerySingle()` methods, and `QueryMatches()`, which also gives where each match is
+- **Editing** - Remove keys, delete and insert sequence items, move nodes between collections and documents, and make deep copies with `Clone`
 - **Complex Keys** - Flow-style complex key support
 - **Comment Preservation** - Proper comment handling during parsing
 
@@ -119,6 +120,85 @@ begin
     WriteLn('Fruit: ', fruits.Items[i].AsString);
 end;
 ```
+
+### Editing Documents
+```pascal
+var
+  doc, other: IYAMLDocument;
+  items: IYAMLSequence;
+  item: IYAMLValue;
+begin
+  doc := TYAML.LoadFromString(
+    'name: demo' + sLineBreak +
+    'debug: true' + sLineBreak +
+    'items: [a, b, c]');
+
+  doc.AsMapping.Remove('debug');                // False if the key is not there
+  items := doc.AsMapping['items'].AsSequence;
+  items.Delete(0);                              // [b, c]
+  items.InsertValue(0, 'first');                // [first, b, c]
+  items.InsertValue(items.Count, 42);           // index = Count adds at the end
+  items.InsertMapping(1).AddOrSetValue('k', 'v');
+
+  // Move a node: take it out of its collection, then add it to another one
+  other := TYAML.CreateMapping;
+  item := items[2];
+  items.Delete(2);
+  other.AsMapping.AddOrSetValue('moved', item);
+
+  // Copy a node: Clone makes a deep copy that is in no collection
+  other.AsMapping.AddOrSetValue('copy', doc.AsMapping['items'].Clone);
+end;
+```
+- `IYAMLMapping.Remove(key)` removes a key and its value, and returns `False` if the key is not there. The other keys keep their order.
+- `IYAMLSequence.Delete(index)` removes an item. An index outside `0..Count - 1` raises `EArgumentOutOfRangeException`.
+- `IYAMLSequence.InsertValue(index, value)` has overloads for `string`, `Int64`, `Double`, `Boolean` and `IYAMLValue`. `InsertNull`, `InsertNumber`, `InsertMapping` and `InsertSequence` work as the `Add` methods of the same names. `index` is `0..Count`, and `Count` adds at the end; any other index raises `EArgumentOutOfRangeException`. A set does not insert a value it already has.
+- `IYAMLMapping.AddOrSetValue(key, node)`, `IYAMLSequence.AddValue(node)` and `IYAMLSequence.InsertValue(index, node)` put an existing node of any kind into a collection, and make the collection its `Parent`. On an existing key, `AddOrSetValue` replaces the value in the same position, as the other overloads do.
+- The node must be in no collection, so its `Parent` must be nil. A node that `Remove` or `Delete` took out, a `Clone` and the root of a document are such nodes. A node that is still in a collection raises `EArgumentException`, and so does a collection added to itself or to a collection inside it. `nil` raises `EArgumentNilException`.
+- `IYAMLValue.Clone` returns a deep copy whose `Parent` is nil. The copy keeps the value type, the text (so `0x1F` and `1.50` are written as they were read), the tags and the comments. A node that an alias shares is copied each time it occurs, so the copies are independent.
+- The `A[]` and `O[]` setters did not change. They put the collection in as it is and do not change its `Parent`.
+
+### Where a Query Matched
+`QueryMatches` runs a JSONPath query as `Query` does, and gives each match with the place it is in the document. It is on `IYAMLDocument` and `IYAMLCollection`, and `TYAMLPathProcessor` has a static and a compiled form. The matches are in the same order as `Query` returns them.
+```pascal
+var
+  doc: IYAMLDocument;
+  matches: TArray<TYAMLPathMatch>;
+  i: integer;
+begin
+  doc := TYAML.LoadFromString(
+    'books:' + sLineBreak +
+    '  - {title: A, price: 8}' + sLineBreak +
+    '  - {title: B, price: 12}' + sLineBreak +
+    '  - {title: C, price: 20}');
+
+  matches := doc.QueryMatches('$.books[?(@.price > 10)]');
+  for i := 0 to Length(matches) - 1 do
+    WriteLn(matches[i].Path);
+  // Output:
+  // $['books'][1]
+  // $['books'][2]
+
+  // Delete the matches. Start with the last one, so the indexes of the others stay right.
+  for i := Length(matches) - 1 downto 0 do
+    matches[i].Parent.AsSequence.Delete(matches[i].Index);
+end;
+```
+Each `TYAMLPathMatch` has these fields:
+
+| Field | Root (`$`) | Mapping member | Sequence item |
+|-------|------------|----------------|---------------|
+| `Value` | the node | the node | the node |
+| `Parent` | nil | the mapping | the sequence |
+| `Key` | `''` | the key | `''` |
+| `Index` | -1 | -1 | the index |
+| `Path` | `$` | `$['books']` | `$['books'][1]` |
+
+`Path` is the [RFC 9535](https://www.rfc-editor.org/rfc/rfc9535#section-2.7) normalized path. A name is in single quotes, with `'` and `\` escaped by a `\`. A control character is written as `\b`, `\t`, `\n`, `\f`, `\r`, or `\u00` and two hex digits. An index is the position from the start, also when the query used a negative index.
+
+The location comes from the path that the query took. A node that an alias shares is in more than one place, but its own `Parent` names only one of them. The match gives the place where the query found the node.
+
+A negative index counts from the end of a sequence, as RFC 9535 says: `$.books[-1]` is the last book, and `$.books[0,-1]` the first and the last. An index out of range selects nothing; it does not raise an error.
 
 ### Multiple Documents
 ```pascal
@@ -337,6 +417,20 @@ JSON (`JSONMode`) is read by the same parser in its strict RFC 8259 mode, which 
 - **Delphi XE2+** -  compatible with Delphi XE2 or later
 - **Win32/Win64** - may work on other platforms (does not use WinAPI.*), but not tested .
 - **No External Dependencies** - Pure Delphi implementation
+
+## Behaviour changes in 3.1.0
+
+- **`IYAMLSequence.AddValue(IYAMLValue)` sets the node's `Parent`, and refuses a node that is in a collection.** It used to add the node as it was: the node kept its old `Parent` and could be in two collections at once. Now the sequence becomes the node's `Parent`. A node whose `Parent` is set raises `EArgumentException`: take it out of its collection first (`Remove` or `Delete`), or add `node.Clone`. A sequence added to itself, or to a collection inside it, also raises `EArgumentException`. On a set, a value the set already has is still not added, and its `Parent` is not set.
+- **`AddValue(nil)` on a set raises `EArgumentNilException`,** as it already did on a sequence. It did nothing.
+- **Negative JSONPath indexes count from the end.** `$.a[-1]` and `$.a[0,-1]` raised `EYAMLPathError` ("Negative array index..."). Now `-1` is the last item, as RFC 9535 says, and an index out of range selects nothing. The `RS_YAML_PATH_NEGATIVE_ARRAY_INDEX` resource string is no longer used.
+- **New interface members.** These were added:
+  - `IYAMLValue.Clone`
+  - `IYAMLMapping.AddOrSetValue(key, IYAMLValue)` and `IYAMLMapping.Remove`
+  - `IYAMLSequence.Delete`, `InsertValue` (for `IYAMLValue`, `string`, `Int64`, `Double` and `Boolean`), `InsertNull`, `InsertNumber`, `InsertMapping` and `InsertSequence`
+  - `IYAMLCollection.QueryMatches` and `IYAMLDocument.QueryMatches`, with the `TYAMLPathMatch` record and `TYAMLPathProcessor.QueryMatches`
+
+  Only code that implements these interfaces itself needs updating.
+- **Code that builds trees with the `VSoft.YAML.Classes` unit** and relied on `AddValue` to share a node (as an alias does) should add the node with `TYAMLSequence.AddItem` or `IYAMLMappingPrivate.AddOrSetValue`. These add a node as it is, without the checks, and are what the parsers use.
 
 ## Behaviour changes in 3.0.0
 

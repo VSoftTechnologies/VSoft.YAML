@@ -62,6 +62,11 @@ Both `IYAMLDocument` and `IYAMLCollection` provide:
 - **`QuerySingle(const AExpression: string; out AMatch: IYAMLValue): Boolean`**  
   Returns the first match and a boolean indicating success
 
+- **`QueryMatches(const AExpression: string): TArray<TYAMLPathMatch>`**  
+  Returns all matches, in the same order as `Query`, each with where it is: `Value` (the node), `Parent` (the mapping or sequence it is in, nil for the root), `Key` (for a mapping member, otherwise `''`), `Index` (for a sequence item, otherwise -1) and `Path`, its [RFC 9535 normalized path](https://www.rfc-editor.org/rfc/rfc9535#section-2.7), such as `$['store']['book'][0]`. The location comes from the path the query took, so it is right for a node that an alias shares.
+
+`TYAMLPathProcessor` (in `VSoft.YAML.Path`) has the same three methods, as static class functions that take the root and the expression, and on a processor created with an expression, which can run it many times (call `Cleanup` when done).
+
 ## Basic Syntax
 
 All JSONPath expressions must start with the root operator `$`.
@@ -99,13 +104,17 @@ $["key with spaces"]   # Properties with spaces
 ```
 $.items[0]             # First element (0-based indexing)
 $.items[1]             # Second element
+$.items[-1]            # Last element (a negative index counts from the end)
+$.items[-2]            # Second last element
 $.matrix[0][1]         # Nested array access
 ```
+An index out of range, negative or not, selects nothing. It is not an error.
 
 #### Multiple Indices
 ```
 $.items[0,2,4]         # Elements at indices 0, 2, and 4
 $.data[1,3,5,7]        # Multiple specific indices
+$.items[0,-1]          # First and last elements
 ```
 
 #### Array Slicing

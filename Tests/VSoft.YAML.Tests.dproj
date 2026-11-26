@@ -165,6 +165,8 @@
         <DCCReference Include="VSoft.YAML.Tests.YAMLSuite.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.YAML12.pas"/>
         <DCCReference Include="VSoft.YAML.Tests.Nodes.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.Editing.pas"/>
+        <DCCReference Include="VSoft.YAML.Tests.PathMatches.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>
