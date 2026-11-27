@@ -65,6 +65,38 @@ type
     [Test]
     procedure TestDocumentLevelCommentOnFlatMapping;
 
+    // A comment line above a key is written above it again, whatever the key's value is, and
+    // one below a key line stays below it.
+    [Test]
+    procedure TestCommentAboveKeyOfMapping_IsWrittenAboveIt;
+
+    [Test]
+    procedure TestCommentAboveKeyOfSequence_IsWrittenAboveIt;
+
+    [Test]
+    procedure TestCommentBelowKeyLine_StaysBelowIt;
+
+    [Test]
+    procedure TestCommentAboveScalarKey_GoesToItsValue;
+
+    [Test]
+    procedure TestCommentsInSequenceOfMappings_StayInPlace;
+
+    [Test]
+    procedure TestCommentAboveNestedSequenceItem_IsWrittenAboveIt;
+
+    [Test]
+    procedure TestCommentAboveSetItem_IsWrittenAboveIt;
+
+    [Test]
+    procedure TestCommentAboveTaggedRoot_IsWrittenAboveItsTag;
+
+    [Test]
+    procedure TestCommentAboveAliasEntry_IsNotGivenToTheSharedNode;
+
+    [Test]
+    procedure TestCommentsOfCollectionsBuiltInCode_AreWrittenAboveTheirKeys;
+
   end;
 
 implementation
@@ -510,6 +542,224 @@ begin
   outputText := TYAML.WriteToString(doc);
   Assert.IsTrue((Pos('# comment', outputText) > 0),
     'Comment must appear in written output');
+end;
+
+procedure TYAMLCommentTests.TestCommentAboveKeyOfMapping_IsWrittenAboveIt;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+  services : IYAMLMapping;
+begin
+  yamlText :=
+    '# services' + sLineBreak +
+    'services:' + sLineBreak +
+    '  web:' + sLineBreak +
+    '    image: app' + sLineBreak;
+
+  doc := TYAML.LoadFromString(yamlText);
+  services := doc.Root.AsMapping.Items['services'].AsMapping;
+  Assert.AreEqual(1, Integer(Length(services.Comments)), 'The comment above the key goes to its value');
+  Assert.AreEqual('services', services.Comments[0]);
+
+  Assert.AreEqual(yamlText, TYAML.WriteToString(doc), 'The comment must be written above the key');
+end;
+
+procedure TYAMLCommentTests.TestCommentAboveKeyOfSequence_IsWrittenAboveIt;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+begin
+  yamlText :=
+    'name: app' + sLineBreak +
+    '# the ports' + sLineBreak +
+    'ports:' + sLineBreak +
+    '  - 80' + sLineBreak +
+    '  - 443' + sLineBreak;
+
+  doc := TYAML.LoadFromString(yamlText);
+  root := doc.Root.AsMapping;
+  Assert.AreEqual(1, Integer(Length(root.Items['ports'].Comments)), 'The comment above the key goes to its value');
+  Assert.AreEqual('the ports', root.Items['ports'].Comments[0]);
+  Assert.IsFalse(root.HasComments, 'The comment is not the root''s');
+
+  Assert.AreEqual(yamlText, TYAML.WriteToString(doc), 'The comment must be written above the key');
+end;
+
+procedure TYAMLCommentTests.TestCommentBelowKeyLine_StaysBelowIt;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+  services : IYAMLMapping;
+begin
+  yamlText :=
+    'services:' + sLineBreak +
+    '  # the web server' + sLineBreak +
+    '  web:' + sLineBreak +
+    '    image: app' + sLineBreak;
+
+  doc := TYAML.LoadFromString(yamlText);
+  services := doc.Root.AsMapping.Items['services'].AsMapping;
+  Assert.IsFalse(services.HasComments, 'A comment below the key line is not the comment of the key''s value');
+  Assert.AreEqual(1, Integer(Length(services.Items['web'].Comments)), 'It goes to the value of the key below it');
+  Assert.AreEqual('the web server', services.Items['web'].Comments[0]);
+
+  Assert.AreEqual(yamlText, TYAML.WriteToString(doc), 'The comment must stay below the key line');
+end;
+
+procedure TYAMLCommentTests.TestCommentAboveScalarKey_GoesToItsValue;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+begin
+  yamlText :=
+    'name: app' + sLineBreak +
+    '# the version' + sLineBreak +
+    'version: 2' + sLineBreak +
+    'tags:' + sLineBreak +
+    '  - a' + sLineBreak;
+
+  doc := TYAML.LoadFromString(yamlText);
+  root := doc.Root.AsMapping;
+  Assert.AreEqual(1, Integer(Length(root.Items['version'].Comments)), 'The comment above a scalar''s key goes to the scalar');
+  Assert.AreEqual('the version', root.Items['version'].Comments[0]);
+  Assert.IsFalse(root.Items['tags'].HasComments, 'It is not given to the next collection');
+  Assert.IsFalse(root.HasComments, 'It is not given to the root');
+
+  Assert.AreEqual(yamlText, TYAML.WriteToString(doc), 'The comment must be written above its key');
+end;
+
+procedure TYAMLCommentTests.TestCommentsInSequenceOfMappings_StayInPlace;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+  item : IYAMLMapping;
+begin
+  yamlText :=
+    'list:' + sLineBreak +
+    '  # first item' + sLineBreak +
+    '  - name: a' + sLineBreak +
+    '    # about sub' + sLineBreak +
+    '    sub:' + sLineBreak +
+    '      x: 1' + sLineBreak;
+
+  doc := TYAML.LoadFromString(yamlText);
+  item := doc.Root.AsMapping.Items['list'].AsSequence.Items[0].AsMapping;
+  Assert.AreEqual(1, Integer(Length(item.Comments)), 'The comment above the dash goes to the item');
+  Assert.AreEqual('first item', item.Comments[0]);
+  Assert.AreEqual(1, Integer(Length(item.Items['sub'].Comments)), 'The comment above the key goes to its value');
+  Assert.AreEqual('about sub', item.Items['sub'].Comments[0]);
+
+  Assert.AreEqual(yamlText, TYAML.WriteToString(doc), 'The comments must be written where they were');
+end;
+
+procedure TYAMLCommentTests.TestCommentAboveNestedSequenceItem_IsWrittenAboveIt;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+  matrix : IYAMLSequence;
+begin
+  yamlText :=
+    'matrix:' + sLineBreak +
+    '  # first row' + sLineBreak +
+    '  -' + sLineBreak +
+    '    - 1' + sLineBreak +
+    '    - 2' + sLineBreak;
+
+  doc := TYAML.LoadFromString(yamlText);
+  matrix := doc.Root.AsMapping.Items['matrix'].AsSequence;
+  Assert.IsFalse(matrix.HasComments, 'A comment below the key line is not the comment of the key''s value');
+  Assert.AreEqual(1, Integer(Length(matrix.Items[0].Comments)), 'The comment above the dash goes to the item');
+  Assert.AreEqual('first row', matrix.Items[0].Comments[0]);
+
+  Assert.AreEqual(yamlText, TYAML.WriteToString(doc), 'The comment must be written above the dash');
+end;
+
+procedure TYAMLCommentTests.TestCommentAboveSetItem_IsWrittenAboveIt;
+var
+  yamlText : string;
+  doc : IYAMLDocument;
+  fruits : IYAMLSet;
+  outputText : string;
+begin
+  yamlText :=
+    'fruits: !!set' + sLineBreak +
+    '  ? apple' + sLineBreak +
+    '  # about pear' + sLineBreak +
+    '  ? pear' + sLineBreak;
+
+  doc := TYAML.LoadFromString(yamlText);
+  fruits := doc.Root.AsMapping.Items['fruits'].AsSet;
+  Assert.IsFalse(fruits.Items[0].HasComments);
+  Assert.AreEqual(1, Integer(Length(fruits.Items[1].Comments)), 'The comment above the ''?'' goes to the item');
+  Assert.AreEqual('about pear', fruits.Items[1].Comments[0]);
+
+  outputText := TYAML.WriteToString(doc);
+  Assert.IsTrue(Pos('  ? apple' + sLineBreak + '  # about pear' + sLineBreak + '  ? pear' + sLineBreak, outputText) > 0,
+    'The comment must be written above the item: ' + outputText);
+end;
+
+procedure TYAMLCommentTests.TestCommentAboveTaggedRoot_IsWrittenAboveItsTag;
+var
+  doc : IYAMLDocument;
+  outputText : string;
+  commentPos, tagPos : integer;
+begin
+  doc := TYAML.LoadFromString(
+    '# about the root' + sLineBreak +
+    '--- !thing' + sLineBreak +
+    'a: 1' + sLineBreak);
+  Assert.AreEqual(1, Integer(Length(doc.Root.Comments)), 'The comment at the top goes to the root, as its first value is a scalar');
+  Assert.AreEqual('about the root', doc.Root.Comments[0]);
+
+  outputText := TYAML.WriteToString(doc);
+  commentPos := Pos('# about the root', outputText);
+  tagPos := Pos('!thing', outputText);
+  Assert.IsTrue(commentPos > 0, 'The root''s comment must be written: ' + outputText);
+  Assert.IsTrue(commentPos < tagPos, 'The root''s comment must be written above its tag: ' + outputText);
+end;
+
+procedure TYAMLCommentTests.TestCommentAboveAliasEntry_IsNotGivenToTheSharedNode;
+var
+  doc : IYAMLDocument;
+  root : IYAMLMapping;
+begin
+  doc := TYAML.LoadFromString(
+    'base: &b' + sLineBreak +
+    '  k: 1' + sLineBreak +
+    '# about ref' + sLineBreak +
+    'ref: *b' + sLineBreak +
+    'other: 2' + sLineBreak);
+  root := doc.Root.AsMapping;
+  // the node of ref is the node of base, so the comment would show up above base too
+  Assert.IsFalse(root.Items['base'].HasComments, 'The node an alias shares must not get the comment above the alias');
+  Assert.AreEqual(1, Integer(Length(root.Items['other'].Comments)), 'The comment goes to the next node, so it is kept');
+  Assert.AreEqual('about ref', root.Items['other'].Comments[0]);
+end;
+
+procedure TYAMLCommentTests.TestCommentsOfCollectionsBuiltInCode_AreWrittenAboveTheirKeys;
+var
+  doc : IYAMLDocument;
+  database : IYAMLMapping;
+  servers : IYAMLSequence;
+begin
+  doc := TYAML.CreateMapping;
+  database := doc.AsMapping.AddOrSetMapping('database');
+  database.AddComment('database settings');
+  database.AddOrSetValue('host', 'localhost');
+  servers := doc.AsMapping.AddOrSetSequence('servers');
+  servers.AddComment('the servers');
+  servers.AddValue('web01');
+
+  Assert.AreEqual(
+    '# database settings' + sLineBreak +
+    'database:' + sLineBreak +
+    '  host: localhost' + sLineBreak +
+    '# the servers' + sLineBreak +
+    'servers:' + sLineBreak +
+    '  - web01' + sLineBreak,
+    TYAML.WriteToString(doc));
 end;
 
 initialization

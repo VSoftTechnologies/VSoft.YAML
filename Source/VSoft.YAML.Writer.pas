@@ -51,15 +51,18 @@ type
     procedure WriteBlockScalar(const lineStart, tag, header, text, comment : string; column : integer);
     procedure WriteFoldedBlockLine(const line : string; column : integer);
 
-    // Core writing methods. tagWritten: the line before the collection has its tag already
+    // Core writing methods. headerWritten: the line before the collection ('key:', '-', '?'
+    // or the root's tag) is written, with the collection's tag, and its Comments above that
+    // line. A collection's Comments are the lines before its key, dash or '?', so the
+    // collection only writes them itself at the root.
     procedure WriteRoot(const value : IYAMLValue);
-    procedure WriteValue(const value : IYAMLValue; tagWritten : boolean);
+    procedure WriteValue(const value : IYAMLValue; headerWritten : boolean);
     // WriteValue with the first line of the collection at column, after a line that has
     // its tag; the levels inside it are indented from there
     procedure WriteValueAtColumn(const value : IYAMLValue; column : integer);
-    procedure WriteMapping(const mapping : IYAMLMapping; tagWritten : boolean);
-    procedure WriteSequence(const sequence : IYAMLSequence; tagWritten : boolean);
-    procedure WriteSet(const ASet : IYAMLSet; tagWritten : boolean);
+    procedure WriteMapping(const mapping : IYAMLMapping; headerWritten : boolean);
+    procedure WriteSequence(const sequence : IYAMLSequence; headerWritten : boolean);
+    procedure WriteSet(const ASet : IYAMLSet; headerWritten : boolean);
     procedure WriteScalar(const value : IYAMLValue);
     // Flow style: a line of the indent, prefix ('key: ' or '') and the value in flow style
     procedure WriteFlowLine(const value : IYAMLValue; const prefix : string; includeTag : boolean);
@@ -74,9 +77,8 @@ type
     function ShouldUseFlowStyle(const value : IYAMLValue) : boolean;
     procedure IncIndent;inline;
     procedure DecIndent;inline;
-    procedure WriteCollectionComments(const collection : IYAMLCollection);
-    // # lines, each at indent - leading comments of scalar entries and end comments (set by
-    // the JSON5 parser), which the YAML parser does not fill
+    // # lines, each at indent - the Comments of a value, above its key, dash or '?', and
+    // EndComments
     procedure WriteCommentLines(const comments : TArray<string>; const indent : string);
 
     // Direct writing helpers
@@ -765,24 +767,6 @@ begin
   UpdateIndentCache;
 end;
 
-procedure TYAMLWriterImpl.WriteCollectionComments(const collection : IYAMLCollection);
-var
-  index : integer;
-  comments : TArray<string>;
-begin
-  if collection.HasComments then
-  begin
-    comments := collection.Comments;
-    for index := 0 to Length(comments) - 1 do
-    begin
-      WriteIndent;
-      FOut.Write('# ');
-      FOut.Write(comments[index]);
-      FOut.WriteNewLine;
-    end;
-  end;
-end;
-
 procedure TYAMLWriterImpl.WriteCommentLines(const comments : TArray<string>; const indent : string);
 var
   index : integer;
@@ -810,32 +794,35 @@ end;
 procedure TYAMLWriterImpl.WriteRoot(const value : IYAMLValue);
 var
   tag : string;
-  tagWritten : boolean;
+  headerWritten : boolean;
 begin
   // The root has no line of its own to put its tag on. A block collection's tag goes on the
   // line before it; a scalar's goes in front of it, and a flow collection's into its text.
-  tagWritten := false;
+  headerWritten := false;
   if (value.ValueType in [TYAMLValueType.vtMapping, TYAMLValueType.vtSequence, TYAMLValueType.vtSet]) and
      not ShouldUseFlowStyle(value) then
   begin
     tag := TagOf(value);
     if tag <> '' then
     begin
+      // its comments go above its tag
+      if value.HasComments then
+        WriteCommentLines(value.Comments, FCurrentIndent);
       WriteIndent;
       FOut.Write(TrimRight(tag));
       FOut.WriteNewLine;
-      tagWritten := true;
+      headerWritten := true;
     end;
   end;
-  WriteValue(value, tagWritten);
+  WriteValue(value, headerWritten);
 end;
 
-procedure TYAMLWriterImpl.WriteValue(const value : IYAMLValue; tagWritten : boolean);
+procedure TYAMLWriterImpl.WriteValue(const value : IYAMLValue; headerWritten : boolean);
 begin
   case value.ValueType of
-    TYAMLValueType.vtMapping  : WriteMapping(value.AsMapping, tagWritten);
-    TYAMLValueType.vtSequence : WriteSequence(value.AsSequence, tagWritten);
-    TYAMLValueType.vtSet      : WriteSet(value.AsSet, tagWritten);
+    TYAMLValueType.vtMapping  : WriteMapping(value.AsMapping, headerWritten);
+    TYAMLValueType.vtSequence : WriteSequence(value.AsSequence, headerWritten);
+    TYAMLValueType.vtSet      : WriteSet(value.AsSet, headerWritten);
   else
       WriteScalar(value);
   end;
@@ -857,7 +844,7 @@ begin
   end;
 end;
 
-procedure TYAMLWriterImpl.WriteMapping(const mapping : IYAMLMapping; tagWritten : boolean);
+procedure TYAMLWriterImpl.WriteMapping(const mapping : IYAMLMapping; headerWritten : boolean);
 var
   priv : IYAMLMappingPrivate;
   i, keyColumn : integer;
@@ -866,12 +853,13 @@ var
   tag : string;
   valueStr, blockText, blockHeader : string;
 begin
-  WriteCollectionComments(mapping);
+  if (not headerWritten) and mapping.HasComments then
+    WriteCommentLines(mapping.Comments, FCurrentIndent);
 
   if mapping.Count = 0 then
   begin
     WriteIndent;
-    if not tagWritten then
+    if not headerWritten then
       FOut.Write(TagOf(mapping));
     FOut.Write('{}');
     FOut.WriteNewLine;
@@ -882,7 +870,7 @@ begin
 
   if ShouldUseFlowStyle(mapping) then
   begin
-    WriteFlowLine(mapping, '', not tagWritten);
+    WriteFlowLine(mapping, '', not headerWritten);
     Exit;
   end;
 
@@ -900,6 +888,9 @@ begin
 
     tag := TagOf(value);
     key := FormatKey(key);
+    // the comment lines before the entry, above its key
+    if value.HasComments then
+      WriteCommentLines(value.Comments, FCurrentIndent);
 
     case value.ValueType of
       TYAMLValueType.vtSequence,
@@ -922,8 +913,6 @@ begin
       end;
     else
       begin
-        if value.HasComments then
-          WriteCommentLines(value.Comments, FCurrentIndent);
         // a multi-line string as a block scalar, its lines one level past the key
         if TryBlockScalar(value, Integer(FOptions.IndentSize), blockText, blockHeader) then
           WriteBlockScalar(FCurrentIndent + key + ': ', tag, blockHeader, blockText, value.Comment, keyColumn + Integer(FOptions.IndentSize))
@@ -948,18 +937,19 @@ begin
     WriteCommentLines(mapping.EndComments, FCurrentIndent);
 end;
 
-procedure TYAMLWriterImpl.WriteSequence(const sequence : IYAMLSequence; tagWritten : boolean);
+procedure TYAMLWriterImpl.WriteSequence(const sequence : IYAMLSequence; headerWritten : boolean);
 var
   i, dashColumn : integer;
   item : IYAMLValue;
   itemStr, tag, blockText, blockHeader : string;
 begin
-  WriteCollectionComments(sequence);
+  if (not headerWritten) and sequence.HasComments then
+    WriteCommentLines(sequence.Comments, FCurrentIndent);
 
   if sequence.Count = 0 then
   begin
     WriteIndent;
-    if not tagWritten then
+    if not headerWritten then
       FOut.Write(TagOf(sequence));
     FOut.Write('[]');
     FOut.WriteNewLine;
@@ -970,7 +960,7 @@ begin
 
   if ShouldUseFlowStyle(sequence) then
   begin
-    WriteFlowLine(sequence, '', not tagWritten);
+    WriteFlowLine(sequence, '', not headerWritten);
     Exit;
   end;
 
@@ -979,6 +969,9 @@ begin
   begin
     item := sequence[i];
     tag := TagOf(item);
+    // the comment lines before the item, above its dash
+    if item.HasComments then
+      WriteCommentLines(item.Comments, FCurrentIndent);
 
     case item.ValueType of
       TYAMLValueType.vtSequence,
@@ -1009,8 +1002,6 @@ begin
         end;
     else
       begin
-        if item.HasComments then
-          WriteCommentLines(item.Comments, FCurrentIndent);
         // Check if we should use block scalar style for multiline strings
         // a multi-line string as a block scalar, its lines one level past the dash
         if TryBlockScalar(item, Integer(FOptions.IndentSize), blockText, blockHeader) then
@@ -1148,9 +1139,7 @@ var
   value : IYAMLValue;
   valueStr, tag, blockText, blockHeader : string;
 begin
-  if mapping.HasComments then
-    WriteCommentLines(mapping.Comments, FCurrentIndent);
-
+  // (WriteSequence wrote the mapping's comments, above the dash)
   if mapping.Count = 0 then
   begin
     WriteIndent;
@@ -1190,6 +1179,15 @@ begin
       prefix := '  ';
       column := dashColumn + 2 * indentSize;
     end;
+    // the comment lines before the entry, above its key - for the first key, above the dash
+    // line it is on
+    if value.HasComments then
+    begin
+      if i = 0 then
+        WriteCommentLines(value.Comments, FCurrentIndent)
+      else
+        WriteCommentLines(value.Comments, FCurrentIndent + '  ');
+    end;
 
     case value.ValueType of
       TYAMLValueType.vtSequence,
@@ -1226,13 +1224,6 @@ begin
       end;
     else
       begin
-        if value.HasComments then
-        begin
-          if i = 0 then
-            WriteCommentLines(value.Comments, FCurrentIndent)
-          else
-            WriteCommentLines(value.Comments, FCurrentIndent + '  ');
-        end;
         // Check if we should use block scalar style for multiline strings
         // the lines of a block scalar must be past the key too
         if column <= keyColumn then
@@ -1261,18 +1252,19 @@ begin
     WriteCommentLines(mapping.EndComments, FCurrentIndent + '  ');
 end;
 
-procedure TYAMLWriterImpl.WriteSet(const ASet : IYAMLSet; tagWritten : boolean);
+procedure TYAMLWriterImpl.WriteSet(const ASet : IYAMLSet; headerWritten : boolean);
 var
   i : integer;
   item : IYAMLValue;
   itemStr, tag : string;
 begin
-  WriteCollectionComments(ASet);
+  if (not headerWritten) and ASet.HasComments then
+    WriteCommentLines(ASet.Comments, FCurrentIndent);
 
   if ASet.Count = 0 then
   begin
     WriteIndent;
-    if not tagWritten then
+    if not headerWritten then
       FOut.Write(TagOf(ASet));
     FOut.Write('[]');
     FOut.WriteNewLine;
@@ -1281,7 +1273,7 @@ begin
 
   if ShouldUseFlowStyle(ASet) then
   begin
-    WriteFlowLine(ASet, '', not tagWritten);
+    WriteFlowLine(ASet, '', not headerWritten);
     Exit;
   end;
 
@@ -1290,6 +1282,9 @@ begin
   begin
     item := ASet[i];
     tag := TagOf(item);
+    // the comment lines before the item, above its '?'
+    if item.HasComments then
+      WriteCommentLines(item.Comments, FCurrentIndent);
 
     case item.ValueType of
       TYAMLValueType.vtSequence,

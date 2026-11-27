@@ -428,6 +428,18 @@ JSON (`JSONMode`) is read by the same parser in its strict RFC 8259 mode, which 
 - **Win32/Win64** - may work on other platforms (does not use WinAPI.*), but not tested .
 - **No External Dependencies** - Pure Delphi implementation
 
+## Behaviour changes in 3.1.1
+
+- **A comment above a key whose value is a collection is written above the key.** The YAML writer wrote the `Comments` of a mapping, sequence or set value below its key line, so `# services` above `services:` came back below it. It now writes them above the key, as it does for a scalar value, and as `Comments` is documented ("for a mapping entry, before its key"). The same goes for the comments of a sequence or set item that is a collection, which are now written above its `-` or `?`. This also applies to JSON5 read and written as YAML.
+- **The YAML parser puts comment lines with the node below them.** A comment line used to go to the next collection that started, wherever that was. Now:
+  - the comment lines before a mapping key go to the key's value, whatever it is - a scalar too;
+  - those before a `-` or `?` go to the item;
+  - those below a `key:` line, before the first entry under it, go to that entry, not to the key's value, so they are written back below the key line;
+  - those at the top of a document go to the root's first value when it is a collection, and to the root otherwise (they went to the first collection in the document, so `# c` / `a: 1` / `b:` / `  x: 1` gave `b`'s value the comment);
+  - those before an alias, or a `<<` merge key, go to the next node, as the node an alias shares is not given them.
+
+  So `a: 1` / `# about b` / `b: 2` gives `b`'s value the comment, where the root had it (and wrote it at the top of the document).
+
 ## Behaviour changes in 3.1.0
 
 - **`IYAMLSequence.AddValue(IYAMLValue)` sets the node's `Parent`, and refuses a node that is in a collection.** It used to add the node as it was: the node kept its old `Parent` and could be in two collections at once. Now the sequence becomes the node's `Parent`. A node whose `Parent` is set raises `EArgumentException`: take it out of its collection first (`Remove` or `Delete`), or add `node.Clone`. A sequence added to itself, or to a collection inside it, also raises `EArgumentException`. On a set, a value the set already has is still not added, and its `Parent` is not set.

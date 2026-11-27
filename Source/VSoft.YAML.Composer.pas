@@ -26,11 +26,14 @@ type
   ///  and those forms are as YAML 1.2 reads them. The syntax is YAML 1.2's either way.
   ///
   ///  Mapping keys are strings: a scalar key is its text, a collection key the collection in
-  ///  flow style. Comments are kept as the YAML parser has always kept them: a comment after a
-  ///  scalar or flow collection, on the same line, is its Comment, comment lines go to the
-  ///  next collection that starts (those at the top of a document to the first collection
-  ///  inside the root, or to the root when there is none), and comments after the root's
-  ///  content to the document's EndComments.
+  ///  flow style. Comments are kept where they are: a comment after a scalar or flow
+  ///  collection, on the same line, is its Comment. Comment lines before a mapping key go to
+  ///  the key's value, those before a '- ' or '? ' item to the item, and those before a flow
+  ///  collection to it - so the comments below a 'key:' line go to the first entry under it,
+  ///  not to the key's value. Those at the top of a document go to the root's first entry
+  ///  when it is a collection, and to the root otherwise. A node that an alias shares (and the
+  ///  value of a merge key) gets none: they go to the next node. Comments after the root's
+  ///  content go to the document's EndComments.
   /// </summary>
   TYAMLComposer = class
   private
@@ -38,9 +41,8 @@ type
     FLenient : boolean;
     FDuplicateError : boolean;
     FAnchors : TDictionary<string, IYAMLValue>;
-    FPendingComments : TArray<string>; // comment lines not given to a collection yet:
+    FPendingComments : TArray<string>; // comment lines not given to a node yet:
     FPendingCount : integer;           // the first FPendingCount
-    FIsDocumentLevel : boolean;
     FDepth : integer;
     FLastContentIndex : integer; // start of the last content token taken
     FLastScalarPlain : boolean;  // the last scalar composed was plain and had no tag
@@ -64,6 +66,9 @@ type
     procedure EnterCollection;
     procedure PullComments(beforeIndex : integer);
     function TakePendingComments : TArray<string>;
+    function TakeCommentsBefore(index : integer) : TArray<string>;
+    procedure RestorePendingComments(const lines : TArray<string>);
+    procedure GiveEntryComments(const lines : TArray<string>; const node, collection : IYAMLValue; shared, topOfDocument : boolean);
     procedure TakeLeadingComments(const collection : IYAMLCollection; startIndex : integer);
     procedure TakeSameLineComment(const value : IYAMLValue; line : integer);
 
@@ -324,7 +329,6 @@ end;
 procedure TYAMLComposer.ResetDocument;
 begin
   FAnchors.Clear;
-  FIsDocumentLevel := true;
   FDepth := 0;
   FLastContentIndex := 0;
   FVersion := TYAMLVersionDirective.YAML_1_2;
@@ -502,8 +506,69 @@ begin
   FPendingCount := 0;
 end;
 
-// The comments before a collection are its Comments - except that those at the top of a
-// document go to the first collection inside the root, not to the root itself.
+// The comment lines before index that no node has taken - nil when there are none.
+function TYAMLComposer.TakeCommentsBefore(index : integer) : TArray<string>;
+begin
+  PullComments(index);
+  if FPendingCount = 0 then
+    result := nil
+  else
+    result := TakePendingComments;
+end;
+
+// Puts lines back in front of the pending comment lines, for the next node to take.
+procedure TYAMLComposer.RestorePendingComments(const lines : TArray<string>);
+var
+  i, count : integer;
+begin
+  count := Length(lines);
+  if FPendingCount + count > Length(FPendingComments) then
+    SetLength(FPendingComments, FPendingCount + count + 4);
+  for i := FPendingCount - 1 downto 0 do
+    FPendingComments[i + count] := FPendingComments[i];
+  for i := 0 to count - 1 do
+    FPendingComments[i] := lines[i];
+  Inc(FPendingCount, count);
+end;
+
+// Puts lines in front of the Comments node has.
+procedure PrependComments(const node : IYAMLValue; const lines : TArray<string>);
+var
+  existing, combined : TArray<string>;
+  i, count : integer;
+begin
+  if not node.HasComments then
+  begin
+    node.Comments := lines;
+    exit;
+  end;
+  existing := node.Comments;
+  count := Length(lines);
+  SetLength(combined, count + Length(existing));
+  for i := 0 to count - 1 do
+    combined[i] := lines[i];
+  for i := 0 to Length(existing) - 1 do
+    combined[count + i] := existing[i];
+  node.Comments := combined;
+end;
+
+// lines are the comment lines before an entry of collection, a block collection; they go to
+// node, the node the entry adds - the value of a mapping key, or the item. When the entry is
+// the first of the root (topOfDocument) and node is not a collection, they go to the root.
+// A node an alias shares, or one that is not kept (shared is set), gets none: the lines wait
+// for the next node.
+procedure TYAMLComposer.GiveEntryComments(const lines : TArray<string>; const node, collection : IYAMLValue; shared, topOfDocument : boolean);
+begin
+  if topOfDocument and (shared or not (node.IsMapping or node.IsSequence or node.IsSet)) then
+    PrependComments(collection, lines)
+  else if shared then
+    RestorePendingComments(lines)
+  else
+    PrependComments(node, lines);
+end;
+
+// The comment lines before a flow collection are its Comments. ParseDocument also gives the
+// root collection those its content leaves.
 procedure TYAMLComposer.TakeLeadingComments(const collection : IYAMLCollection; startIndex : integer);
 var
   lines : TArray<string>;
@@ -511,8 +576,6 @@ var
 begin
   PullComments(startIndex);
   if FPendingCount = 0 then
-    exit;
-  if FIsDocumentLevel and (collection.Parent = nil) then
     exit;
   lines := TakePendingComments;
   if collection.HasComments then
@@ -522,7 +585,6 @@ begin
   end
   else
     collection.Comments := lines;
-  FIsDocumentLevel := false;
 end;
 
 // A comment on line, after the value that ends there and before the next token, is the
@@ -835,26 +897,33 @@ var
   sequenceObj : TYAMLSequence; // AddItem adds an alias's node as it is - see NewSequence
   sequence : IYAMLSequence;
   item : IYAMLValue;
+  leading : TArray<string>;
+  shared, firstEntry : boolean;
 begin
-  tok := FScanner.Peek;
   sequenceObj := NewSequence(parent, tagInfo);
   sequence := sequenceObj;
   result := sequence;
-  TakeLeadingComments(sequence, tok^.Index);
   FScanner.Skip;
   EnterCollection;
+  firstEntry := true;
   while true do
   begin
     tok := FScanner.Peek;
     if tok^.Kind = TYAMLScanTokenKind.BlockEntry then
     begin
+      // the comment lines before the '-' are the item's
+      leading := TakeCommentsBefore(tok^.Index);
       FScanner.Skip;
       tok := FScanner.Peek;
+      shared := tok^.Kind = TYAMLScanTokenKind.Alias;
       if (tok^.Kind = TYAMLScanTokenKind.BlockEntry) or (tok^.Kind = TYAMLScanTokenKind.BlockEnd) then
         item := NewNull(sequence)
       else
         item := ParseNode(sequence, true, false);
       sequenceObj.AddItem(item);
+      if leading <> nil then
+        GiveEntryComments(leading, item, sequence, shared, firstEntry and (parent = nil));
+      firstEntry := false;
     end
     else if tok^.Kind = TYAMLScanTokenKind.BlockEnd then
     begin
@@ -874,27 +943,34 @@ var
   sequenceObj : TYAMLSequence;
   sequence : IYAMLSequence;
   item : IYAMLValue;
+  leading : TArray<string>;
+  shared : boolean;
 begin
-  tok := FScanner.Peek;
   sequenceObj := NewSequence(parent, tagInfo);
   sequence := sequenceObj;
   result := sequence;
-  TakeLeadingComments(sequence, tok^.Index);
   EnterCollection;
   while true do
   begin
     tok := FScanner.Peek;
     if tok^.Kind <> TYAMLScanTokenKind.BlockEntry then
       break;
+    // the comment lines before the '-' are the item's
+    leading := TakeCommentsBefore(tok^.Index);
     FScanner.Skip;
     tok := FScanner.Peek;
+    shared := false;
     case tok^.Kind of
       TYAMLScanTokenKind.BlockEntry, TYAMLScanTokenKind.Key, TYAMLScanTokenKind.Value, TYAMLScanTokenKind.BlockEnd :
         item := NewNull(sequence);
     else
+      shared := tok^.Kind = TYAMLScanTokenKind.Alias;
       item := ParseNode(sequence, true, false);
     end;
     sequenceObj.AddItem(item);
+    // (an indentless sequence is the value of a key, so never the root)
+    if leading <> nil then
+      GiveEntryComments(leading, item, sequence, shared, false);
   end;
   Dec(FDepth);
 end;
@@ -908,40 +984,52 @@ var
   aSet : IYAMLSet;
   key, value : IYAMLValue;
   text : string;
-  isSet, setCandidate, explicit, hasValue, isMergeKey : boolean;
+  isSet, setCandidate, explicit, hasValue, isMergeKey, keyShared, valueShared, firstEntry : boolean;
   keyLine, keyColumn, i : integer;
   keys : TList<IYAMLValue>;
+  keyValues : TList<IYAMLValue>; // the value of each of keys, which has the comments before it
+  leading : TArray<string>;
 begin
-  tok := FScanner.Peek;
   isSet := IsSetTag(tagInfo);
   // YAML 1.1 style: a mapping of '? ' keys without values is read as a set
   setCandidate := FLenient and (tagInfo = nil);
   keys := nil;
+  keyValues := nil;
   setObj := nil;
   if isSet then
   begin
     setObj := TYAMLSet.Create(parent, tagInfo);
     aSet := setObj;
     result := aSet;
-    TakeLeadingComments(aSet, tok^.Index);
   end
   else
   begin
     mapping := TYAMLMapping.Create(parent, tagInfo);
     mappingPriv := mapping as IYAMLMappingPrivate;
     result := mapping;
-    TakeLeadingComments(mapping, tok^.Index);
   end;
   FScanner.Skip;
   EnterCollection;
+  firstEntry := true;
   try
     while true do
     begin
       tok := FScanner.Peek;
+      if tok^.Kind = TYAMLScanTokenKind.BlockEnd then
+      begin
+        FScanner.Skip;
+        break;
+      end;
+      if (tok^.Kind <> TYAMLScanTokenKind.Key) and (tok^.Kind <> TYAMLScanTokenKind.Value) then
+        RaiseError('A mapping key was expected - check the indentation of the line');
+      // the comment lines before the key are for the node the entry adds
+      leading := TakeCommentsBefore(tok^.Index);
       keyLine := tok^.Line;
       keyColumn := tok^.Column;
       isMergeKey := false;
       explicit := false;
+      keyShared := false;
+      valueShared := false;
       key := nil;
       text := '';
       if tok^.Kind = TYAMLScanTokenKind.Key then
@@ -955,16 +1043,10 @@ begin
           TYAMLScanTokenKind.Key, TYAMLScanTokenKind.Value, TYAMLScanTokenKind.BlockEnd :
             ; // an empty key
         else
+          keyShared := tok^.Kind = TYAMLScanTokenKind.Alias;
           text := ParseKey(result, true, isSet or (setCandidate and explicit), key, isMergeKey);
         end;
-      end
-      else if tok^.Kind = TYAMLScanTokenKind.BlockEnd then
-      begin
-        FScanner.Skip;
-        break;
-      end
-      else if tok^.Kind <> TYAMLScanTokenKind.Value then
-        RaiseError('A mapping key was expected - check the indentation of the line');
+      end;
 
       tok := FScanner.Peek;
       hasValue := tok^.Kind = TYAMLScanTokenKind.Value;
@@ -976,6 +1058,7 @@ begin
           TYAMLScanTokenKind.Key, TYAMLScanTokenKind.Value, TYAMLScanTokenKind.BlockEnd :
             value := NewNull(result);
         else
+          valueShared := tok^.Kind = TYAMLScanTokenKind.Alias;
           value := ParseNode(result, true, true);
         end;
       end
@@ -987,6 +1070,9 @@ begin
         if key = nil then
           key := NewNull(aSet);
         setObj.AddItem(key);
+        // the item of a set is the key
+        if leading <> nil then
+          GiveEntryComments(leading, key, result, keyShared, firstEntry and (parent = nil));
       end
       else
       begin
@@ -994,15 +1080,26 @@ begin
         begin
           setCandidate := false;
           FreeAndNil(keys);
+          FreeAndNil(keyValues);
         end;
         if setCandidate then
         begin
           if keys = nil then
+          begin
             keys := TList<IYAMLValue>.Create;
+            keyValues := TList<IYAMLValue>.Create;
+          end;
           keys.Add(key);
+          keyValues.Add(value);
         end;
         AddEntry(mapping, mappingPriv, text, value, isMergeKey, keyLine, keyColumn);
+        // the value of a merge key is not kept, and the comments of a set candidate's entry
+        // would go to its key when the mapping becomes a set
+        if leading <> nil then
+          GiveEntryComments(leading, value, result,
+            valueShared or (isMergeKey and FLenient) or (setCandidate and keyShared), firstEntry and (parent = nil));
       end;
+      firstEntry := false;
     end;
 
     if setCandidate and (keys <> nil) and (keys.Count > 0) then
@@ -1016,6 +1113,9 @@ begin
           key := NewNull(aSet)
         else
           YAMLSetParent(key, aSet);
+        // the comments before the entry went to its value, which the set does not keep
+        if keyValues[i].HasComments then
+          key.Comments := keyValues[i].Comments;
         setObj.AddItem(key);
       end;
       if mapping.HasComments then
@@ -1025,6 +1125,7 @@ begin
     end;
   finally
     keys.Free;
+    keyValues.Free;
   end;
   Dec(FDepth);
 end;
@@ -1304,14 +1405,11 @@ begin
 
   result := TYAMLDocument.Create(root, FVersion, FTagDirectives);
 
-  // comments inside the root's content that no collection took go to the root collection;
-  // those after it to the document
+  // comments inside the root's content that no node took (such as those inside a flow
+  // collection) go to the root collection; those after it to the document
   PullComments(FLastContentIndex + 1);
   if (FPendingCount > 0) and (root.IsMapping or root.IsSequence or root.IsSet) then
-  begin
-    FIsDocumentLevel := false;
     TakeLeadingComments(root.AsCollection, FLastContentIndex + 1);
-  end;
   TakePendingComments; // (those before a scalar root are dropped, as they always were)
   PullComments(endIndex);
   if FPendingCount > 0 then

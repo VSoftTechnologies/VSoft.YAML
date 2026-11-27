@@ -183,8 +183,9 @@ type
 
     /// <summary>
     ///  Comments on the lines before the value, one line each - for a mapping entry, before
-    ///  its key. The YAML parser sets these on collections only; the JSON5 parser on any
-    ///  value. Reading gives a copy, so change them with AddComment, ClearComments or by
+    ///  its key, and for a sequence or set item, before its '-' or '?'. The YAML and JSON5
+    ///  parsers set them on any value, and the YAML writer writes them above the key, '-' or
+    ///  '?'. Reading gives a copy, so change them with AddComment, ClearComments or by
     ///  setting the property.
     /// </summary>
     property Comments : TArray<string> read GetComments write SetComments;
